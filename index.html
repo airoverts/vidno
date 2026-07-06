@@ -1,11 +1,871 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
-</head>git 
+    <meta name="description" content="Vidno — мониторинг видимости бренда в AI-ассистентах: ChatGPT, Claude, Perplexity, YandexGPT и др.">
+    <title>Vidno — Мониторинг видимости бренда в AI</title>
+
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- AOS animations -->
+    <link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+    <!-- AOS script -->
+    <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
+
+    <!-- Own styles -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
 <body>
-    
+
+<!-- ============ HEADER / NAV ============ -->
+<header class="header" id="header">
+    <div class="container header-inner">
+        <a href="#" class="logo" data-nav="home">
+            <span class="logo-icon"><i class="fa-solid fa-eye"></i></span>
+            <span class="logo-text">Vid<span class="accent">no</span></span>
+        </a>
+
+        <nav class="nav" id="navMenu">
+            <button class="nav-link" data-nav="home">Главная</button>
+            <button class="nav-link" data-nav="features">Возможности</button>
+            <button class="nav-link" data-nav="how">Как это работает</button>
+            <button class="nav-link" data-nav="dashboard">Дашборд</button>
+            <button class="nav-link" data-nav="pricing">Цены</button>
+            <button class="nav-link" data-nav="resources">Ресурсы</button>
+            <button class="nav-link" data-nav="contacts">Контакты</button>
+        </nav>
+
+        <div class="header-actions">
+            <button class="theme-toggle" id="themeToggle" title="Сменить тему">
+                <i class="fa-solid fa-sun"></i>
+            </button>
+            <button class="btn btn-primary" data-cta="signup">
+                <i class="fa-solid fa-rocket"></i> Попробовать бесплатно
+            </button>
+            <button class="burger" id="burger" aria-label="Меню">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<main id="main">
+
+    <!-- ============================================================ -->
+    <!-- 1. HOME PAGE                                                  -->
+    <!-- ============================================================ -->
+    <section class="page page--home active" id="page-home" data-page="home">
+
+        <!-- HERO -->
+        <div class="hero">
+            <div class="hero-bg"></div>
+            <div class="container hero-inner">
+                <div class="hero-content" data-aos="fade-up">
+                    <span class="badge"><i class="fa-solid fa-bolt"></i> Новый стандарт Digital-присутствия</span>
+                    <h1 class="hero-title">
+                        Узнайте, как ИИ-ассистенты <span class="accent">видят ваш бренд</span>.
+                        И получите пошаговый план для роста.
+                    </h1>
+                    <p class="hero-subtitle">
+                        Мониторинг в ChatGPT, Claude, Perplexity, Яндексе и ещё 15+ моделях.
+                        Данные превращаем в действия.
+                    </p>
+                    <div class="hero-actions">
+                        <button class="btn btn-primary btn-lg" data-cta="signup">
+                            <i class="fa-solid fa-rocket"></i> Попробовать бесплатно
+                        </button>
+                        <button class="btn btn-ghost btn-lg" data-nav="how">
+                            <i class="fa-solid fa-play"></i> Как это работает
+                        </button>
+                    </div>
+                    <div class="hero-stats">
+                        <div><strong>15+</strong><span>AI-моделей</span></div>
+                        <div><strong>10K+</strong><span>запросов/день</span></div>
+                        <div><strong>98%</strong><span>точность</span></div>
+                    </div>
+                </div>
+
+                <div class="hero-visual" data-aos="fade-left">
+                    <div class="dash-mock">
+                        <div class="dash-mock-head">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                            <span class="dash-mock-title">vidno.ai/dashboard</span>
+                        </div>
+                        <div class="dash-mock-body">
+                            <div class="dm-row">
+                                <div class="dm-card">
+                                    <div class="dm-card-label">Visibility Score</div>
+                                    <div class="dm-card-value">85<sup>%</sup></div>
+                                    <div class="dm-bar"><span style="width:85%"></span></div>
+                                </div>
+                                <div class="dm-card">
+                                    <div class="dm-card-label">Share of Voice</div>
+                                    <div class="dm-card-value">34<sup>%</sup></div>
+                                    <div class="dm-bar"><span style="width:34%"></span></div>
+                                </div>
+                            </div>
+                            <div class="dm-chart">
+                                <svg viewBox="0 0 320 120" preserveAspectRatio="none">
+                                    <polyline class="dm-line" points="0,90 40,70 80,80 120,50 160,60 200,30 240,40 280,20 320,10" />
+                                    <polyline class="dm-area" points="0,90 40,70 80,80 120,50 160,60 200,30 240,40 280,20 320,10 320,120 0,120" />
+                                </svg>
+                            </div>
+                            <div class="dm-legend">
+                                <span><i class="fa-solid fa-circle"></i> ChatGPT</span>
+                                <span><i class="fa-solid fa-circle"></i> Claude</span>
+                                <span><i class="fa-solid fa-circle"></i> Perplexity</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="floating-chip chip-1"><i class="fa-solid fa-arrow-trend-up"></i> +12% за неделю</div>
+                    <div class="floating-chip chip-2"><i class="fa-solid fa-bullseye"></i> Топ-3 позиций</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI LOGOS MARQUEE -->
+        <div class="logos-strip">
+            <div class="container">
+                <p class="logos-title">Мониторим в ведущих AI-платформах</p>
+                <div class="logos-row">
+                    <div class="logos-track">
+                        <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
+                        <span class="logo-pill"><i class="fa-solid fa-feather"></i> Claude</span>
+                        <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
+                        <span class="logo-pill"><i class="fa-solid fa-y"></i> YandexGPT</span>
+                        <span class="logo-pill"><i class="fa-solid fa-bolt-lightning"></i> GigaChat</span>
+                        <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
+                        <span class="logo-pill"><i class="fa-brands fa-microsoft"></i> Copilot</span>
+                        <span class="logo-pill"><i class="fa-solid fa-fire"></i> Mistral</span>
+                        <!-- duplicate for seamless loop -->
+                        <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
+                        <span class="logo-pill"><i class="fa-solid fa-feather"></i> Claude</span>
+                        <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
+                        <span class="logo-pill"><i class="fa-solid fa-y"></i> YandexGPT</span>
+                        <span class="logo-pill"><i class="fa-solid fa-bolt-lightning"></i> GigaChat</span>
+                        <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
+                        <span class="logo-pill"><i class="fa-brands fa-microsoft"></i> Copilot</span>
+                        <span class="logo-pill"><i class="fa-solid fa-fire"></i> Mistral</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3 ADVANTAGES -->
+        <section class="section">
+            <div class="container">
+                <div class="section-head" data-aos="fade-up">
+                    <span class="eyebrow">Преимущества</span>
+                    <h2 class="section-title">Не просто цифры — а инсайты и действия</h2>
+                    <p class="section-sub">Мы помогаем маркетологам понять, как AI говорит о бренде, и даём понятный план роста.</p>
+                </div>
+                <div class="grid grid-3">
+                    <article class="adv-card" data-aos="fade-up" data-aos-delay="0">
+                        <div class="adv-icon ic-blue"><i class="fa-solid fa-lightbulb"></i></div>
+                        <h3>Не просто цифры, а инсайты</h3>
+                        <p>Видимость бренда во всех ключевых AI, интерпретация результатов и понятные выводы вместо сырых таблиц.</p>
+                    </article>
+                    <article class="adv-card" data-aos="fade-up" data-aos-delay="100">
+                        <div class="adv-icon ic-purple"><i class="fa-solid fa-list-check"></i></div>
+                        <h3>Приоритетные задачи</h3>
+                        <p>Список рекомендаций, отсортированный по влиянию на видимость. Фокус на том, что действительно работает.</p>
+                    </article>
+                    <article class="adv-card" data-aos="fade-up" data-aos-delay="200">
+                        <div class="adv-icon ic-green"><i class="fa-solid fa-layer-group"></i></div>
+                        <h3>Все AI в одном окне</h3>
+                        <p>ChatGPT, Claude, Perplexity, YandexGPT, GigaChat и другие — сводный отчёт и сравнение по долям голоса.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- TESTIMONIAL -->
+        <section class="section section-soft">
+            <div class="container">
+                <div class="testimonial" data-aos="zoom-in">
+                    <div class="testimonial-avatar">АК</div>
+                    <blockquote>
+                        «За месяц работы с Vidno мы подняли видимость бренда в ChatGPT с 18% до 47%. Рекомендации по контенту дали рост органического трафика на 30%.»
+                    </blockquote>
+                    <div class="testimonial-author">
+                        <strong>Анна Корсакова</strong>
+                        <span>Head of Brand, FinFlow</span>
+                    </div>
+                    <div class="testimonial-nums">
+                        <div><strong>18→47%</strong><span>видимость</span></div>
+                        <div><strong>+30%</strong><span>трафик</span></div>
+                        <div><strong>1 мес</strong><span>срок</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA -->
+        <section class="section">
+            <div class="container">
+                <div class="cta-box" data-aos="fade-up">
+                    <div class="cta-text">
+                        <h2>Запросите демо-отчёт по вашему бренду</h2>
+                        <ul class="cta-list">
+                            <li><i class="fa-solid fa-check"></i> Отчёт по 10 запросам бесплатно</li>
+                            <li><i class="fa-solid fa-check"></i> Сравнение с 3 конкурентами</li>
+                            <li><i class="fa-solid fa-check"></i> Приоритезированный план действий</li>
+                        </ul>
+                    </div>
+                    <button class="btn btn-primary btn-lg" data-cta="demo">
+                        <i class="fa-solid fa-calendar-check"></i> Запросить демо
+                    </button>
+                </div>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 2. FEATURES PAGE                                              -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-features" data-page="features">
+        <div class="page-hero">
+            <div class="container">
+                <span class="eyebrow">Возможности</span>
+                <h1 class="page-title">Инструменты для управления <span class="accent">AI-видимостью</span></h1>
+                <p class="page-sub">Шесть модулей, которые превращают хаос AI-ответов в управляемую систему роста бренда.</p>
+            </div>
+        </div>
+
+        <section class="section">
+            <div class="container">
+                <div class="grid grid-2 features-grid">
+                    <article class="feature-card" data-modal-open="feat-1" data-aos="fade-up">
+                        <div class="feature-thumb thumb-grad-1"><i class="fa-solid fa-chart-line"></i></div>
+                        <div class="feature-body">
+                            <h3>Мониторинг видимости</h3>
+                            <p>Таблица запросов и динамика позиций бренда по каждой AI-модели в реальном времени.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+
+                    <article class="feature-card" data-modal-open="feat-2" data-aos="fade-up" data-aos-delay="100">
+                        <div class="feature-thumb thumb-grad-2"><i class="fa-solid fa-brain"></i></div>
+                        <div class="feature-body">
+                            <h3>Анализ намерений</h3>
+                            <p>Идентифицируем интент пользователя: информационный, транзакционный, сравнительный — и роль бренда в ответе.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+
+                    <article class="feature-card" data-modal-open="feat-3" data-aos="fade-up" data-aos-delay="200">
+                        <div class="feature-thumb thumb-grad-3"><i class="fa-solid fa-scale-balanced"></i></div>
+                        <div class="feature-body">
+                            <h3>Сравнение с конкурентами</h3>
+                            <p>Столбчатая диаграмма доли голоса: где вы опережаете конкурентов, а где отстаёте.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+
+                    <article class="feature-card" data-modal-open="feat-4" data-aos="fade-up">
+                        <div class="feature-thumb thumb-grad-4"><i class="fa-solid fa-clipboard-check"></i></div>
+                        <div class="feature-body">
+                            <h3>Приоритезированный план действий</h3>
+                            <p>Готовый список задач с приоритетами и ожидаемым эффектом — отметили, выполнили, измерили.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+
+                    <article class="feature-card" data-modal-open="feat-5" data-aos="fade-up" data-aos-delay="100">
+                        <div class="feature-thumb thumb-grad-5"><i class="fa-solid fa-stethoscope"></i></div>
+                        <div class="feature-body">
+                            <h3>Технический аудит страниц</h3>
+                            <p>Индекс здоровья контента: структура, разметка, цитируемость AI — что мешает попаданию в ответы.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+
+                    <article class="feature-card" data-modal-open="feat-6" data-aos="fade-up" data-aos-delay="200">
+                        <div class="feature-thumb thumb-grad-6"><i class="fa-solid fa-file-export"></i></div>
+                        <div class="feature-body">
+                            <h3>Отчёты и экспорт</h3>
+                            <p>PDF и XLSX отчёты в один клик. Шаблоны для команд, клиентов и руководства.</p>
+                            <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 3. HOW IT WORKS PAGE                                          -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-how" data-page="how">
+        <div class="page-hero">
+            <div class="container">
+                <span class="eyebrow">Как это работает</span>
+                <h1 class="page-title">4 шага до контроля над <span class="accent">AI-видимостью</span></h1>
+                <p class="page-sub">От добавления бренда до отслеживания роста — весь процесс занимает меньше 10 минут.</p>
+            </div>
+        </div>
+
+        <section class="section">
+            <div class="container">
+                <div class="timeline">
+                    <div class="timeline-line"></div>
+
+                    <div class="tl-step" data-aos="fade-up">
+                        <div class="tl-num">1</div>
+                        <div class="tl-icon"><i class="fa-solid fa-plus"></i></div>
+                        <div class="tl-content">
+                            <h3>Добавьте бренд и запросы</h3>
+                            <p>Укажите название бренда, сайт и список поисковых запросов. Подгрузите конкурентов для сравнения.</p>
+                            <div class="tl-mock form-mock">
+                                <div class="mock-field"><span>Бренд</span><div class="mock-input">Vidno Inc.</div></div>
+                                <div class="mock-field"><span>Запросы</span><div class="mock-input">«лучший сервис видимости AI»</div></div>
+                                <div class="mock-field"><span>Конкуренты</span><div class="mock-input">BrandA, BrandB</div></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tl-step" data-aos="fade-up" data-aos-delay="100">
+                        <div class="tl-num">2</div>
+                        <div class="tl-icon"><i class="fa-solid fa-play"></i></div>
+                        <div class="tl-content">
+                            <h3>Запустите анализ</h3>
+                            <p>Система опрашивает 15+ AI-моделей по вашим запросам и собирает ответы. Обычно занимает 2–5 минут.</p>
+                            <div class="tl-mock run-mock">
+                                <div class="spinner"></div>
+                                <span>Анализируем ChatGPT… 78%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tl-step" data-aos="fade-up" data-aos-delay="200">
+                        <div class="tl-num">3</div>
+                        <div class="tl-icon"><i class="fa-solid fa-chart-pie"></i></div>
+                        <div class="tl-content">
+                            <h3>Изучите инсайты</h3>
+                            <p>Дашборд показывает видимость, долю голоса, роль бренда в ответах и подсказки с рекомендациями.</p>
+                            <div class="tl-mock mini-dash">
+                                <div class="mini-kpi"><strong>85%</strong><span>видимость</span></div>
+                                <div class="mini-kpi"><strong>34%</strong><span>SoV</span></div>
+                                <div class="mini-kpi"><strong>2.7</strong><span>позиция</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tl-step" data-aos="fade-up" data-aos-delay="300">
+                        <div class="tl-num">4</div>
+                        <div class="tl-icon"><i class="fa-solid fa-arrow-trend-up"></i></div>
+                        <div class="tl-content">
+                            <h3>Действуйте и отслеживайте</h3>
+                            <p>Выполняйте задачи из плана и следите за ростом на графике. Еженедельные отчёты приходят на почту.</p>
+                            <div class="tl-mock grow-mock">
+                                <svg viewBox="0 0 240 80" preserveAspectRatio="none">
+                                    <polyline class="dm-line" points="0,70 30,60 60,65 90,45 120,50 150,30 180,35 210,15 240,10" />
+                                    <circle cx="210" cy="15" r="4" class="accent-fill"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="center-cta" data-aos="fade-up">
+                    <button class="btn btn-primary btn-lg" data-cta="signup">
+                        <i class="fa-solid fa-rocket"></i> Начать бесплатно
+                    </button>
+                </div>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 4. DASHBOARD PAGE                                             -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-dashboard" data-page="dashboard">
+        <div class="dash-page">
+            <div class="container">
+                <div class="dash-topbar">
+                    <div>
+                        <h1 class="dash-title">Дашборд видимости</h1>
+                        <p class="dash-sub">Бренд: <strong>Vidno Inc.</strong> · Период: последние 30 дней</p>
+                    </div>
+                    <div class="dash-actions">
+                        <button class="btn btn-ghost btn-sm" id="refreshDash"><i class="fa-solid fa-rotate"></i> Обновить</button>
+                        <button class="btn btn-primary btn-sm" data-cta="signup"><i class="fa-solid fa-file-export"></i> Экспорт</button>
+                    </div>
+                </div>
+
+                <!-- TABS -->
+                <div class="tabs" role="tablist">
+                    <button class="tab active" data-tab="overview"><i class="fa-solid fa-gauge-high"></i> Обзор</button>
+                    <button class="tab" data-tab="queries"><i class="fa-solid fa-magnifying-glass"></i> Запросы</button>
+                    <button class="tab" data-tab="competitors"><i class="fa-solid fa-scale-balanced"></i> Конкуренты</button>
+                    <button class="tab" data-tab="brands"><i class="fa-solid fa-ranking-star"></i> Рейтинг цитируемости</button>
+                    <button class="tab" data-tab="reco"><i class="fa-solid fa-clipboard-check"></i> Рекомендации</button>
+                </div>
+
+                <!-- TAB: OVERVIEW -->
+                <div class="tab-panel active" id="tab-overview">
+                    <div class="kpi-grid">
+                        <div class="kpi-card" data-aos="fade-up">
+                            <div class="kpi-icon ic-blue"><i class="fa-solid fa-eye"></i></div>
+                            <div class="kpi-info">
+                                <span class="kpi-label">Visibility Score</span>
+                                <span class="kpi-value" id="kpi-vis">85%</span>
+                                <span class="kpi-delta up"><i class="fa-solid fa-arrow-up"></i> +5.2% за 30 дн</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card" data-aos="fade-up" data-aos-delay="100">
+                            <div class="kpi-icon ic-purple"><i class="fa-solid fa-bullseye"></i></div>
+                            <div class="kpi-info">
+                                <span class="kpi-label">Share of Voice</span>
+                                <span class="kpi-value" id="kpi-sov">34%</span>
+                                <span class="kpi-delta up"><i class="fa-solid fa-arrow-up"></i> +2.1%</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card" data-aos="fade-up" data-aos-delay="200">
+                            <div class="kpi-icon ic-green"><i class="fa-solid fa-quote-right"></i></div>
+                            <div class="kpi-info">
+                                <span class="kpi-label">Цитирований</span>
+                                <span class="kpi-value" id="kpi-cit">1 240</span>
+                                <span class="kpi-delta up"><i class="fa-solid fa-arrow-up"></i> +87</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card" data-aos="fade-up" data-aos-delay="300">
+                            <div class="kpi-icon ic-orange"><i class="fa-solid fa-ranking-star"></i></div>
+                            <div class="kpi-info">
+                                <span class="kpi-label">Средняя позиция</span>
+                                <span class="kpi-value" id="kpi-pos">2.7</span>
+                                <span class="kpi-delta down"><i class="fa-solid fa-arrow-down"></i> -0.4 (лучше)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dash-card" data-aos="fade-up">
+                        <div class="dash-card-head">
+                            <h3>Тренд видимости за 30 дней</h3>
+                            <div class="legend-inline">
+                                <span><i class="fa-solid fa-circle c1"></i> ChatGPT</span>
+                                <span><i class="fa-solid fa-circle c2"></i> Claude</span>
+                                <span><i class="fa-solid fa-circle c3"></i> Perplexity</span>
+                            </div>
+                        </div>
+                        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+                    </div>
+
+                    <div class="dash-two">
+                        <div class="dash-card" data-aos="fade-up">
+                            <div class="dash-card-head"><h3>Доля голоса по моделям</h3></div>
+                            <div class="chart-wrap"><canvas id="sovChart"></canvas></div>
+                        </div>
+                        <div class="dash-card" data-aos="fade-up" data-aos-delay="100">
+                            <div class="dash-card-head"><h3>Распределение ролей бренда</h3></div>
+                            <div class="chart-wrap"><canvas id="roleChart"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: QUERIES -->
+                <div class="tab-panel" id="tab-queries">
+                    <div class="dash-card">
+                        <div class="dash-card-head">
+                            <h3>Запросы и позиции</h3>
+                            <div class="dash-search">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="querySearch" placeholder="Поиск по запросам…">
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="data-table" id="queriesTable">
+                                <thead>
+                                    <tr>
+                                        <th>Запрос</th>
+                                        <th>Позиция в AI</th>
+                                        <th>Роль бренда</th>
+                                        <th>Тренд</th>
+                                        <th>Обновлено</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB: COMPETITORS -->
+                <div class="tab-panel" id="tab-competitors">
+                    <div class="dash-card">
+                        <div class="dash-card-head"><h3>Сравнение доли голоса с конкурентами</h3></div>
+                        <div class="chart-wrap chart-tall"><canvas id="compChart"></canvas></div>
+                    </div>
+                    <div class="comp-cards" id="compCards"></div>
+                </div>
+
+                <!-- TAB: BRANDS / РЕЙТИНГ ЦИТИРУЕМОСТИ -->
+                <div class="tab-panel" id="tab-brands">
+                    <div class="dash-card">
+                        <div class="dash-card-head">
+                            <h3>Рейтинг цитируемости брендов в AI</h3>
+                            <span class="muted">Упоминаний в ответах AI за 30 дней</span>
+                        </div>
+                        <!-- фильтры по AI-моделям -->
+                        <div class="filter-pills" id="brandFilters">
+                            <button class="pill active" data-ai="all">Все AI</button>
+                            <button class="pill" data-ai="ChatGPT">ChatGPT</button>
+                            <button class="pill" data-ai="Claude">Claude</button>
+                            <button class="pill" data-ai="Perplexity">Perplexity</button>
+                        </div>
+                        <div class="chart-wrap chart-tall"><canvas id="brandsChart"></canvas></div>
+                    </div>
+                </div>
+
+                <!-- TAB: RECOMMENDATIONS -->
+                <div class="tab-panel" id="tab-reco">
+                    <div class="dash-card">
+                        <div class="dash-card-head">
+                            <h3>Приоритезированный план действий</h3>
+                            <span class="muted">Отмечайте задачи — список обновится</span>
+                        </div>
+                        <ul class="reco-list" id="recoList"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 5. PRICING PAGE                                               -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-pricing" data-page="pricing">
+        <div class="page-hero">
+            <div class="container">
+                <span class="eyebrow">Цены</span>
+                <h1 class="page-title">Прозрачные тарифы для <span class="accent">любой команды</span></h1>
+                <p class="page-sub">Начните бесплатно. Платите только когда увидите результат.</p>
+            </div>
+        </div>
+
+        <section class="section">
+            <div class="container">
+                <div class="pricing-grid">
+                    <div class="price-card" data-aos="fade-up">
+                        <h3 class="price-name">Базовый</h3>
+                        <div class="price-value">$29<span>/мес</span></div>
+                        <p class="price-desc">Для небольших брендов и фрилансеров</p>
+                        <ul class="price-features">
+                            <li><i class="fa-solid fa-check"></i> 1 бренд</li>
+                            <li><i class="fa-solid fa-check"></i> 50 запросов</li>
+                            <li><i class="fa-solid fa-check"></i> 3 AI-модели</li>
+                            <li><i class="fa-solid fa-check"></i> Еженедельный отчёт</li>
+                            <li class="off"><i class="fa-solid fa-xmark"></i> Анализ конкурентов</li>
+                            <li class="off"><i class="fa-solid fa-xmark"></i> API доступ</li>
+                        </ul>
+                        <button class="btn btn-ghost btn-block" data-plan="Базовый">Выбрать</button>
+                    </div>
+
+                    <div class="price-card price-popular" data-aos="fade-up" data-aos-delay="100">
+                        <span class="price-badge">Самый популярный</span>
+                        <h3 class="price-name">Про</h3>
+                        <div class="price-value">$89<span>/мес</span></div>
+                        <p class="price-desc">Для растущих маркетинговых команд</p>
+                        <ul class="price-features">
+                            <li><i class="fa-solid fa-check"></i> 3 бренда</li>
+                            <li><i class="fa-solid fa-check"></i> 500 запросов</li>
+                            <li><i class="fa-solid fa-check"></i> 15+ AI-моделей</li>
+                            <li><i class="fa-solid fa-check"></i> Анализ конкурентов</li>
+                            <li><i class="fa-solid fa-check"></i> Приоритезация задач</li>
+                            <li><i class="fa-solid fa-check"></i> Экспорт PDF/XLSX</li>
+                        </ul>
+                        <button class="btn btn-primary btn-block" data-plan="Про">Выбрать</button>
+                    </div>
+
+                    <div class="price-card" data-aos="fade-up" data-aos-delay="200">
+                        <h3 class="price-name">Бизнес</h3>
+                        <div class="price-value">$249<span>/мес</span></div>
+                        <p class="price-desc">Для агентств и крупных брендов</p>
+                        <ul class="price-features">
+                            <li><i class="fa-solid fa-check"></i> Безлимит брендов</li>
+                            <li><i class="fa-solid fa-check"></i> 10 000 запросов</li>
+                            <li><i class="fa-solid fa-check"></i> Все AI + бета-модели</li>
+                            <li><i class="fa-solid fa-check"></i> White-label отчёты</li>
+                            <li><i class="fa-solid fa-check"></i> API и интеграции</li>
+                            <li><i class="fa-solid fa-check"></i> Персональный менеджер</li>
+                        </ul>
+                        <button class="btn btn-ghost btn-block" data-plan="Бизнес">Выбрать</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ -->
+        <section class="section section-soft">
+            <div class="container container-narrow">
+                <div class="section-head" data-aos="fade-up">
+                    <span class="eyebrow">FAQ</span>
+                    <h2 class="section-title">Частые вопросы</h2>
+                </div>
+                <div class="accordion" id="faq">
+                    <div class="acc-item">
+                        <button class="acc-head">Что входит в бесплатный пробный период? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>7 дней полного доступа ко всем функциям тарифа «Про» без карты. Можно подключить бренд, запросы и конкурентов.</p></div>
+                    </div>
+                    <div class="acc-item">
+                        <button class="acc-head">Какие AI-модели вы отслеживаете? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>ChatGPT, Claude, Perplexity, YandexGPT, GigaChat, Gemini, Copilot, Mistral и другие — более 15 моделей, список регулярно пополняется.</p></div>
+                    </div>
+                    <div class="acc-item">
+                        <button class="acc-head">Можно ли сменить тариф? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>Да, в любой момент в один клик. Переход на старший тариф — мгновенно, на младший — с начала следующего периода.</p></div>
+                    </div>
+                    <div class="acc-item">
+                        <button class="acc-head">Как часто обновляются данные? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>На тарифах Про и Бизнес — ежедневно, на Базовом — еженедельно. Можно запустить внеплановое сканирование вручную.</p></div>
+                    </div>
+                    <div class="acc-item">
+                        <button class="acc-head">Есть ли API? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>API доступен на тарифе «Бизнес». Документация — в разделе «Ресурсы». REST + вебхуки.</p></div>
+                    </div>
+                    <div class="acc-item">
+                        <button class="acc-head">Возвращаете ли вы деньги? <i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="acc-body"><p>Да, в течение 14 дней после оплаты без вопросов. Просто напишите в поддержку.</p></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA -->
+        <section class="section">
+            <div class="container">
+                <div class="cta-box cta-bright" data-aos="fade-up">
+                    <div class="cta-text">
+                        <h2>Начните бесплатный 7-дневный доступ</h2>
+                        <p>Без карты. Без обязательств. Полный функционал тарифа «Про».</p>
+                    </div>
+                    <button class="btn btn-light btn-lg" data-cta="signup">
+                        <i class="fa-solid fa-rocket"></i> Активировать триал
+                    </button>
+                </div>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 6. RESOURCES PAGE                                             -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-resources" data-page="resources">
+        <div class="page-hero">
+            <div class="container">
+                <span class="eyebrow">Ресурсы</span>
+                <h1 class="page-title">Знания, которые <span class="accent">растят видимость</span></h1>
+                <p class="page-sub">Блог, видеоуроки, кейсы и глоссарий по Generative Engine Optimization.</p>
+            </div>
+        </div>
+
+        <section class="section">
+            <div class="container">
+                <div class="tabs tabs-center" role="tablist">
+                    <button class="tab active" data-rtab="blog"><i class="fa-solid fa-newspaper"></i> Блог</button>
+                    <button class="tab" data-rtab="video"><i class="fa-solid fa-video"></i> Видеоуроки</button>
+                    <button class="tab" data-rtab="cases"><i class="fa-solid fa-trophy"></i> Кейсы</button>
+                </div>
+
+                <!-- BLOG -->
+                <div class="rtab-panel active" id="rtab-blog">
+                    <div class="grid grid-3" id="blogGrid"></div>
+                </div>
+
+                <!-- VIDEO -->
+                <div class="rtab-panel" id="rtab-video">
+                    <div class="grid grid-3" id="videoGrid"></div>
+                </div>
+
+                <!-- CASES -->
+                <div class="rtab-panel" id="rtab-cases">
+                    <div class="grid grid-2" id="caseGrid"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- GLOSSARY -->
+        <section class="section section-soft">
+            <div class="container">
+                <div class="section-head" data-aos="fade-up">
+                    <span class="eyebrow">Глоссарий GEO</span>
+                    <h2 class="section-title">Ключевые термины</h2>
+                    <p class="section-sub">Generative Engine Optimization — новая дисциплина маркетинга.</p>
+                </div>
+                <div class="glossary" id="glossary"></div>
+            </div>
+        </section>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 7. CONTACTS + ABOUT PAGE                                      -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-contacts" data-page="contacts">
+        <div class="page-hero">
+            <div class="container">
+                <span class="eyebrow">О нас и контакты</span>
+                <h1 class="page-title">Команда, которая делает <span class="accent">бренды видимыми</span></h1>
+                <p class="page-sub">Мы помогаем компаниям понимать и управлять своим присутствием в эпоху AI-поиска.</p>
+            </div>
+        </div>
+
+        <!-- ABOUT -->
+        <section class="section">
+            <div class="container">
+                <div class="about-grid">
+                    <div class="about-text" data-aos="fade-right">
+                        <span class="eyebrow">Миссия</span>
+                        <h2 class="section-title">Превратить AI в управляемый канал роста</h2>
+                        <p>Vidno создан в 2024 году командой маркетологов и ML-инженеров. Мы верим, что в ближайшие 5 лет AI-ассистенты станут главным источником рекомендаций, и брендам нужны инструменты, чтобы быть услышанными.</p>
+                        <p>Наш продукт объединяет мониторинг 15+ AI-моделей, анализ намерений и приоритезированные рекомендации в одном окне. Сегодня нас используют более 2 000 брендов по всему миру.</p>
+                        <div class="about-stats">
+                            <div><strong>2 000+</strong><span>клиентов</span></div>
+                            <div><strong>15+</strong><span>AI-моделей</span></div>
+                            <div><strong>40</strong><span>экспертов</span></div>
+                            <div><strong>2024</strong><span>основан</span></div>
+                        </div>
+                    </div>
+                    <div class="about-team" data-aos="fade-left">
+                        <div class="team-card">
+                            <div class="team-avatar grad-1">МК</div>
+                            <strong>Михаил Кравцов</strong>
+                            <span>CEO & Co-founder</span>
+                        </div>
+                        <div class="team-card">
+                            <div class="team-avatar grad-2">ЕЛ</div>
+                            <strong>Елена Лебедева</strong>
+                            <span>CTO & Co-founder</span>
+                        </div>
+                        <div class="team-card">
+                            <div class="team-avatar grad-3">ДП</div>
+                            <strong>Дмитрий Павлов</strong>
+                            <span>Head of ML</span>
+                        </div>
+                        <div class="team-card">
+                            <div class="team-avatar grad-4">ОС</div>
+                            <strong>Ольга Смирнова</strong>
+                            <span>Head of Marketing</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CONTACT -->
+        <section class="section section-soft">
+            <div class="container">
+                <div class="contact-grid">
+                    <div class="contact-info" data-aos="fade-right">
+                        <span class="eyebrow">Свяжитесь с нами</span>
+                        <h2 class="section-title">Поговорим о вашем бренде</h2>
+                        <ul class="contact-list">
+                            <li><i class="fa-solid fa-envelope"></i> <a href="mailto:hello@vidno.ai">hello@vidno.ai</a></li>
+                            <li><i class="fa-solid fa-phone"></i> +7 (495) 123-45-67</li>
+                            <li><i class="fa-solid fa-location-dot"></i> Москва, ул. Инноваций, 7</li>
+                        </ul>
+                        <div class="socials">
+                            <a href="#" class="social linkedin" title="LinkedIn"><i class="fa-brands fa-linkedin-in"></i></a>
+                            <a href="#" class="social youtube" title="YouTube"><i class="fa-brands fa-youtube"></i></a>
+                            <a href="#" class="social telegram" title="Telegram"><i class="fa-brands fa-telegram"></i></a>
+                            <a href="#" class="social x" title="X"><i class="fa-brands fa-x-twitter"></i></a>
+                        </div>
+                    </div>
+
+                    <form class="contact-form" id="contactForm" data-aos="fade-left">
+                        <div class="form-row">
+                            <label>Имя</label>
+                            <input type="text" name="name" required placeholder="Ваше имя">
+                        </div>
+                        <div class="form-row">
+                            <label>Email</label>
+                            <input type="email" name="email" required placeholder="you@company.com">
+                        </div>
+                        <div class="form-row">
+                            <label>Сообщение</label>
+                            <textarea name="message" rows="5" required placeholder="Расскажите о вашем бренде и целях…"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">
+                            <i class="fa-solid fa-paper-plane"></i> Отправить
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
+    </section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+    <div class="container footer-inner">
+        <div class="footer-brand">
+            <a href="#" class="logo" data-nav="home">
+                <span class="logo-icon"><i class="fa-solid fa-eye"></i></span>
+                <span class="logo-text">Vid<span class="accent">no</span></span>
+            </a>
+            <p>Мониторинг видимости бренда в AI. Превращаем данные в рост.</p>
+            <div class="socials small">
+                <a href="#" class="social linkedin"><i class="fa-brands fa-linkedin-in"></i></a>
+                <a href="#" class="social youtube"><i class="fa-brands fa-youtube"></i></a>
+                <a href="#" class="social telegram"><i class="fa-brands fa-telegram"></i></a>
+            </div>
+        </div>
+        <div class="footer-cols">
+            <div class="footer-col">
+                <h4>Продукт</h4>
+                <button data-nav="features">Возможности</button>
+                <button data-nav="how">Как это работает</button>
+                <button data-nav="dashboard">Дашборд</button>
+                <button data-nav="pricing">Цены</button>
+            </div>
+            <div class="footer-col">
+                <h4>Ресурсы</h4>
+                <button data-nav="resources">Блог</button>
+                <button data-nav="resources">Видеоуроки</button>
+                <button data-nav="resources">Кейсы</button>
+                <button data-nav="resources">Глоссарий</button>
+            </div>
+            <div class="footer-col">
+                <h4>Компания</h4>
+                <button data-nav="contacts">О нас</button>
+                <button data-nav="contacts">Контакты</button>
+                <button data-cta="signup">Регистрация</button>
+                <button data-cta="demo">Демо</button>
+            </div>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        <div class="container">
+            <span>© 2026 Vidno. Все права защищены.</span>
+            <span class="muted">Сделано с <i class="fa-solid fa-heart accent"></i> для маркетологов</span>
+        </div>
+    </div>
+</footer>
+
+<!-- ============ MODAL CONTAINER ============ -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal" id="modal">
+        <button class="modal-close" id="modalClose"><i class="fa-solid fa-xmark"></i></button>
+        <div class="modal-body" id="modalBody"></div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="js/script.js"></script>
 </body>
 </html>
