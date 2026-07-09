@@ -31,19 +31,25 @@
 <!-- ============ HEADER / NAV ============ -->
 <header class="header" id="header">
     <div class="container header-inner">
-        <a href="#" class="logo" data-nav="home">
-            <span class="logo-icon"><i class="fa-solid fa-eye"></i></span>
-            <span class="logo-text">Vid<span class="accent">no</span></span>
-        </a>
-
-        <nav class="nav" id="navMenu">
-            <button class="nav-link" data-nav="home">Главная</button>
-            <button class="nav-link" data-nav="dashboard">Дашборд</button>
-        </nav>
+        <div class="header-left">
+            <a href="#" class="logo" data-nav="home">
+                <span class="logo-icon"><i class="fa-solid fa-eye"></i></span>
+                <span class="logo-text">Vid<span class="accent">no</span></span>
+            </a>
+            <nav class="nav" id="navMenu">
+                <button class="nav-link" data-nav="home">Главная</button>
+                <button class="nav-link" data-nav="dashboard">Дашборд</button>
+                <button class="nav-link" data-nav="pricing">Цены</button>
+                <button class="nav-link" data-nav="faq">FAQ</button>
+            </nav>
+        </div>
 
         <div class="header-actions">
-            <button class="btn btn-ghost btn-login" data-cta="login">
+            <button class="btn btn-login" data-cta="login">
                 <i class="fa-solid fa-right-to-bracket"></i> Войти
+            </button>
+            <button class="btn btn-primary btn-signup" data-cta="signup">
+                <i class="fa-solid fa-rocket"></i> Регистрация
             </button>
             <button class="burger" id="burger" aria-label="Меню">
                 <span></span><span></span><span></span>
@@ -486,7 +492,7 @@
         </section>
 
         <!-- FAQ -->
-        <section class="section section-soft">
+        <section class="section section-soft" id="section-faq">
             <div class="container container-narrow">
                 <div class="section-head" data-aos="fade-up">
                     <span class="eyebrow">FAQ</span>

@@ -97,6 +97,7 @@ function navigate(pageId) {
         features: 'section-features',
         how: 'section-how',
         pricing: 'section-pricing',
+        faq: 'section-faq',
         contacts: 'section-contacts',
         resources: 'section-features'
     };
