@@ -63,12 +63,12 @@ const ROLE_TYPES = [
 ];
 
 const RECOMMENDATIONS = [
-    { prio: 'high', title: 'Добавить контент по запросу «GEO оптимизация»', tip: 'Создайте статью 1500+ слов с разметкой FAQPage и HowTo — это повысит шанс попадания в AI-ответы на 35%.', done: false },
-    { prio: 'high', title: 'Усилить сравнительные страницы', tip: 'Конкуренты опережают в ответах «сравнение брендов». Добавьте таблицу сравнения с преимуществами.', done: false },
-    { prio: 'med',  title: 'Обновить структуру данных на главной', tip: 'Внедрите Organization schema.org — это поможет AI корректно идентифицировать бренд.', done: false },
-    { prio: 'med',  title: 'Получить упоминания на авторитетных ресурсах', tip: 'Цитирования на 3+ трастовых сайтах увеличивают видимость в среднем на 18%.', done: false },
-    { prio: 'low',  title: 'Добавить глоссарий терминов отрасли', tip: 'Глоссарий с определениями часто попадает в ответы на «что такое …» запросы.', done: true },
-    { prio: 'low',  title: 'Оптимизировать скорость загрузки', tip: 'LCP < 2.5с и CLS < 0.1 — положительный сигнал для AI-краулеров.', done: false }
+    { prio: 'high', title: 'Бренд не упоминается в ChatGPT по запросу «GEO оптимизация»', tip: 'Различие между моделями: ChatGPT — нет упоминания, Claude — Лидер, Perplexity — Альтернатива. Требуется анализ.', done: false },
+    { prio: 'high', title: 'Потеря позиции в сравнительных запросах', tip: 'За месяц доля голоса упала с 34% до 28%. Основная просадка — в ответах на «сравнение брендов».', done: false },
+    { prio: 'med',  title: 'Некорректная идентификация на главной', tip: 'ChatGPT определяет бренд как «сервис», а не IT-компания. Возможная причина — отсутствие Organization schema.', done: false },
+    { prio: 'med',  title: 'Низкая цитируемость на авторитетных источниках', tip: 'Количество упоминаний на сторонних сайтах, которые AI использует как источники, ниже среднего по рынку на 40%.', done: false },
+    { prio: 'low',  title: 'Пробел в глоссарийных запросах', tip: 'На запрос «что такое мониторинг AI-видимости» ваш бренд не упоминается ни одной моделью.', done: true },
+    { prio: 'low',  title: 'Скорость загрузки влияет на видимость', tip: 'LCP — 3.2с (норма < 2.5с). AI-краулеры могут не дочитывать страницы с медленной загрузкой.', done: false }
 ];
 
 
@@ -79,13 +79,13 @@ const FEATURE_DETAILS = {
     'feat-2': { title: 'Анализ намерений', icon: 'fa-solid fa-brain',
         body: 'Каждый запрос классифицируется по интенту: информационный, транзакционный, навигационный, сравнительный. Это помогает понять, на каких этапах воронки AI не упоминает ваш бренд.' },
     'feat-3': { title: 'Сравнение с конкурентами', icon: 'fa-solid fa-scale-balanced',
-        body: 'Столбчатая и линейная диаграммы доли голоса. Сравнение по моделям, периодам, ролям. Видно, где вы опережаете, а где — отстаёте от конкретных конкурентов.' },
-    'feat-4': { title: 'Приоритезированный план действий', icon: 'fa-solid fa-clipboard-check',
-        body: 'Алгоритм анализирует инсайты и формирует список задач с приоритетом (высокий/средний/низкий), ожидаемым эффектом и подсказками по реализации. Чекбоксы — для отслеживания выполнения.' },
+        body: 'Доля голоса каждого конкурента в разрезе AI-моделей: где вы лидируете, где наравне, а где вас не упоминают. Данные по всем 15+ моделям в едином интерфейсе.' },
+    'feat-4': { title: 'Приоритезация данных', icon: 'fa-solid fa-list',
+        body: 'Система ранжирует аномалии по критичности: падение позиции, отсутствие в ответах, просадка доли голоса. Вы видите, на какие данные обратить внимание в первую очередь.' },
     'feat-5': { title: 'Технический аудит страниц', icon: 'fa-solid fa-stethoscope',
         body: 'Индекс здоровья контента: разметка schema.org, скорость, структура, цитируемость. Система находит страницы, которые мешают попаданию в AI-ответы, и предлагает конкретные правки.' },
-    'feat-6': { title: 'Отчёты и экспорт', icon: 'fa-solid fa-file-export',
-        body: 'Готовые шаблоны отчётов для команд, клиентов и руководства. Экспорт в PDF, XLSX, PNG (для графиков). White-label на тарифе «Бизнес». Расписание автоматической отправки на email.' }
+    'feat-6': { title: 'Экспорт данных', icon: 'fa-solid fa-file-export',
+        body: 'Выгрузка данных в PDF, XLSX и PNG. Для собственных отчётов, презентаций и дальнейшего анализа. Автоматическая еженедельная рассылка на email.' }
 };
 
 /* ============ 2. NAVIGATION & ROUTING ============ */
@@ -204,8 +204,8 @@ function openCtaModal(type) {
     const isLogin = type === 'login';
     if (isLogin) {
         openModal(`
-            <h2>Вход в Vidno</h2>
-            <p>Войдите в личный кабинет, чтобы открыть дашборд и отчёты.</p>
+            <h2>Вход</h2>
+            <p>Войдите в дашборд для просмотра данных по вашему бренду.</p>
             <form class="modal-form" id="modalForm">
                 <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
                 <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="••••••••" minlength="6"></div>
@@ -221,19 +221,19 @@ function openCtaModal(type) {
         return;
     }
     openModal(`
-        <h2>${isDemo ? 'Запрос демо-отчёта' : 'Регистрация'}</h2>
-        <p>${isDemo ? 'Оставьте контакты — пришлём отчёт по 10 запросам бесплатно.' : 'Создайте аккаунт за 30 секунд и получите 7 дней тарифа «Про».'}</p>
+        <h2>${isDemo ? 'Демо-отчёт' : 'Начать мониторинг'}</h2>
+        <p>${isDemo ? 'Оставьте контакты — пришлём отчёт по 10 запросам срезом по всем AI-моделям.' : 'Создайте аккаунт и сразу увидите данные по своему бренду в 15+ AI-моделях.'}</p>
         <form class="modal-form" id="modalForm">
             <div class="form-row"><label>Имя</label><input type="text" name="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
-            <div class="form-row"><label>Бренд</label><input type="text" name="brand" placeholder="Название компании"></div>
-            <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> ${isDemo ? 'Получить демо' : 'Создать аккаунт'}</button>
+            <div class="form-row"><label>Бренд (сайт)</label><input type="text" name="brand" placeholder="example.com"></div>
+            <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> ${isDemo ? 'Получить отчёт' : 'Увидеть свои данные'}</button>
         </form>
     `);
     $('#modalForm').addEventListener('submit', e => {
         e.preventDefault();
         closeModal();
-        showToast(isDemo ? 'Заявка принята! Демо-отчёт придёт на почту.' : 'Аккаунт создан! Проверьте почту для активации.');
+        showToast(isDemo ? 'Демо-отчёт формируется. Придёт на почту в течение 5 минут.' : 'Дашборд открывается. Первые данные будут через 2-3 минуты.');
     });
 }
 
@@ -367,7 +367,7 @@ function renderReco() {
                 el.classList.toggle('done');
                 const chk = el.querySelector('.reco-check');
                 chk.innerHTML = RECOMMENDATIONS[i].done ? '<i class="fa-solid fa-check"></i>' : '';
-                showToast(RECOMMENDATIONS[i].done ? 'Задача отмечена выполненной' : 'Задача возвращена в работу');
+                showToast(RECOMMENDATIONS[i].done ? 'Аномалия отмечена как проанализированная' : 'Возвращена в список активных');
             } else {
                 el.classList.toggle('open');
             }

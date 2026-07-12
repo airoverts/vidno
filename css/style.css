@@ -91,7 +91,7 @@ img { max-width: 100%; display: block; }
 .section { padding: 80px 0; }
 .section-soft { background: var(--bg-soft); }
 .section-head { text-align: center; max-width: 720px; margin: 0 auto 48px; }
-.section-title { font-size: clamp(1.6rem, 3vw, 2.4rem); margin: 12px 0; color: var(--accent); }
+.section-title { font-size: clamp(1.6rem, 3vw, 2.4rem); margin: 12px 0; color: var(--text); }
 .section-sub { color: var(--text-soft); font-size: 1.05rem; }
 
 .eyebrow {
@@ -241,6 +241,17 @@ img { max-width: 100%; display: block; }
 .hero-subtitle { font-size: 1.15rem; color: var(--text-soft); margin-bottom: 28px; max-width: 560px; }
 .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 36px; }
 .hero-stats { display: flex; gap: 32px; }
+.hero-stats > div { position: relative; }
+.hero-stats > div:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: -16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1px;
+    height: 28px;
+    background: var(--border);
+}
 .hero-stats strong { display: block; font-size: 1.6rem; color: var(--accent); }
 .hero-stats span { font-size: 0.85rem; color: var(--text-soft); }
 
@@ -326,6 +337,8 @@ img { max-width: 100%; display: block; }
 .adv-card h3 { font-size: 1.2rem; margin-bottom: 10px; }
 .adv-card p { color: var(--text-soft); }
 
+.section-soft .adv-card { background: var(--bg); }
+
 .testimonial {
     background: var(--bg-2);
     border: 1px solid var(--border);
@@ -393,7 +406,7 @@ img { max-width: 100%; display: block; }
 .timeline { position: relative; padding: 20px 0; }
 .timeline-line {
     position: absolute; left: 28px; top: 0; bottom: 0;
-    width: 2px; background: linear-gradient(to bottom, var(--accent), var(--accent-2), transparent);
+    width: 2px; background: linear-gradient(to bottom, var(--accent), var(--accent-2) 80%, transparent);
 }
 .tl-step {
     display: grid; grid-template-columns: 60px 1fr;
@@ -468,7 +481,6 @@ img { max-width: 100%; display: block; }
     padding: 14px 14px 16px;
     display: flex; flex-direction: column; gap: 12px;
 }
-.grow-wide { grid-column: 1 / -1; }
 .grow-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .grow-card-title { font-size: 0.82rem; font-weight: 700; color: var(--text); }
 
@@ -503,22 +515,6 @@ img { max-width: 100%; display: block; }
 .grow-hrow:nth-child(3) .grow-hbar span { background: var(--surface-1); }
 .grow-hrow:nth-child(4) .grow-hbar span { background: var(--neutral); }
 .grow-hval { font-size: 0.76rem; font-weight: 700; color: var(--text-soft); text-align: right; }
-
-/* — линейный график (позиции) — */
-.grow-line-chart svg { width: 100%; height: 96px; }
-.grow-line { stroke: var(--accent); stroke-width: 2.5; fill: none; stroke-linejoin: round; stroke-linecap: round; }
-.grow-line-area { stroke: none; }
-.grow-line-axis { display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--text-soft); padding: 2px 4px 0; }
-.grow-line-axis .accent { color: var(--accent); font-weight: 700; }
-
-/* — прогресс выполнения задач — */
-.grow-progress-row { display: flex; flex-direction: column; gap: 14px; }
-.grow-progress { height: 16px; background: var(--bg-soft); border-radius: 999px; overflow: hidden; }
-.grow-progress span { display: block; height: 100%; background: linear-gradient(to right, var(--accent), var(--accent-2)); border-radius: 999px; }
-.grow-progress-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.grow-progress-stats > div { text-align: center; }
-.grow-progress-stats strong { display: block; font-size: 1.15rem; color: var(--accent); }
-.grow-progress-stats span { font-size: 0.66rem; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .grow-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
@@ -897,7 +893,6 @@ img { max-width: 100%; display: block; }
     .cta-box { flex-direction: column; text-align: center; }
     .dm-row { grid-template-columns: 1fr; }
     .grow-grid { grid-template-columns: 1fr; }
-    .grow-progress-stats { grid-template-columns: 1fr 1fr; }
     .tabs { overflow-x: auto; flex-wrap: nowrap; }
     .tab { white-space: nowrap; }
     .dash-search input { width: 130px; }
