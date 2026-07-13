@@ -164,6 +164,15 @@ document.addEventListener('click', e => {
         e.preventDefault();
         openFeatureModal(featEl.dataset.modalOpen);
     }
+    const tabEl = e.target.closest('.scenario-tab');
+    if (tabEl) {
+        const tabs = tabEl.parentElement;
+        const content = tabs.nextElementSibling;
+        tabs.querySelectorAll('.scenario-tab').forEach(t => t.classList.remove('active'));
+        tabEl.classList.add('active');
+        content.querySelectorAll('.scenario-panel').forEach(p => p.classList.remove('active'));
+        content.querySelector(`[data-panel="${tabEl.dataset.tab}"]`).classList.add('active');
+    }
 });
 
 /* ============ 3. STATE & MOBILE BURGER ============ */
@@ -609,6 +618,29 @@ $$('.acc-head').forEach(head => {
     });
 });
 
+/* ============ 9. PRICING TOGGLE ============ */
+const pricingToggle = $('#pricingToggle');
+if (pricingToggle) {
+    const labels = $$('.pricing-toggle-label');
+    const priceValues = $$('.price-value[data-monthly]');
+    const annualNotes = $$('.price-annual-note');
+
+    pricingToggle.addEventListener('change', () => {
+        const isAnnual = pricingToggle.checked;
+        labels.forEach(l => l.classList.remove('active'));
+        labels[isAnnual ? 1 : 0].classList.add('active');
+
+        priceValues.forEach(el => {
+            const price = isAnnual ? el.dataset.annual : el.dataset.monthly;
+            el.innerHTML = `${price}<span>/мес</span>`;
+        });
+
+        annualNotes.forEach(n => {
+            if (isAnnual) { n.classList.add('visible'); } else { n.classList.remove('visible'); }
+        });
+    });
+}
+
 /* ============ 10. CONTACT FORM ============ */
 $('#contactForm').addEventListener('submit', e => {
     e.preventDefault();
@@ -617,6 +649,26 @@ $('#contactForm').addEventListener('submit', e => {
     e.target.reset();
     showToast(`Спасибо, ${name}! Сообщение отправлено.`, 'fa-solid fa-paper-plane');
 });
+
+/* ============ 10. ANALYZE TEXT ROTATION ============ */
+const analyzeModels = [
+    { name: 'ChatGPT', percent: 78 },
+    { name: 'Claude', percent: 57 },
+    { name: 'Perplexity', percent: 92 },
+    { name: 'YandexGPT', percent: 64 },
+    { name: 'GigaChat', percent: 45 },
+    { name: 'Gemini', percent: 83 }
+];
+
+let currentModel = 0;
+setInterval(() => {
+    const el = document.getElementById('analyzeText');
+    if (el) {
+        currentModel = (currentModel + 1) % analyzeModels.length;
+        const model = analyzeModels[currentModel];
+        el.textContent = `Анализируем ${model.name}… ${model.percent}%`;
+    }
+}, 5000);
 
 /* ============ 11. INIT ============ */
 document.addEventListener('DOMContentLoaded', () => {
