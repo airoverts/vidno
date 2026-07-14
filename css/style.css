@@ -115,7 +115,7 @@ img { max-width: 100%; display: block; }
     margin-bottom: 20px;
 }
 
-.grid { display: grid; gap: 24px; }
+.grid { display: grid; gap: 24px; margin-bottom: 35px;}
 .grid-2 { grid-template-columns: repeat(2, 1fr); }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
 
