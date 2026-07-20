@@ -685,6 +685,25 @@ setInterval(() => {
 /* ============ 10.5 WORKSPACE — GigaChat check ============ */
 const WS_API = 'http://localhost:8000/api';
 
+$('#wsClearCache').addEventListener('click', async () => {
+    try {
+        const resp = await fetch(WS_API + '/cache', { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.status === 'cleared') {
+            const btn = $('#wsClearCache');
+            const icon = btn.querySelector('i');
+            icon.className = 'fa-solid fa-check';
+            btn.style.color = 'var(--ok)';
+            setTimeout(() => {
+                icon.className = 'fa-solid fa-trash-can';
+                btn.style.color = '';
+            }, 1500);
+        }
+    } catch (e) {
+        console.error('Cache clear failed:', e);
+    }
+});
+
 $('#wsCheck').addEventListener('click', async () => {
     const brand = $('#wsBrand').value.trim();
     const query = $('#wsQuery').value.trim();
@@ -737,6 +756,8 @@ function renderWsResult(data) {
     const quotes = $('#wsQuotes');
     const brandsWrap = $('#wsBrandsWrap');
     const brands = $('#wsBrands');
+    const sourcesWrap = $('#wsSourcesWrap');
+    const sources = $('#wsSources');
 
     if (data.mentioned) {
         verdict.className = 'ws-verdict mentioned';
@@ -774,6 +795,43 @@ function renderWsResult(data) {
         brandsWrap.hidden = false;
     } else {
         brandsWrap.hidden = true;
+    }
+
+    if (data.sources && data.sources.length) {
+        const analysisMap = {};
+        if (data.source_analysis && data.source_analysis.length) {
+            data.source_analysis.forEach(a => {
+                analysisMap[a.source_index] = a;
+            });
+        }
+
+        let sourcesHtml = '';
+        data.sources.forEach((source, idx) => {
+            const analysis = analysisMap[idx + 1];
+            const mentioned = analysis ? analysis.mentions_brand : null;
+            const statusIcon = mentioned === true ? '<i class="fa-solid fa-check-circle ws-source-mentioned"></i>' :
+                               mentioned === false ? '<i class="fa-solid fa-times-circle ws-source-not-mentioned"></i>' :
+                               '<i class="fa-solid fa-question-circle ws-source-unknown"></i>';
+
+            const authClass = source.authority_score >= 8 ? 'ws-auth-high' :
+                              source.authority_score >= 5 ? 'ws-auth-med' : 'ws-auth-low';
+
+            const title = source.title || 'Без названия';
+            const url = source.url || '#';
+
+            sourcesHtml += `
+                <div class="ws-source-card">
+                    ${statusIcon}
+                    <a href="${url}" target="_blank" rel="noopener" class="ws-source-link">${title}</a>
+                    <span class="ws-source-auth ${authClass}">${source.authority_label}</span>
+                </div>
+            `;
+        });
+
+        sources.innerHTML = sourcesHtml;
+        sourcesWrap.hidden = false;
+    } else {
+        sourcesWrap.hidden = true;
     }
 
     result.hidden = false;

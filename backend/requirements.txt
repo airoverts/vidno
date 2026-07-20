@@ -4,3 +4,8 @@ httpx
 python-dotenv
 PyJWT[crypto]
 ddgs>=9.0.0
+requests
+beautifulsoup4
+sumy
+nltk
+numpy

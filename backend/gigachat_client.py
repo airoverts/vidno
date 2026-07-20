@@ -86,24 +86,32 @@ def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2
     return data["choices"][0]["message"]["content"]
 
 
-SYSTEM_PROMPT_ANALYZE = """Ты — аналитик видимости бренда в AI-поиске. Твоя задача — проанализировать предоставленный контекст (результаты поиска) и определить, как в нём представлен бренд {brand}.
+SYSTEM_PROMPT_ANALYZE = """Ты — аналитик видимости бренда в AI-поиске. Твоя задача — проанализировать предоставленный контекст (результаты поиска из 10 источников) и определить, как в них представлен бренд {brand}.
 
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
 1. Используй ИСКЛЮЧИТЕЛЬНО предоставленный контекст. Никаких внешних знаний.
 2. Если бренд не упомянут — так и скажи. Не выдумывай.
-3. Определи позицию бренда среди конкурентов в контексте (1 = упоминается первым, 2 = вторым и т.д.).
-4. Определи роль бренда: рекомендация (нейросеть советует), сравнение (сравнивает с другими), упоминание в списке, просто упоминание, не упомянут.
-5. Приведи прямые цитаты из контекста как доказательство.
-6. Перечисли ВСЕ бренды-конкуренты, упомянутые в контексте.
+3. АГРЕГИРУЙ данные по ВСЕМ 10 источникам. Не делай вывод по одной странице — учитывай общую картину.
+4. Каждый источник имеет оценку авторитетности (1-10). Учитывай ВЕС источника: мнение из авторитетного источника (8-10) важнее, чем из источника с низкой авторитетностью (1-4).
+5. Определи позицию бренда среди конкурентов В КОНТЕКСТЕ (1 = упоминается первым, 2 = вторым и т.д.).
+6. Определи роль бренда: рекомендация (источники советуют), сравнение (сравнивают с другими), упоминание в списке, просто упоминание, не упомянут.
+7. Приведи прямые цитаты из контекста как доказательство.
+8. Перечисли ВСЕ бренды-конкуренты, упомянутые в контексте.
 
 Ответь строго в формате JSON:
 {{
   "mentioned": true/false,
   "position": число_или_null,
+  "weighted_position": число_или_null,
   "role": "рекомендация" / "сравнение" / "упоминание в списке" / "упоминание" / "не упомянут",
-  "reasoning": "краткое обоснование для пользователя",
+  "reasoning": "краткое обоснование для пользователя с учётом авторитетности источников",
   "quotes": ["цитата 1 из контекста", "цитата 2"],
-  "mentioned_brands": ["бренд 1", "бренд 2"]
+  "mentioned_brands": ["бренд 1", "бренд 2"],
+  "source_analysis": [
+    {{"source_index": 1, "authority": 8, "mentions_brand": true, "sentiment": "положительный/нейтральный/отрицательный", "key_point": "краткая суть упоминания"}}
+  ],
+  "sources_count": число_источников_упоминающих_бренд,
+  "total_sources": общее_число_источников
 }}"""
 
 
@@ -193,11 +201,15 @@ def _fallback_analysis(answer: str, brand: str) -> dict:
     return {
         "mentioned": mentioned,
         "position": position,
+        "weighted_position": position,
         "total_sentences": total_sentences,
         "role": role,
         "reasoning": context or "Бренд не упомянут в предоставленном контексте.",
         "quotes": quotes,
-        "mentioned_brands": found_brands
+        "mentioned_brands": found_brands,
+        "source_analysis": [],
+        "sources_count": 0,
+        "total_sources": 10
     }
 
 
@@ -205,10 +217,10 @@ def analyze_brand_rag(brand: str, query: str, context: str) -> dict:
     logger.info(f"[RAG] Анализ бренда '{brand}' для запроса: {query}")
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT_ANALYZE.format(brand=brand)},
-        {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nЗапрос пользователя: {query}\nБренд для анализа: {brand}\n\nПроанализируй видимость бренда в контексте."}
+        {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nЗапрос пользователя: {query}\nБренд для анализа: {brand}\n\nПроанализируй видимость бренда по всем источникам, учитывая их авторитетность."}
     ]
     
-    answer = _call_gigachat(messages, temperature=0.0, max_tokens=2000)
+    answer = _call_gigachat(messages, temperature=0.0, max_tokens=3000)
     logger.debug(f"[RAG] Сырой ответ анализа: {answer[:500]}...")
     parsed = _extract_json(answer)
     
@@ -217,11 +229,15 @@ def analyze_brand_rag(brand: str, query: str, context: str) -> dict:
         return {
             "mentioned": bool(parsed.get("mentioned", False)),
             "position": parsed.get("position"),
+            "weighted_position": parsed.get("weighted_position"),
             "total_sentences": None,
             "role": parsed.get("role", "не упомянут"),
             "reasoning": parsed.get("reasoning", ""),
             "quotes": parsed.get("quotes", []),
             "mentioned_brands": parsed.get("mentioned_brands", []),
+            "source_analysis": parsed.get("source_analysis", []),
+            "sources_count": parsed.get("sources_count", 0),
+            "total_sources": parsed.get("total_sources", 10),
             "raw_answer": answer
         }
     
@@ -261,10 +277,14 @@ def check_brand(brand: str, query: str, context: str) -> dict:
         "query": query,
         "mentioned": analysis["mentioned"],
         "position": analysis["position"],
+        "weighted_position": analysis.get("weighted_position"),
         "total_sentences": analysis["total_sentences"],
         "role": analysis["role"],
         "reasoning": analysis["reasoning"],
         "quotes": analysis["quotes"],
         "mentioned_brands": analysis["mentioned_brands"],
+        "source_analysis": analysis.get("source_analysis", []),
+        "sources_count": analysis.get("sources_count", 0),
+        "total_sources": analysis.get("total_sources", 10),
         "rag": True
     }
