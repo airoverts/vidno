@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+PyJWT[crypto]
+ddgs>=9.0.0

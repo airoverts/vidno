@@ -17,7 +17,20 @@
 /* ============ 1. HELPERS & DATA ============ */
 const $  = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
-const rnd = (min, max) => Math.random() * (max - min) + min;
+
+function mulberry32(seed) {
+    return function() {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+let _seededRandom = mulberry32(42);
+const resetSeed = () => { _seededRandom = mulberry32(42); };
+
+const rnd = (min, max) => _seededRandom() * (max - min) + min;
 const rndInt = (min, max) => Math.floor(rnd(min, max + 1));
 const pick = arr => arr[rndInt(0, arr.length - 1)];
 
@@ -292,8 +305,7 @@ function showToast(msg, icon = 'fa-solid fa-circle-check') {
 
 /* ============ 7. DASHBOARD ============ */
 function buildQueries() {
-    // pick 7 random queries with random attrs
-    const pool = [...QUERIES_POOL].sort(() => Math.random() - 0.5).slice(0, 7);
+    const pool = [...QUERIES_POOL].sort(() => _seededRandom() - 0.5).slice(0, 7);
     return pool.map(q => ({
         text: q,
         pos: parseFloat(rnd(1, 5).toFixed(1)),
@@ -316,7 +328,7 @@ function chartColors() {
 }
 
 function initDashboard() {
-    // randomize KPIs
+    resetSeed();
     const vis = rndInt(70, 92);
     const sov = rndInt(25, 42);
     const cit = rndInt(900, 1500);
@@ -500,7 +512,7 @@ function renderCompChart() {
 // возвращает массив значений для выбранного AI с небольшой случайной вариацией
 function getBrandsData(ai) {
     const base = BRANDS_DATA[ai] || BRANDS_DATA.all;
-    return BRANDS_ORDER.map(b => Math.max(0, Math.round(base[b] * (1 + (Math.random() - 0.5) * 0.08))));
+    return BRANDS_ORDER.map(b => Math.max(0, Math.round(base[b] * (1 + (_seededRandom() - 0.5) * 0.08))));
 }
 
 function renderBrandsChart(ai = 'all') {
@@ -669,6 +681,103 @@ setInterval(() => {
         el.textContent = `Анализируем ${model.name}… ${model.percent}%`;
     }
 }, 5000);
+
+/* ============ 10.5 WORKSPACE — GigaChat check ============ */
+const WS_API = 'http://localhost:8000/api';
+
+$('#wsCheck').addEventListener('click', async () => {
+    const brand = $('#wsBrand').value.trim();
+    const query = $('#wsQuery').value.trim();
+    const loader = $('#wsLoader');
+    const result = $('#wsResult');
+    const error = $('#wsError');
+
+    if (!brand || !query) {
+        error.textContent = 'Заполните оба поля: бренд и запрос';
+        error.hidden = false;
+        result.hidden = true;
+        return;
+    }
+
+    error.hidden = true;
+    result.hidden = true;
+    loader.hidden = false;
+
+    try {
+        const resp = await fetch(WS_API + '/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ brand, query })
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            error.textContent = 'Ошибка: ' + data.error;
+            error.hidden = false;
+            loader.hidden = true;
+            return;
+        }
+
+        renderWsResult(data);
+    } catch (e) {
+        error.textContent = 'Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен на localhost:8000';
+        error.hidden = false;
+    } finally {
+        loader.hidden = true;
+    }
+});
+
+function renderWsResult(data) {
+    const result = $('#wsResult');
+    const verdict = $('#wsVerdict');
+    const meta = $('#wsMeta');
+    const reasoningWrap = $('#wsReasoningWrap');
+    const reasoning = $('#wsReasoning');
+    const quotesWrap = $('#wsQuotesWrap');
+    const quotes = $('#wsQuotes');
+    const brandsWrap = $('#wsBrandsWrap');
+    const brands = $('#wsBrands');
+
+    if (data.mentioned) {
+        verdict.className = 'ws-verdict mentioned';
+        verdict.innerHTML = '<i class="fa-solid fa-check-circle"></i> Бренд упомянут';
+    } else {
+        verdict.className = 'ws-verdict not-mentioned';
+        verdict.innerHTML = '<i class="fa-solid fa-times-circle"></i> Бренд не упомянут';
+    }
+
+    let metaHtml = '';
+    if (data.position) {
+        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Позиция в топе</span><span class="ws-meta-value">#${data.position}</span></div>`;
+    }
+    if (data.role && data.role !== 'не упомянут') {
+        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Роль</span><span class="ws-meta-value">${data.role}</span></div>`;
+    }
+    meta.innerHTML = metaHtml;
+
+    if (data.reasoning) {
+        reasoning.textContent = data.reasoning;
+        reasoningWrap.hidden = false;
+    } else {
+        reasoningWrap.hidden = true;
+    }
+
+    if (data.quotes && data.quotes.length) {
+        quotes.innerHTML = data.quotes.map(q => `<li>${q}</li>`).join('');
+        quotesWrap.hidden = false;
+    } else {
+        quotesWrap.hidden = true;
+    }
+
+    if (data.mentioned_brands && data.mentioned_brands.length) {
+        brands.innerHTML = data.mentioned_brands.map(b => `<li>${b}</li>`).join('');
+        brandsWrap.hidden = false;
+    } else {
+        brandsWrap.hidden = true;
+    }
+
+    result.hidden = false;
+}
 
 /* ============ 11. INIT ============ */
 document.addEventListener('DOMContentLoaded', () => {

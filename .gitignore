@@ -1,0 +1,4 @@
+backend/.env
+backend/authorized_key.json
+__pycache__/
+*.pyc

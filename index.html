@@ -39,6 +39,7 @@
             <nav class="nav" id="navMenu">
                 <button class="nav-link" data-nav="home">Главная</button>
                 <button class="nav-link" data-nav="dashboard">Дашборд</button>
+                <button class="nav-link" data-nav="workspace">Рабочий дашборд</button>
                 <button class="nav-link" data-nav="pricing">Цены</button>
                 <button class="nav-link" data-nav="faq">FAQ</button>
             </nav>
@@ -777,11 +778,57 @@
         </div>
     </section>
 
-    
+    <!-- ============================================================ -->
+    <!-- WORKSPACE — GigaChat проверка                                 -->
+    <!-- ============================================================ -->
+    <section class="page" id="page-workspace" data-page="workspace">
+        <div class="ws-page">
+            <div class="container">
+                <div class="ws-header">
+                    <h1 class="ws-title"><i class="fa-solid fa-robot"></i> Рабочий дашборд</h1>
+                    <p class="ws-sub">Проверка видимости бренда в <strong>GigaChat</strong> — введите запрос и узнайте, упоминается ли ваш бренд</p>
+                </div>
 
-    
+                <div class="ws-form" data-aos="fade-up">
+                    <div class="ws-field">
+                        <label class="ws-label" for="wsBrand">Бренд</label>
+                        <input class="ws-input" type="text" id="wsBrand" value="Vidno" placeholder="Название бренда">
+                    </div>
+                    <div class="ws-field ws-field-grow">
+                        <label class="ws-label" for="wsQuery">Запрос для проверки</label>
+                        <input class="ws-input" type="text" id="wsQuery" placeholder="например: лучший инструмент для мониторинга бренда в AI">
+                    </div>
+                    <button class="btn btn-primary ws-btn" id="wsCheck">
+                        <i class="fa-solid fa-magnifying-glass"></i> Проверить в GigaChat
+                    </button>
+                </div>
 
-    
+                <div class="ws-loader" id="wsLoader" hidden>
+                    <div class="ws-spinner"></div>
+                    <span>Запрашиваем GigaChat…</span>
+                </div>
+
+                <div class="ws-result" id="wsResult" hidden>
+                    <div class="ws-verdict" id="wsVerdict"></div>
+                    <div class="ws-meta" id="wsMeta"></div>
+                    <div class="ws-reasoning-wrap" id="wsReasoningWrap" hidden>
+                        <h3 class="ws-answer-title">Обоснование</h3>
+                        <div class="ws-answer" id="wsReasoning"></div>
+                    </div>
+                    <div class="ws-quotes-wrap" id="wsQuotesWrap" hidden>
+                        <h3 class="ws-answer-title">Цитаты из контекста</h3>
+                        <ul class="ws-quotes" id="wsQuotes"></ul>
+                    </div>
+                    <div class="ws-brands-wrap" id="wsBrandsWrap" hidden>
+                        <h3 class="ws-answer-title">Конкуренты в контексте</h3>
+                        <ul class="ws-brands" id="wsBrands"></ul>
+                    </div>
+                </div>
+
+                <div class="ws-error" id="wsError" hidden></div>
+            </div>
+        </div>
+    </section>
 
 </main>
 
