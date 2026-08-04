@@ -1,11 +1,16 @@
 import os
+import logging
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
+from text_analysis import analyze_answer
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 _client = None
 
@@ -13,7 +18,10 @@ _client = None
 def _get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=API_KEY)
+        _client = genai.Client(
+            api_key=API_KEY,
+            http_options=types.HttpOptions(timeout=60000)
+        )
     return _client
 
 
@@ -39,46 +47,17 @@ def check_brand(brand: str, query: str) -> dict:
             contents=prompt
         )
         answer = response.text
+        if not answer or not answer.strip():
+            return {"error": "Gemini вернул пустой ответ"}
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"[Gemini] Ошибка запроса: {e}", exc_info=True)
+        return {"error": "Ошибка запроса к Gemini"}
 
-    brand_lower = brand.lower()
-    answer_lower = answer.lower()
-
-    mentioned = brand_lower in answer_lower
-    position = None
-    context = None
-
-    if mentioned:
-        sentences = [s.strip() for s in answer.replace("!", ".").replace("?", ".").split(".") if s.strip()]
-        for i, sentence in enumerate(sentences):
-            if brand_lower in sentence.lower():
-                position = i + 1
-                context = sentence.strip()
-                break
-
-    role = "не упомянут"
-    if mentioned:
-        if context:
-            cl = context.lower()
-            if any(w in cl for w in ["рекомендую", "советую", "лучший", "топ", "стоит обратить"]):
-                role = "рекомендация"
-            elif any(w in cl for w in ["альтернатива", "вместо", "конкурент", "сравн"]):
-                role = "сравнение"
-            elif any(w in cl for w in ["например", "такие как", "включая"]):
-                role = "упоминание в списке"
-            else:
-                role = "упоминание"
-
-    total_sentences = len([s.strip() for s in answer.replace("!", ".").replace("?", ".").split(".") if s.strip()])
+    analysis = analyze_answer(brand, answer)
 
     return {
         "brand": brand,
         "query": query,
         "answer": answer,
-        "mentioned": mentioned,
-        "position": position,
-        "total_sentences": total_sentences,
-        "context": context,
-        "role": role,
+        **analysis,
     }

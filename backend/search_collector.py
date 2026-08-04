@@ -1,6 +1,10 @@
 import logging
+import ipaddress
 import re
-from urllib.parse import urlparse
+import socket
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urljoin, urlparse
 from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
@@ -33,20 +37,43 @@ HIGH_AUTHORITY_PATTERNS = [
 LANGUAGE = "russian"
 SENTENCES_COUNT = 6
 PAGE_TIMEOUT = 8
+MAX_PAGE_BYTES = 2 * 1024 * 1024
+MAX_REDIRECTS = 4
+
+_nltk_ready = None
+_nltk_lock = threading.Lock()
 
 
 def _ensure_nltk_data():
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError:
-        nltk.download("punkt", quiet=True)
-    try:
-        nltk.data.find("tokenizers/punkt_tab")
-    except LookupError:
-        nltk.download("punkt_tab", quiet=True)
+    global _nltk_ready
+    if _nltk_ready is not None:
+        return _nltk_ready
+    with _nltk_lock:
+        if _nltk_ready is not None:
+            return _nltk_ready
+        try:
+            nltk.data.find("tokenizers/punkt")
+            nltk.data.find("tokenizers/punkt_tab")
+            _nltk_ready = True
+        except LookupError:
+            logger.warning("[Search] Данные NLTK punkt не установлены, используется сокращение текста")
+            _nltk_ready = False
+    return _nltk_ready
 
 
-_ensure_nltk_data()
+def _is_public_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        if parsed.port and parsed.port not in {80, 443}:
+            return False
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        return bool(addresses) and all(ipaddress.ip_address(item[4][0]).is_global for item in addresses)
+    except (OSError, ValueError):
+        return False
 
 
 def estimate_authority(url: str) -> tuple[int, str]:
@@ -57,7 +84,7 @@ def estimate_authority(url: str) -> tuple[int, str]:
         return 3, "низкая"
 
     for known_domain, score in AUTHORITY_DOMAINS.items():
-        if known_domain in domain:
+        if domain == known_domain or domain.endswith(f".{known_domain}"):
             label = "высокая" if score >= 8 else "средняя"
             return score, label
 
@@ -73,14 +100,50 @@ def estimate_authority(url: str) -> tuple[int, str]:
 
 def extract_page_text(url: str) -> str:
     try:
+        if not _is_public_url(url):
+            logger.warning(f"[Search] Небезопасный или некорректный URL пропущен: {url}")
+            return ""
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-        resp = requests.get(url, headers=headers, timeout=PAGE_TIMEOUT)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "utf-8"
+        current_url = url
+        for _ in range(MAX_REDIRECTS + 1):
+            if not _is_public_url(current_url):
+                logger.warning(f"[Search] Небезопасное перенаправление заблокировано: {current_url}")
+                return ""
+            with requests.get(
+                current_url,
+                headers=headers,
+                timeout=(3, PAGE_TIMEOUT),
+                allow_redirects=False,
+                stream=True
+            ) as resp:
+                if resp.is_redirect or resp.is_permanent_redirect:
+                    location = resp.headers.get("Location")
+                    if not location:
+                        return ""
+                    current_url = urljoin(current_url, location)
+                    continue
+                resp.raise_for_status()
+                content_type = resp.headers.get("Content-Type", "").lower()
+                if content_type and not any(t in content_type for t in ("text/html", "text/plain", "application/xhtml+xml")):
+                    return ""
+                chunks = []
+                total = 0
+                for chunk in resp.iter_content(chunk_size=65536):
+                    total += len(chunk)
+                    if total > MAX_PAGE_BYTES:
+                        logger.warning(f"[Search] Страница превышает лимит размера: {current_url}")
+                        return ""
+                    chunks.append(chunk)
+                page_html = b"".join(chunks)
+                break
+        else:
+            logger.warning(f"[Search] Слишком много перенаправлений: {url}")
+            return ""
 
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(page_html, "html.parser")
 
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe", "noscript"]):
             tag.decompose()
@@ -113,6 +176,8 @@ def summarize_text(text: str, sentences_count: int = SENTENCES_COUNT) -> str:
         return text or ""
 
     try:
+        if not _ensure_nltk_data():
+            return text[:1000]
         parser = PlaintextParser.from_string(text, Tokenizer(LANGUAGE))
         stemmer = Stemmer(LANGUAGE)
         summarizer = TextRankSummarizer(stemmer)
@@ -135,31 +200,49 @@ def summarize_text(text: str, sentences_count: int = SENTENCES_COUNT) -> str:
 
 
 def collect_search_results(query: str, max_results: int = 10) -> list[dict]:
-    logger.info(f"[Search] Сбор результатов из DuckDuckGo для запроса: {query}")
+    logger.info(f"[Search] Сбор результатов из DuckDuckGo для запроса: {query[:120]!r}")
 
     results = []
     try:
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=max_results))
+            unique_results = []
+            seen_urls = set()
+            for result in search_results:
+                url = result.get("href", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    unique_results.append(result)
 
-            for i, result in enumerate(search_results, 1):
+            def process_result(index, result):
                 url = result.get("href", "")
                 snippet = result.get("body", "")
-
                 page_text = extract_page_text(url)
                 summary = summarize_text(page_text) if page_text else snippet
-
                 auth_score, auth_label = estimate_authority(url)
-
-                results.append({
-                    "index": i,
+                return {
+                    "index": index,
                     "title": result.get("title", ""),
                     "url": url,
                     "snippet": snippet,
                     "summary": summary,
                     "authority_score": auth_score,
                     "authority_label": auth_label,
-                })
+                }
+
+            workers = min(5, len(unique_results))
+            if workers:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(process_result, i, result): i
+                        for i, result in enumerate(unique_results, 1)
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            results.append(future.result())
+                        except Exception as e:
+                            logger.warning(f"[Search] Источник {futures[future]} пропущен: {e}")
+                results.sort(key=lambda item: item["index"])
 
         logger.info(f"[Search] Собрано {len(results)} источников")
 
