@@ -238,7 +238,7 @@ function openCtaModal(type) {
             e.preventDefault();
             closeModal();
             showToast('Вход выполнен! Открываем дашборд…', 'fa-solid fa-circle-check');
-            setTimeout(() => navigate('dashboard'), 600);
+            setTimeout(() => { window.location.href = 'dashboard.html'; }, 600);
         });
         return;
     }

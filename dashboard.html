@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vidno — рабочий дашборд</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="app-body">
+    <div class="app-shell">
+        <aside class="app-sidebar">
+            <a class="app-logo" href="index.html"><span class="logo-icon"><i class="fa-solid fa-eye"></i></span><span>Vid<span>no</span></span></a>
+            <nav class="app-nav" aria-label="Рабочая навигация">
+                <span class="app-nav-label">Обзор</span>
+                <button class="app-nav-item active" data-view="home"><i class="fa-solid fa-house"></i>Главная</button>
+                <span class="app-nav-label">Аналитика</span>
+                <button class="app-nav-item" data-view="prompts"><i class="fa-solid fa-wand-magic-sparkles"></i>Промпты и интенты</button>
+                <button class="app-nav-item" data-view="visibility"><i class="fa-solid fa-chart-line"></i>AI-видимость</button>
+                <button class="app-nav-item" data-view="competitors"><i class="fa-solid fa-scale-balanced"></i>Конкуренты</button>
+                <button class="app-nav-item" data-view="sources"><i class="fa-solid fa-link"></i>Источники</button>
+                <span class="app-nav-label">Рост</span>
+                <button class="app-nav-item" data-view="growth"><i class="fa-solid fa-bolt"></i>План роста</button>
+                <button class="app-nav-item" data-view="reports"><i class="fa-solid fa-file-lines"></i>Отчёты</button>
+            </nav>
+            <button class="app-setup" data-view="setup"><i class="fa-solid fa-sliders"></i>Настроить проект</button>
+        </aside>
+        <main class="app-main">
+            <div class="app-topbar"><span id="appBreadcrumb">Главная</span><a href="index.html">На лендинг <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div>
+            <section class="app-view active" id="view-home">
+                <div class="app-heading"><div><p class="app-eyebrow">Последние 30 дней</p><h1>Видимость бренда</h1><p>Ключевые изменения в AI-ответах и приоритетные возможности.</p></div><button class="btn btn-primary" data-view="prompts"><i class="fa-solid fa-play"></i>Запустить проверку</button></div>
+                <div class="app-kpis app-kpis-four"><article><span>Share of Voice</span><strong id="metricSov">0%</strong><em id="metricSovNote">Нет проверок</em></article><article><span>Brand Visibility</span><strong id="metricVisibility">0%</strong><em id="metricVisibilityNote">Нет проверок</em></article><article><span>Citation Rate</span><strong id="metricCitation">0%</strong><em id="metricCitationNote">Нет проверок</em></article><article><span>Average Position</span><strong id="metricPosition">—</strong><em id="metricPositionNote">Нет позиций</em></article></div>
+                <div class="app-grid-two"><div class="app-card"><div class="app-card-head"><h2>Динамика присутствия</h2><span>Ваш бренд и конкуренты</span></div><canvas id="overviewChart" height="150"></canvas></div><div class="app-card"><div class="app-card-head"><h2>Доля голоса в нише</h2><span>Упоминания по брендам</span></div><canvas id="sovChart" height="150"></canvas></div></div>
+                <div class="app-card"><div class="app-card-head"><h2>Сравнительный лидерборд</h2><span>Рынок по накопленным проверкам</span></div><div class="table-wrap"><table class="data-table app-leaderboard"><thead><tr><th>Бренд</th><th>SoV</th><th>Видимость</th><th>Упоминания</th><th>Ср. позиция</th><th>Citation Rate</th><th>Тональность</th></tr></thead><tbody id="leaderboardBody"></tbody></table></div></div>
+                <div class="app-grid-two"><div class="app-card"><div class="app-card-head"><h2>Видимость по AI-моделям</h2><span>Доля ответов с брендом</span></div><div id="modelMetrics" class="app-data-list"></div></div><div class="app-card"><div class="app-card-head"><h2>Эксклюзивность упоминаний</h2><span>Лидер или один из аналогов</span></div><div id="exclusivityMetrics" class="app-data-list"></div></div></div>
+            </section>
+            <section class="app-view" id="view-prompts">
+                <div class="app-heading"><div><p class="app-eyebrow">Live-проверка</p><h1>Промпты и интенты</h1><p>Проверьте, как AI отвечает на важный вопрос о вашем бренде.</p></div></div>
+                <div class="app-card app-check-form"><label>Модель<select id="wsProvider"><option value="gigachat">GigaChat</option><option value="deepseek">DeepSeek</option></select></label><label>Бренд<input id="wsBrand" value="Vidno" maxlength="200"></label><label class="app-field-grow">Промпт<input id="wsQuery" placeholder="Например: лучший сервис для мониторинга AI-видимости" maxlength="2000"></label><button class="btn btn-primary" id="wsCheck"><i class="fa-solid fa-magnifying-glass"></i><span id="wsCheckText">Проверить в GigaChat</span></button><button class="btn btn-ghost" id="wsClearCache" aria-label="Очистить кэш"><i class="fa-solid fa-trash-can"></i></button></div>
+                <div class="app-loader" id="wsLoader" hidden><i class="fa-solid fa-circle-notch fa-spin"></i><span id="wsLoaderText">Анализируем ответ…</span></div><div class="ws-error" id="wsError" hidden></div>
+                <div class="ws-result" id="wsResult" hidden><div class="ws-verdict" id="wsVerdict"></div><div class="ws-meta" id="wsMeta"></div><div class="ws-reasoning-wrap" id="wsReasoningWrap" hidden><h3>Почему</h3><div id="wsReasoning"></div></div><div class="ws-quotes-wrap" id="wsQuotesWrap" hidden><h3>Доказательства</h3><ul class="ws-quotes" id="wsQuotes"></ul></div><div class="ws-brands-wrap" id="wsBrandsWrap" hidden><h3>Конкуренты</h3><ul class="ws-brands" id="wsBrands"></ul></div><div class="ws-sources-wrap" id="wsSourcesWrap" hidden><h3>Источники</h3><div class="ws-sources" id="wsSources"></div></div></div>
+                <div class="app-card app-history"><div class="app-card-head"><h2>История проверок</h2><span id="historyCount">0 проверок</span></div><div id="historyList" class="app-history-list"></div></div>
+            </section>
+            <section class="app-view" id="view-visibility"><div class="app-heading"><div><p class="app-eyebrow">Аналитика</p><h1>AI-видимость</h1><p>Доля упоминаний и рекомендации по моделям.</p></div></div><div class="app-card"><canvas id="visibilityChart" height="120"></canvas></div></section>
+            <section class="app-view" id="view-competitors"><div class="app-heading"><div><p class="app-eyebrow">Аналитика</p><h1>Конкуренты</h1><p>Кого AI рекомендует рядом с вашим брендом.</p></div></div><div class="app-card"><div id="competitorList" class="app-data-list"></div></div></section>
+            <section class="app-view" id="view-sources"><div class="app-heading"><div><p class="app-eyebrow">Аналитика</p><h1>Источники</h1><p>Домены, использованные в последних live-проверках.</p></div></div><div class="app-card"><div id="sourceList" class="app-data-list"></div></div></section>
+            <section class="app-view" id="view-growth"><div class="app-heading"><div><p class="app-eyebrow">Действия</p><h1>План роста</h1><p>Только возможности, подтверждённые вашими проверками.</p></div></div><div class="app-tabs"><button class="app-tab active" data-growth-tab="recommendations">Рекомендации</button><button class="app-tab" data-growth-tab="briefs">Сохранённые брифы</button></div><div id="growthRecommendations" class="growth-list"></div><div id="growthBriefs" class="growth-list" hidden></div></section>
+            <section class="app-view" id="view-reports"><div class="app-heading"><div><p class="app-eyebrow">Отчётность</p><h1>Отчёты</h1><p>Этот раздел появится после подключения регулярного мониторинга.</p></div></div><div class="app-empty"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span>Используйте историю проверок, чтобы собрать первый срез.</span></div></section>
+            <section class="app-view" id="view-setup"><div class="app-heading"><div><p class="app-eyebrow">Настройки</p><h1>Настроить проект</h1><p>Бренд, рынок, конкуренты и набор промптов для мониторинга.</p></div></div><div class="app-empty"><i class="fa-solid fa-sliders"></i><strong>Настройка появится на следующем этапе</strong><span>Сейчас проект настраивается через live-проверку.</span></div></section>
+        </main>
+    </div>
+    <dialog class="brief-dialog" id="briefDialog"><button class="brief-close" id="briefClose" aria-label="Закрыть">×</button><div id="briefContent"></div></dialog>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>

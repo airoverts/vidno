@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import secrets
 import threading
@@ -15,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from gigachat_client import check_brand as check_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured
-from deepseek_client import check_brand as check_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured
+from gigachat_client import check_brand as check_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured, _call_gigachat
+from deepseek_client import check_brand as check_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured, _call_deepseek
 from search_collector import collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 
@@ -87,6 +88,15 @@ class CheckRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     context: str = Field(default="", max_length=60000)
     provider: Literal["gigachat", "deepseek"] = "gigachat"
+
+
+class BriefRequest(BaseModel):
+    brand: str = Field(min_length=1, max_length=200)
+    query: str = Field(min_length=1, max_length=2000)
+    provider: Literal["gigachat", "deepseek"] = "gigachat"
+    competitors: list[str] = Field(default_factory=list, max_length=20)
+    checks_count: int = Field(ge=1, le=100)
+    evidence: str = Field(min_length=1, max_length=12000)
 
 
 @app.get("/api/health")
@@ -188,6 +198,35 @@ def _run_check(req: CheckRequest):
     
     logger.info(f"[API] Результат: mentioned={result.get('mentioned')}, position={result.get('position')}, sources={len(result.get('sources', []))}")
     return result
+
+
+@app.post("/api/brief")
+def create_brief(req: BriefRequest, request: Request):
+    client_host = request.client.host if request.client else "unknown"
+    _enforce_rate_limit(client_host)
+    provider = PROVIDERS[req.provider]
+    if not provider["configured"]():
+        raise HTTPException(status_code=503, detail=f"Провайдер {req.provider} не настроен")
+    payload = {
+        "brand": req.brand,
+        "query": req.query,
+        "competitors": req.competitors,
+        "checks_count": req.checks_count,
+        "evidence": req.evidence,
+    }
+    messages = [
+        {"role": "system", "content": "Ты готовишь короткий маркетинговый бриф. Используй только данные из JSON, не выдумывай факты, ссылки, метрики или гарантии. Верни JSON с полями title, goal, action, verification."},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        answer = _call_gigachat(messages, temperature=0.1, max_tokens=1200) if req.provider == "gigachat" else _call_deepseek(messages)
+        parsed = json.loads(answer.strip().removeprefix("```json").removesuffix("```").strip())
+        if not isinstance(parsed, dict):
+            raise ValueError("invalid response")
+        return {key: str(parsed.get(key, "")).strip() for key in ("title", "goal", "action", "verification")}
+    except Exception as error:
+        logger.warning("[API] Не удалось создать бриф: %s", error)
+        raise HTTPException(status_code=502, detail="Не удалось создать бриф")
 
 
 @app.delete("/api/cache")
