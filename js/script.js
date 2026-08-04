@@ -246,7 +246,7 @@ function openCtaModal(type) {
             e.preventDefault();
             closeModal();
             showToast('Вход выполнен! Открываем дашборд…', 'fa-solid fa-circle-check');
-            setTimeout(() => navigate('dashboard'), 600);
+            setTimeout(() => { window.location.href = 'dashboard.html'; }, 600);
         });
         return;
     }
@@ -692,11 +692,53 @@ setInterval(() => {
 
 /* ============ 10.5 WORKSPACE — GigaChat check ============ */
 const WS_API = 'http://localhost:8000/api';
+const WS_PROVIDERS = {
+    gigachat: 'GigaChat',
+    deepseek: 'DeepSeek'
+};
+const WS_HISTORY_KEY = 'vidno-workspace-history';
+let wsHistory = loadWsHistory();
+const wsCharts = { trend: null, share: null };
+
+function loadWsHistory() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(WS_HISTORY_KEY) || '[]');
+        return Array.isArray(saved) ? saved.slice(-100) : [];
+    } catch {
+        return [];
+    }
+}
+
+function escapeWsHtml(value) {
+    const chars = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(value ?? '').replace(/[&<>"']/g, char => chars[char]);
+}
+
+function safeWsUrl(value) {
+    try {
+        const url = new URL(value);
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : '#';
+    } catch {
+        return '#';
+    }
+}
+
+function updateWsProvider() {
+    const name = WS_PROVIDERS[$('#wsProvider').value] || WS_PROVIDERS.gigachat;
+    $('#wsProviderName').textContent = name;
+    $('#wsCheckText').textContent = `Проверить в ${name}`;
+    $('#wsLoaderText').textContent = `Запрашиваем ${name}…`;
+}
+
+$('#wsProvider').addEventListener('change', updateWsProvider);
+updateWsProvider();
+renderWsAnalytics();
 
 $('#wsClearCache').addEventListener('click', async () => {
     try {
         const resp = await fetch(WS_API + '/cache', { method: 'DELETE' });
         const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'Не удалось очистить кэш');
         if (data.status === 'cleared') {
             const btn = $('#wsClearCache');
             const icon = btn.querySelector('i');
@@ -709,12 +751,14 @@ $('#wsClearCache').addEventListener('click', async () => {
         }
     } catch (e) {
         console.error('Cache clear failed:', e);
+        showToast(e.message || 'Не удалось очистить кэш');
     }
 });
 
 $('#wsCheck').addEventListener('click', async () => {
     const brand = $('#wsBrand').value.trim();
     const query = $('#wsQuery').value.trim();
+    const provider = $('#wsProvider').value;
     const loader = $('#wsLoader');
     const result = $('#wsResult');
     const error = $('#wsError');
@@ -734,12 +778,12 @@ $('#wsCheck').addEventListener('click', async () => {
         const resp = await fetch(WS_API + '/check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ brand, query })
+            body: JSON.stringify({ brand, query, provider })
         });
         const data = await resp.json();
 
-        if (data.error) {
-            error.textContent = 'Ошибка: ' + data.error;
+        if (!resp.ok || data.error) {
+            error.textContent = 'Ошибка: ' + (data.error || data.detail || `HTTP ${resp.status}`);
             error.hidden = false;
             loader.hidden = true;
             return;
@@ -776,11 +820,18 @@ function renderWsResult(data) {
     }
 
     let metaHtml = '';
+    const providerName = WS_PROVIDERS[data.provider] || data.provider;
+    if (providerName) {
+        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Провайдер</span><span class="ws-meta-value">${escapeWsHtml(providerName)}</span></div>`;
+    }
+    if (data.model) {
+        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Модель</span><span class="ws-meta-value">${escapeWsHtml(data.model)}</span></div>`;
+    }
     if (data.position) {
         metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Позиция в топе</span><span class="ws-meta-value">#${data.position}</span></div>`;
     }
     if (data.role && data.role !== 'не упомянут') {
-        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Роль</span><span class="ws-meta-value">${data.role}</span></div>`;
+        metaHtml += `<div class="ws-meta-item"><span class="ws-meta-label">Роль</span><span class="ws-meta-value">${escapeWsHtml(data.role)}</span></div>`;
     }
     meta.innerHTML = metaHtml;
 
@@ -792,14 +843,14 @@ function renderWsResult(data) {
     }
 
     if (data.quotes && data.quotes.length) {
-        quotes.innerHTML = data.quotes.map(q => `<li>${q}</li>`).join('');
+        quotes.innerHTML = data.quotes.map(q => `<li>${escapeWsHtml(q)}</li>`).join('');
         quotesWrap.hidden = false;
     } else {
         quotesWrap.hidden = true;
     }
 
     if (data.mentioned_brands && data.mentioned_brands.length) {
-        brands.innerHTML = data.mentioned_brands.map(b => `<li>${b}</li>`).join('');
+        brands.innerHTML = data.mentioned_brands.map(b => `<li>${escapeWsHtml(b)}</li>`).join('');
         brandsWrap.hidden = false;
     } else {
         brandsWrap.hidden = true;
@@ -824,14 +875,15 @@ function renderWsResult(data) {
             const authClass = source.authority_score >= 8 ? 'ws-auth-high' :
                               source.authority_score >= 5 ? 'ws-auth-med' : 'ws-auth-low';
 
-            const title = source.title || 'Без названия';
-            const url = source.url || '#';
+            const title = escapeWsHtml(source.title || 'Без названия');
+            const url = escapeWsHtml(safeWsUrl(source.url));
+            const authorityLabel = escapeWsHtml(source.authority_label);
 
             sourcesHtml += `
                 <div class="ws-source-card">
                     ${statusIcon}
                     <a href="${url}" target="_blank" rel="noopener" class="ws-source-link">${title}</a>
-                    <span class="ws-source-auth ${authClass}">${source.authority_label}</span>
+                    <span class="ws-source-auth ${authClass}">${authorityLabel}</span>
                 </div>
             `;
         });
@@ -843,6 +895,148 @@ function renderWsResult(data) {
     }
 
     result.hidden = false;
+    saveWsCheck(data);
+}
+
+function saveWsCheck(data) {
+    const brand = $('#wsBrand').value.trim();
+    const sourceAnalysis = Array.isArray(data.source_analysis) ? data.source_analysis : [];
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    const cited = sources.some((source, index) => {
+        const analysis = sourceAnalysis.find(item => item.source_index === index + 1);
+        const haystack = `${source.title || ''} ${source.url || ''}`.toLowerCase();
+        return Boolean((analysis && analysis.mentions_brand) || haystack.includes(brand.toLowerCase()));
+    });
+    wsHistory.push({
+        createdAt: Date.now(), brand, provider: data.provider || $('#wsProvider').value,
+        model: data.model || WS_PROVIDERS[data.provider] || data.provider || $('#wsProvider').value,
+        mentioned: Boolean(data.mentioned), position: Number(data.weighted_position || data.position) || null,
+        cited, competitors: Array.isArray(data.mentioned_brands) ? data.mentioned_brands.filter(name => name && name.toLowerCase() !== brand.toLowerCase()) : [],
+        sources: sources.map(source => source.url).filter(Boolean),
+        sentiments: sourceAnalysis.filter(item => item.mentions_brand).map(item => item.sentiment)
+    });
+    wsHistory = wsHistory.slice(-100);
+    localStorage.setItem(WS_HISTORY_KEY, JSON.stringify(wsHistory));
+    renderWsAnalytics();
+}
+
+function wsPercent(value) {
+    return `${Math.round(value || 0)}%`;
+}
+
+function wsBrandStats(history = wsHistory) {
+    const currentBrand = ($('#wsBrand').value.trim() || 'Vidno');
+    const names = new Map([[currentBrand.toLowerCase(), { name: currentBrand, mentions: 0, checks: history.length, positions: [], citations: 0, sentiments: [] }]]);
+    history.forEach(item => {
+        const ownKey = (item.brand || currentBrand).toLowerCase();
+        if (!names.has(ownKey)) names.set(ownKey, { name: item.brand, mentions: 0, checks: history.length, positions: [], citations: 0, sentiments: [] });
+        const own = names.get(ownKey);
+        if (item.mentioned) own.mentions++;
+        if (item.position) own.positions.push(item.position);
+        if (item.cited) own.citations++;
+        own.sentiments.push(...(item.sentiments || []));
+        (item.competitors || []).forEach(name => {
+            const key = name.toLowerCase();
+            if (!names.has(key)) names.set(key, { name, mentions: 0, checks: history.length, positions: [], citations: 0, sentiments: [] });
+            names.get(key).mentions++;
+        });
+    });
+    const totalMentions = [...names.values()].reduce((sum, item) => sum + item.mentions, 0);
+    return [...names.values()].map(item => ({ ...item, sov: totalMentions ? item.mentions / totalMentions * 100 : 0 })).sort((a, b) => b.mentions - a.mentions);
+}
+
+function wsDelta(current, previous, inverse = false) {
+    if (!Number.isFinite(previous) || current === previous) return { text: '—', cls: 'neutral' };
+    const difference = current - previous;
+    const improved = inverse ? difference < 0 : difference > 0;
+    return { text: `${difference > 0 ? '+' : ''}${difference.toFixed(1)}${inverse ? '' : ' п.п.'} ${improved ? '↑' : '↓'}`, cls: improved ? 'up' : 'down' };
+}
+
+function setWsDelta(id, delta) {
+    const element = $(id);
+    element.textContent = delta.text;
+    element.className = `ws-kpi-delta ${delta.cls}`;
+}
+
+function wsCoreMetrics(history) {
+    const stats = wsBrandStats(history);
+    const current = stats.find(item => item.name.toLowerCase() === (($('#wsBrand').value.trim() || 'Vidno').toLowerCase())) || stats[0];
+    const mentioned = history.filter(item => item.mentioned).length;
+    const cited = history.filter(item => item.cited).length;
+    const positions = history.map(item => item.position).filter(Boolean);
+    return {
+        sov: current ? current.sov : 0,
+        visibility: history.length ? mentioned / history.length * 100 : 0,
+        citation: history.length ? cited / history.length * 100 : 0,
+        position: positions.length ? positions.reduce((sum, value) => sum + value, 0) / positions.length : null,
+        mentioned, cited
+    };
+}
+
+function renderWsAnalytics() {
+    const metrics = wsCoreMetrics(wsHistory);
+    const midpoint = Math.floor(wsHistory.length / 2);
+    const previous = midpoint ? wsCoreMetrics(wsHistory.slice(0, midpoint)) : null;
+    $('#wsKpiSov').textContent = wsPercent(metrics.sov);
+    $('#wsKpiVisibility').textContent = wsPercent(metrics.visibility);
+    $('#wsKpiCitation').textContent = wsPercent(metrics.citation);
+    $('#wsKpiPosition').textContent = metrics.position ? metrics.position.toFixed(1) : '—';
+    $('#wsKpiVisibilityNote').textContent = wsHistory.length ? `в ${metrics.mentioned} из ${wsHistory.length} ответов` : 'Нет выполненных проверок';
+    $('#wsKpiCitationNote').textContent = wsHistory.length ? `${metrics.cited} ответов со ссылками` : 'Ответы со ссылкой на бренд';
+    setWsDelta('#wsKpiSovDelta', previous ? wsDelta(metrics.sov, previous.sov) : { text: '—', cls: 'neutral' });
+    setWsDelta('#wsKpiVisibilityDelta', previous ? wsDelta(metrics.visibility, previous.visibility) : { text: '—', cls: 'neutral' });
+    setWsDelta('#wsKpiCitationDelta', previous ? wsDelta(metrics.citation, previous.citation) : { text: '—', cls: 'neutral' });
+    setWsDelta('#wsKpiPositionDelta', previous && metrics.position && previous.position ? wsDelta(metrics.position, previous.position, true) : { text: '—', cls: 'neutral' });
+    renderWsLeaderboard();
+    renderWsModels();
+    renderWsDomains();
+    renderWsCharts();
+}
+
+function renderWsLeaderboard() {
+    const stats = wsBrandStats();
+    const current = ($('#wsBrand').value.trim() || 'Vidno').toLowerCase();
+    $('#wsLeaderboardBody').innerHTML = wsHistory.length ? stats.slice(0, 8).map(item => {
+        const sentiment = item.sentiments.length ? pickDominantSentiment(item.sentiments) : 'Нет данных';
+        const average = item.positions.length ? (item.positions.reduce((sum, value) => sum + value, 0) / item.positions.length).toFixed(1) : '—';
+        return `<tr class="${item.name.toLowerCase() === current ? 'is-current' : ''}"><td><strong>${escapeWsHtml(item.name)}</strong></td><td>${wsPercent(item.sov)}</td><td>${wsPercent(item.checks ? item.mentions / item.checks * 100 : 0)}</td><td>${item.mentions}</td><td>${average}</td><td>${wsPercent(item.checks ? item.citations / item.checks * 100 : 0)}</td><td>${escapeWsHtml(sentiment)}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="ws-empty-row">Данные появятся после первой проверки</td></tr>';
+}
+
+function pickDominantSentiment(values) {
+    const counts = values.reduce((result, value) => ({ ...result, [value]: (result[value] || 0) + 1 }), {});
+    return Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'Нет данных';
+}
+
+function renderWsModels() {
+    const grouped = new Map();
+    wsHistory.forEach(item => {
+        const name = item.model || WS_PROVIDERS[item.provider] || item.provider;
+        if (!grouped.has(name)) grouped.set(name, { total: 0, mentioned: 0 });
+        const row = grouped.get(name); row.total++; if (item.mentioned) row.mentioned++;
+    });
+    $('#wsModelsBody').innerHTML = grouped.size ? [...grouped].map(([name, row]) => `<tr><td><strong>${escapeWsHtml(name)}</strong></td><td>${row.total}</td><td>${wsPercent(row.mentioned / row.total * 100)}</td></tr>`).join('') : '<tr><td colspan="3" class="ws-empty-row">Нет данных по моделям</td></tr>';
+}
+
+function renderWsDomains() {
+    const counts = new Map();
+    wsHistory.flatMap(item => item.sources || []).forEach(value => {
+        try { const host = new URL(value).hostname.replace(/^www\./, ''); counts.set(host, (counts.get(host) || 0) + 1); } catch {}
+    });
+    const rows = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 7);
+    $('#wsDomains').innerHTML = rows.length ? rows.map(([domain, count]) => `<li><span class="ws-domain-name">${escapeWsHtml(domain)}</span><span class="ws-domain-count">${count} цит.</span></li>`).join('') : '<li><span class="ws-domain-name">Источники появятся после проверки</span><span class="ws-domain-count">0 цит.</span></li>';
+}
+
+function renderWsCharts() {
+    if (!window.Chart) return;
+    const colors = chartColors();
+    Object.values(wsCharts).forEach(chart => chart && chart.destroy());
+    const trendRows = wsHistory.slice(-12);
+    const running = [];
+    trendRows.forEach((item, index) => running.push(wsCoreMetrics(trendRows.slice(0, index + 1)).sov));
+    wsCharts.trend = new Chart($('#wsTrendChart'), { type: 'line', data: { labels: trendRows.map((item, index) => index + 1), datasets: [{ label: 'Share of Voice', data: running, borderColor: colors.accent, backgroundColor: 'rgba(2,128,144,0.08)', fill: true, tension: 0.35, pointRadius: 3 }] }, options: chartOpts(colors) });
+    const stats = wsBrandStats().slice(0, 6);
+    wsCharts.share = new Chart($('#wsShareChart'), { type: 'doughnut', data: { labels: stats.map(item => item.name), datasets: [{ data: stats.map(item => item.mentions), backgroundColor: ['#028090', '#008896', '#4F6F6F', '#5B6B6D', '#888780', '#E2E8E8'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: colors.text, boxWidth: 10, font: { size: 10 } } } } } });
 }
 
 /* ============ 11. INIT ============ */

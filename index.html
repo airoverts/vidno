@@ -38,8 +38,7 @@
             </a>
             <nav class="nav" id="navMenu">
                 <button class="nav-link" data-nav="home">Главная</button>
-                <button class="nav-link" data-nav="dashboard">Дашборд</button>
-                <button class="nav-link" data-nav="workspace">Рабочий дашборд</button>
+                <a class="nav-link" href="dashboard.html">Дашборд</a>
                 <button class="nav-link" data-nav="pricing">Цены</button>
                 <button class="nav-link" data-nav="faq">FAQ</button>
             </nav>
@@ -786,10 +785,17 @@
             <div class="container">
                 <div class="ws-header">
                     <h1 class="ws-title"><i class="fa-solid fa-robot"></i> Рабочий дашборд</h1>
-                    <p class="ws-sub">Проверка видимости бренда в <strong>GigaChat</strong> — введите запрос и узнайте, упоминается ли ваш бренд</p>
+                    <p class="ws-sub">Проверка видимости бренда в <strong id="wsProviderName">GigaChat</strong> — введите запрос и узнайте, упоминается ли ваш бренд</p>
                 </div>
 
                 <div class="ws-form" data-aos="fade-up">
+                    <div class="ws-field ws-provider-field">
+                        <label class="ws-label" for="wsProvider">Модель</label>
+                        <select class="ws-input ws-provider" id="wsProvider">
+                            <option value="gigachat">GigaChat</option>
+                            <option value="deepseek">DeepSeek</option>
+                        </select>
+                    </div>
                     <div class="ws-field">
                         <label class="ws-label" for="wsBrand">Бренд</label>
                         <input class="ws-input" type="text" id="wsBrand" value="Vidno" placeholder="Название бренда">
@@ -799,16 +805,73 @@
                         <input class="ws-input" type="text" id="wsQuery" placeholder="например: лучший инструмент для мониторинга бренда в AI">
                     </div>
                     <button class="btn btn-primary ws-btn" id="wsCheck">
-                        <i class="fa-solid fa-magnifying-glass"></i> Проверить в GigaChat
+                        <i class="fa-solid fa-magnifying-glass"></i> <span id="wsCheckText">Проверить в GigaChat</span>
                     </button>
                     <button class="btn ws-btn-clear" id="wsClearCache" title="Очистить кэш запросов">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
                 </div>
 
+                <div class="ws-analytics" id="wsAnalytics">
+                    <div class="ws-kpi-grid">
+                        <article class="ws-kpi-card">
+                            <div class="ws-kpi-top"><span class="ws-kpi-value" id="wsKpiSov">0%</span><span class="ws-kpi-delta neutral" id="wsKpiSovDelta">—</span></div>
+                            <strong>Share of Voice</strong>
+                            <span id="wsKpiSovNote">Доля упоминаний среди брендов</span>
+                        </article>
+                        <article class="ws-kpi-card">
+                            <div class="ws-kpi-top"><span class="ws-kpi-value" id="wsKpiVisibility">0%</span><span class="ws-kpi-delta neutral" id="wsKpiVisibilityDelta">—</span></div>
+                            <strong>Видимость бренда</strong>
+                            <span id="wsKpiVisibilityNote">Нет выполненных проверок</span>
+                        </article>
+                        <article class="ws-kpi-card">
+                            <div class="ws-kpi-top"><span class="ws-kpi-value" id="wsKpiCitation">0%</span><span class="ws-kpi-delta neutral" id="wsKpiCitationDelta">—</span></div>
+                            <strong>Citation Rate</strong>
+                            <span id="wsKpiCitationNote">Ответы со ссылкой на бренд</span>
+                        </article>
+                        <article class="ws-kpi-card">
+                            <div class="ws-kpi-top"><span class="ws-kpi-value" id="wsKpiPosition">—</span><span class="ws-kpi-delta neutral" id="wsKpiPositionDelta">—</span></div>
+                            <strong>Средняя позиция</strong>
+                            <span id="wsKpiPositionNote">В списочных рекомендациях</span>
+                        </article>
+                    </div>
+
+                    <div class="ws-chart-grid">
+                        <article class="ws-analytics-card ws-trend-card">
+                            <div class="ws-card-head"><div><h2>Динамика присутствия</h2><span>Share of Voice по последним проверкам</span></div></div>
+                            <div class="ws-chart-wrap"><canvas id="wsTrendChart"></canvas></div>
+                        </article>
+                        <article class="ws-analytics-card">
+                            <div class="ws-card-head"><div><h2>Доля голоса в нише</h2><span>Распределение упоминаний брендов</span></div></div>
+                            <div class="ws-chart-wrap"><canvas id="wsShareChart"></canvas></div>
+                        </article>
+                    </div>
+
+                    <article class="ws-analytics-card">
+                        <div class="ws-card-head"><div><h2>Сравнительный лидерборд</h2><span>Сводные показатели брендов по накопленным проверкам</span></div></div>
+                        <div class="table-wrap">
+                            <table class="data-table ws-leaderboard">
+                                <thead><tr><th>Бренд</th><th>SoV</th><th>Видимость</th><th>Упоминания</th><th>Ср. позиция</th><th>Citation Rate</th><th>Тональность</th></tr></thead>
+                                <tbody id="wsLeaderboardBody"></tbody>
+                            </table>
+                        </div>
+                    </article>
+
+                    <div class="ws-bottom-grid">
+                        <article class="ws-analytics-card">
+                            <div class="ws-card-head"><div><h2>Видимость по ИИ-моделям</h2><span>Доля ответов с упоминанием бренда</span></div></div>
+                            <div class="table-wrap"><table class="data-table"><thead><tr><th>Модель</th><th>Проверок</th><th>Видимость</th></tr></thead><tbody id="wsModelsBody"></tbody></table></div>
+                        </article>
+                        <article class="ws-analytics-card">
+                            <div class="ws-card-head"><div><h2>Топ цитируемых доменов</h2><span>Источники, встречающиеся в ответах чаще всего</span></div></div>
+                            <ol class="ws-domains" id="wsDomains"></ol>
+                        </article>
+                    </div>
+                </div>
+
                 <div class="ws-loader" id="wsLoader" hidden>
                     <div class="ws-spinner"></div>
-                    <span>Запрашиваем GigaChat…</span>
+                    <span id="wsLoaderText">Запрашиваем GigaChat…</span>
                 </div>
 
                 <div class="ws-result" id="wsResult" hidden>
@@ -858,6 +921,7 @@
             <div class="footer-col">
                 <h4>Продукт</h4>
                 <button data-nav="how">Как это работает</button>
+                <a href="dashboard.html">Дашборд</a>
                 <button data-nav="pricing">Тарифы</button>
                 <button data-cta="demo">Демо</button>
             </div>
