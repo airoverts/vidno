@@ -694,7 +694,8 @@ setInterval(() => {
 const WS_API = 'http://localhost:8000/api';
 const WS_PROVIDERS = {
     gigachat: 'GigaChat',
-    deepseek: 'DeepSeek'
+    deepseek: 'DeepSeek',
+    yandex: 'YandexGPT'
 };
 const WS_HISTORY_KEY = 'vidno-workspace-history';
 let wsHistory = loadWsHistory();
