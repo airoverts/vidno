@@ -91,6 +91,20 @@ function updateProvider() {
 $('#wsProvider').addEventListener('change', updateProvider);
 updateProvider();
 
+function apiErrorMessage(data, status) {
+    const value = data?.error ?? data?.detail;
+    if (typeof value === 'string' && value.trim()) return value;
+    if (Array.isArray(value)) {
+        const messages = value.map(item => typeof item === 'string' ? item : item?.msg).filter(Boolean);
+        if (messages.length) return messages.join('; ');
+    }
+    if (value && typeof value === 'object') {
+        if (typeof value.message === 'string') return value.message;
+        if (typeof value.msg === 'string') return value.msg;
+    }
+    return `Ошибка сервера (HTTP ${status})`;
+}
+
 $('#wsClearCache').addEventListener('click', async () => {
     try {
         const response = await fetch(`${API_BASE}/cache`, { method: 'DELETE' });
@@ -109,7 +123,7 @@ $('#wsCheck').addEventListener('click', async () => {
     try {
         const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, query, provider }) });
         const data = await response.json();
-        if (!response.ok || data.error) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
         renderResult(data); saveCheck(data, brand, query, provider);
     } catch (error) { showError(`Не удалось выполнить проверку: ${error.message}`); }
     finally { $('#wsLoader').hidden = true; }
@@ -253,7 +267,7 @@ async function openOpportunity(id) {
         const evidence = `${item.description} Промпт: «${item.query}». Конкуренты: ${item.competitors.join(', ') || 'не обнаружены'}. Последние выводы: ${item.evidenceRows.slice(-2).map(row => row.reasoning).filter(Boolean).join(' | ')}`;
         const response = await fetch(`${API_BASE}/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: item.brand, query: item.query, provider: item.provider, competitors: item.competitors, checks_count: item.count, evidence }) });
         const brief = await response.json();
-        if (!response.ok) throw new Error(brief.detail || 'Не удалось создать бриф');
+        if (!response.ok) throw new Error(apiErrorMessage(brief, response.status));
         if (!$('#briefDialog').open || activeRecommendation?.id !== opportunityId || !$('#growthTitle')) return;
         $('#growthTitle').value = brief.title || item.title; $('#growthGoal').value = brief.goal || ''; $('#growthAction').value = brief.action || item.suggestedAction; $('#growthVerification').value = brief.verification || `Повторить тот же промпт в ${PROVIDERS[item.provider] || item.provider}.`;
         const status = $('#growthBriefStatus');
@@ -299,7 +313,7 @@ async function measureTask(id, button) {
     const errorTarget = $('#briefDialog').open ? $('#growthBriefStatus') : null;
     try {
         const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: task.brand, query: task.query, provider: task.provider, force_refresh: true }) });
-        const data = await response.json(); if (!response.ok || data.error) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+        const data = await response.json(); if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
         const saved = saveCheck(data, task.brand, task.query, task.provider);
         task.postCheck = snapshotCheck(saved); task.verdict = compareChecks(task.baseline, task.postCheck); task.status = 'measured'; task.updatedAt = Date.now(); saveGrowthTasks();
         if ($('#briefDialog').open) $('#briefDialog').close(); showGrowthTab('results'); renderGrowth();
