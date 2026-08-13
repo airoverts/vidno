@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import httpx
 import logging
-from rag_analysis import build_analysis_messages, parse_analysis_response
+from rag_analysis import ANALYSIS_RESPONSE_SCHEMA, build_analysis_messages, parse_analysis_response
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,8 @@ load_dotenv()
 
 CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
 CLIENT_SECRET = os.getenv("GIGACHAT_CLIENT_SECRET")
-MODEL_NAME = os.getenv("GIGACHAT_MODEL", "GigaChat:pro")
+configured_model = os.getenv("GIGACHAT_MODEL", "GigaChat-2-Pro").strip()
+MODEL_NAME = "GigaChat-2-Pro" if configured_model in {"GigaChat:pro", "GigaChat-Pro"} else configured_model
 
 _access_token = None
 _token_expires = 0
@@ -42,7 +43,7 @@ def _post_with_retry(url: str, **kwargs) -> httpx.Response:
             if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
                 return response
             logger.warning(f"[GigaChat] Временная ошибка {response.status_code}, повтор {attempt + 1}/2")
-        except (httpx.TimeoutException, httpx.NetworkError) as e:
+        except httpx.TransportError as e:
             last_error = e
             if attempt == 2:
                 raise
@@ -92,7 +93,7 @@ def get_model_name() -> str:
     return MODEL_NAME
 
 
-def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2000) -> str:
+def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2000, response_format: dict | None = None) -> str:
     if not is_configured():
         raise RuntimeError("GigaChat не настроен")
     
@@ -103,6 +104,8 @@ def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2
         "max_tokens": max_tokens,
         "stream": False
     }
+    if response_format:
+        payload["response_format"] = response_format
     
     for attempt in range(2):
         access_token = _get_access_token()
@@ -126,24 +129,34 @@ def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2
                 _token_expires = 0
     response.raise_for_status()
     data = response.json()
-    
-    return data["choices"][0]["message"]["content"]
+    choices = data.get("choices") or []
+    if not choices:
+        raise ValueError("GigaChat вернул ответ без вариантов")
+    choice = choices[0]
+    finish_reason = choice.get("finish_reason")
+    if finish_reason in {"length", "max_tokens"}:
+        raise ValueError("ответ GigaChat обрезан по лимиту токенов")
+    content = choice.get("message", {}).get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("GigaChat вернул пустой ответ")
+    return content.strip()
 
 
 def analyze_brand_rag(brand: str, query: str, context: str) -> dict:
     logger.info(f"[RAG] Анализ бренда {brand[:80]!r} для запроса {query[:120]!r}")
     messages = build_analysis_messages(brand, query, context)
-    answer = _call_gigachat(messages, temperature=0.0, max_tokens=5000)
-    logger.debug(f"[RAG] Сырой ответ анализа: {answer[:500]}...")
+    response_format = {"type": "json_schema", "schema": ANALYSIS_RESPONSE_SCHEMA, "strict": True}
+    answer = ""
     try:
+        answer = _call_gigachat(messages, temperature=0.0, max_tokens=5000, response_format=response_format)
         analysis = parse_analysis_response(answer, context)
     except ValueError as error:
         logger.warning(f"[RAG] Повторный запрос для исправления JSON: {error}")
-        repair_messages = messages + [
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": "Предыдущий ответ имеет неверную структуру. Верни заново один полный компактный JSON без Markdown и пояснений. Обязательно включи все поля верхнего уровня и source_analysis для каждого источника."},
-        ]
-        answer = _call_gigachat(repair_messages, temperature=0.0, max_tokens=5000)
+        repair_messages = list(messages)
+        if answer:
+            repair_messages.append({"role": "assistant", "content": answer})
+        repair_messages.append({"role": "user", "content": "Верни заново один полный компактный JSON, соответствующий заданной схеме. Обязательно включи source_analysis для каждого источника."})
+        answer = _call_gigachat(repair_messages, temperature=0.0, max_tokens=5000, response_format=response_format)
         analysis = parse_analysis_response(answer, context)
     logger.info(f"[RAG] JSON успешно проверен: mentioned={analysis['mentioned']}, position={analysis['position']}")
     return analysis
@@ -163,14 +176,24 @@ def check_brand(brand: str, query: str, context: str) -> dict:
     try:
         analysis = analyze_brand_rag(brand, query, context)
     except httpx.HTTPStatusError as e:
-        logger.error(f"[RAG] HTTP ошибка: {e.response.status_code} - {e.response.text}")
-        return {"error": f"Ошибка API GigaChat: {e.response.status_code}"}
+        status = e.response.status_code
+        logger.error("[RAG] HTTP ошибка GigaChat: %s", status)
+        if status in {401, 403}:
+            return {"error": "Ошибка авторизации GigaChat"}
+        if status == 422:
+            return {"error": "GigaChat отклонил параметры модели или формат ответа"}
+        if status == 429:
+            return {"error": "Превышен лимит запросов GigaChat"}
+        return {"error": f"Ошибка API GigaChat: {status}"}
     except httpx.RequestError as e:
         logger.error(f"[RAG] Ошибка запроса: {str(e)}")
         return {"error": "Ошибка подключения к GigaChat"}
+    except ValueError as e:
+        logger.error("[RAG] Ответ GigaChat не прошёл проверку: %s", e)
+        return {"error": "GigaChat не смог сформировать полный структурированный ответ"}
     except Exception as e:
-        logger.error(f"[RAG] Неожиданная ошибка: {str(e)}", exc_info=True)
-        return {"error": "Ошибка обработки ответа GigaChat"}
+        logger.error("[RAG] Неожиданная ошибка: %s", type(e).__name__, exc_info=True)
+        return {"error": "Неожиданная ошибка при обработке ответа GigaChat"}
     
     logger.info(f"[RAG] Результат: mentioned={analysis['mentioned']}, position={analysis['position']}, role={analysis['role']}")
     

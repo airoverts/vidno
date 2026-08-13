@@ -30,6 +30,48 @@ class BrandAnalysis(BaseModel):
     total_sources: NonNegativeInt
 
 
+ANALYSIS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mentioned": {"type": "boolean"},
+        "position": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "weighted_position": {"anyOf": [{"type": "number", "minimum": 1}, {"type": "null"}]},
+        "role": {
+            "type": "string",
+            "enum": ["рекомендация", "сравнение", "упоминание в списке", "упоминание", "не упомянут"],
+        },
+        "reasoning": {"type": "string"},
+        "quotes": {"type": "array", "items": {"type": "string"}},
+        "mentioned_brands": {"type": "array", "items": {"type": "string"}},
+        "source_analysis": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_index": {"type": "integer", "minimum": 1},
+                    "authority": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "mentions_brand": {"type": "boolean"},
+                    "sentiment": {
+                        "type": "string",
+                        "enum": ["положительный", "нейтральный", "отрицательный"],
+                    },
+                    "key_point": {"type": "string"},
+                },
+                "required": ["source_index", "authority", "mentions_brand", "sentiment", "key_point"],
+                "additionalProperties": False,
+            },
+        },
+        "sources_count": {"type": "integer", "minimum": 0},
+        "total_sources": {"type": "integer", "minimum": 0},
+    },
+    "required": [
+        "mentioned", "position", "weighted_position", "role", "reasoning", "quotes",
+        "mentioned_brands", "source_analysis", "sources_count", "total_sources",
+    ],
+    "additionalProperties": False,
+}
+
+
 SYSTEM_PROMPT_ANALYZE = """Ты — аналитик видимости бренда в AI-поиске. Твоя задача — проанализировать предоставленный контекст и определить, как в нём представлен указанный пользователем бренд.
 
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
@@ -101,6 +143,9 @@ def parse_analysis_response(answer: str, context: str) -> dict:
     if not parsed:
         raise ValueError("модель вернула ответ в неверном формате")
 
+    for field in ("quotes", "mentioned_brands", "source_analysis"):
+        if parsed.get(field) is None:
+            parsed[field] = []
     allowed_sentiments = {"положительный", "нейтральный", "отрицательный"}
     for item in parsed.get("source_analysis", []):
         if item.get("sentiment") not in allowed_sentiments:

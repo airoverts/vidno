@@ -1,7 +1,7 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
-const PROVIDERS = { gigachat: 'GigaChat', deepseek: 'DeepSeek' };
+const PROVIDERS = { gigachat: 'GigaChat', deepseek: 'DeepSeek', yandex: 'YandexGPT' };
 const HISTORY_KEY = 'vidno-dashboard-check-history';
 const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
 const BRIEFS_KEY = 'vidno-growth-briefs';

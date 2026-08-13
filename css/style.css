@@ -1292,6 +1292,7 @@ img { max-width: 100%; display: block; }
 .app-check-form input, .app-check-form select { height: 42px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); font: inherit; }
 .app-field-grow { flex: 1; }
 .app-loader { display: flex; align-items: center; gap: 9px; margin: 14px 0; color: var(--accent); font-weight: 700; }
+.app-loader[hidden] { display: none; }
 .app-history-list, .app-data-list, .growth-list { display: flex; flex-direction: column; gap: 10px; }
 .app-history-row, .app-data-row, .growth-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .app-history-row:last-child, .app-data-row:last-child, .growth-card:last-child { border-bottom: 0; }
@@ -1299,9 +1300,6 @@ img { max-width: 100%; display: block; }
 .app-history-row span, .app-data-row span, .growth-card p { color: var(--text-soft); font-size: .8rem; }
 .app-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 52px 20px; color: var(--text-soft); text-align: center; }
 .app-empty i { color: var(--accent); font-size: 1.5rem; }.app-empty strong { color: var(--text); }
-.app-tabs { display: flex; gap: 5px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
-.app-tab { border: 0; border-bottom: 2px solid transparent; padding: 9px 10px; background: transparent; color: var(--text-soft); font: inherit; cursor: pointer; }
-.app-tab.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 .growth-card { align-items: flex-start; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .growth-card p { margin: 0; max-width: 680px; }.growth-card .btn { white-space: nowrap; }
 .growth-priority { display: inline-block; margin-bottom: 8px; padding: 3px 7px; border-radius: 99px; color: var(--surface); background: var(--accent); font-size: .7rem; font-weight: 700; }.growth-priority.med { background: var(--warn); }.growth-priority.low { background: var(--neutral); }

@@ -4,7 +4,6 @@ uvicorn
 httpx
 python-dotenv
 google-genai
-PyJWT[crypto]
 ddgs>=9.0.0
 requests
 beautifulsoup4
