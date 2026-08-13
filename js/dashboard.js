@@ -1,7 +1,8 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
-const PROVIDERS = { gigachat: 'GigaChat', deepseek: 'DeepSeek', yandex: 'YandexGPT' };
+const PROVIDERS = { gigachat: 'GigaChat', deepseek: 'DeepSeek', yandex: 'Алиса AI' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', deepseek: 'assets/ai/deepseek.svg', yandex: 'assets/ai/alice-ai.svg' };
 const HISTORY_KEY = 'vidno-dashboard-check-history';
 const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
 const BRIEFS_KEY = 'vidno-growth-briefs';
@@ -14,6 +15,8 @@ let growthTasks = loadJson(TASKS_KEY);
 let activeBrandKey = loadActiveBrandKey();
 let activeRecommendation = null;
 let activeGrowthTaskId = null;
+let competitorExpanded = false;
+let sourceExpanded = false;
 
 function loadJson(key) {
     try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; }
@@ -30,6 +33,22 @@ function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c =>
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } }
 function normalizeBrandName(value) { return String(value || '').trim().replace(/\s+/g, ' '); }
 function brandKey(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU'); }
+function identityText(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/[^a-zа-яё0-9]+/gi, ''); }
+function brandInitials(value) { const words = normalizeBrandName(value).split(/\s+/).filter(Boolean); return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : words[0]?.slice(0, 2) || '?').toLocaleUpperCase('ru-RU'); }
+function faviconUrl(domain) { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`; }
+function monogramMarkup(name) { const tone = [...brandKey(name)].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4; return `<span class="identity-avatar identity-monogram tone-${tone}" aria-hidden="true">${escapeHtml(brandInitials(name))}</span>`; }
+function imageAvatarMarkup(name, domain, type = 'company') { if (!domain) return monogramMarkup(name); return `<span class="identity-avatar" aria-hidden="true"><img src="${escapeHtml(faviconUrl(domain))}" alt="" data-avatar-name="${escapeHtml(name)}" data-avatar-type="${escapeHtml(type)}"></span>`; }
+function modelAvatarMarkup(provider, name) { const label = name || provider || 'AI'; const src = PROVIDER_ICONS[provider]; return src ? `<span class="identity-avatar model-avatar" aria-hidden="true"><img src="${escapeHtml(src)}" alt="" data-avatar-name="${escapeHtml(label)}"></span>` : monogramMarkup(label); }
+function brandDomainMap() {
+    const candidates = new Map();
+    activeHistory().forEach(item => {
+        const sources = (item.sources || []).map(source => { try { const url = typeof source === 'string' ? source : source.url; return { domain: new URL(url).hostname.replace(/^www\./, ''), title: normalizeBrandName(typeof source === 'string' ? '' : source.title) }; } catch { return null; } }).filter(Boolean);
+        (item.competitors || []).forEach(value => { const name = normalizeBrandName(value); const key = brandKey(name); const token = identityText(name); if (!key || token.length < 4) return; sources.forEach(source => { const host = identityText(source.domain.split('.')[0]); const title = identityText(source.title); if (!host.includes(token) && !title.includes(token)) return; if (!candidates.has(key)) candidates.set(key, new Map()); const domains = candidates.get(key); domains.set(source.domain, (domains.get(source.domain) || 0) + 1); }); });
+    });
+    const confirmed = new Map(); candidates.forEach((domains, key) => { const sorted = [...domains].sort((a, b) => b[1] - a[1]); if (sorted[0] && (!sorted[1] || sorted[0][1] > sorted[1][1])) confirmed.set(key, sorted[0][0]); }); return confirmed;
+}
+function companyAvatarMarkup(name) { return imageAvatarMarkup(name, brandDomainMap().get(brandKey(name))); }
+function bindAvatarFallbacks() { $$('img[data-avatar-name]').forEach(image => { const replace = () => { const wrap = image.closest('.identity-avatar'); if (wrap) wrap.outerHTML = monogramMarkup(image.dataset.avatarName); }; image.addEventListener('error', replace, { once: true }); if (image.complete && !image.naturalWidth) replace(); }); }
 function loadActiveBrandKey() {
     const saved = brandKey(localStorage.getItem(ACTIVE_BRAND_KEY));
     const available = new Set(history.map(item => brandKey(item.brand)).filter(Boolean));
@@ -68,6 +87,7 @@ function renderAllForActiveBrand() {
     renderSources();
     renderMetricsDashboard();
     renderGrowth();
+    bindAvatarFallbacks();
 }
 
 $('#activeBrandSelect').addEventListener('change', event => setActiveBrand(event.target.value));
@@ -119,14 +139,16 @@ $('#wsCheck').addEventListener('click', async () => {
     const query = $('#wsQuery').value.trim();
     const provider = $('#wsProvider').value;
     if (!brand || !query) return showError('Введите бренд и промпт для проверки.');
-    $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false;
+    const checkButton = $('#wsCheck');
+    if (checkButton.disabled) return;
+    $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false; checkButton.disabled = true;
     try {
         const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, query, provider }) });
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
         renderResult(data); saveCheck(data, brand, query, provider);
     } catch (error) { showError(`Не удалось выполнить проверку: ${error.message}`); }
-    finally { $('#wsLoader').hidden = true; }
+    finally { $('#wsLoader').hidden = true; checkButton.disabled = false; }
 });
 
 function showError(message) { const error = $('#wsError'); error.textContent = message; error.hidden = false; }
@@ -134,7 +156,8 @@ function renderResult(data) {
     const result = $('#wsResult');
     $('#wsVerdict').className = `ws-verdict ${data.mentioned ? 'mentioned' : 'not-mentioned'}`;
     $('#wsVerdict').innerHTML = data.mentioned ? '<i class="fa-solid fa-circle-check"></i> Бренд упомянут' : '<i class="fa-solid fa-circle-xmark"></i> Бренд не упомянут';
-    $('#wsMeta').innerHTML = [data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider], data.model && ['Модель', data.model], data.position && ['Позиция', `#${data.position}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value">${escapeHtml(value)}</span></div>`).join('');
+    $('#wsMeta').innerHTML = [data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], data.model && ['Модель', data.model], data.position && ['Позиция', `#${data.position}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
+    bindAvatarFallbacks();
     setTextBlock('#wsReasoningWrap', '#wsReasoning', data.reasoning);
     const quotes = Array.isArray(data.quotes) ? data.quotes : [];
     $('#wsQuotes').innerHTML = quotes.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsQuotesWrap').hidden = !quotes.length;
@@ -220,7 +243,18 @@ function snapshotCheck(item) { return item ? { id: item.id || null, createdAt: i
 function growthTaskForBrand(task) { return brandKey(task.brand) === activeBrandKey; }
 function statusLabel(status) { return ({ planned: 'Запланировано', in_progress: 'В работе', ready_for_check: 'Готово к проверке', measured: 'Измерено' })[status] || status; }
 function workTypeLabel(type) { return ({ content: 'Контент', seo: 'SEO', pr: 'PR', technical: 'Техническая' })[type] || type; }
-function emptyGrowth(icon, title, text, action = '') { return `<div class="app-empty"><i class="fa-solid ${icon}"></i><strong>${title}</strong><span>${text}</span>${action}</div>`; }
+function emptyGrowth(title, text, action = '') { return `<div class="app-empty growth-empty"><strong>${title}</strong><span>${text}</span>${action}</div>`; }
+function updateGrowthSummary(opportunities, tasks, results, activeTab = 'opportunities') {
+    $('#growthOpportunityTotal').textContent = opportunities.length;
+    $('#growthTaskTotal').textContent = tasks.length;
+    $('#growthResultTotal').textContent = results.length;
+    const summaries = {
+        opportunities: opportunities.length ? [`${opportunities.length} ${opportunities.length === 1 ? 'возможность готова' : 'возможности готовы'} к разбору`, 'Изучите доказательства и создайте задачу для важного разрыва.'] : ['Найдите устойчивую точку роста', 'Две проверки одного промпта помогут подтвердить проблему.'],
+        tasks: tasks.length ? [`${tasks.length} ${tasks.length === 1 ? 'задача находится' : 'задачи находятся'} в работе`, 'Обновляйте статус и проверяйте эффект готовых изменений.'] : ['Переведите возможность в работу', 'Здесь появятся задачи, ответственные и сроки.'],
+        results: results.length ? [`Измерено ${results.length} ${results.length === 1 ? 'изменение' : 'изменения'}`, 'Сравните состояние до и после изменений.'] : ['Здесь появятся результаты', 'Завершите задачу и повторите исходную проверку.']
+    };
+    [$('#growthStageTitle').textContent, $('#growthStageText').textContent] = summaries[activeTab];
+}
 function renderGrowth() {
     migrateLegacyBriefs();
     const dismissed = new Set(loadJson(DISMISSED_KEY));
@@ -229,31 +263,36 @@ function renderGrowth() {
     const tasks = growthTasks.filter(task => growthTaskForBrand(task) && task.status !== 'measured');
     const results = growthTasks.filter(task => growthTaskForBrand(task) && task.status === 'measured');
     $('#opportunityCount').textContent = opportunities.length; $('#taskCount').textContent = tasks.length; $('#resultCount').textContent = results.length;
-    $('#growthOpportunities').innerHTML = opportunities.length ? opportunities.map(renderOpportunityCard).join('') : emptyGrowth('fa-seedling', 'Пока нет подтверждённых возможностей', 'Для рекомендации нужны две проверки одного промпта в одной модели.', '<button class="btn btn-primary btn-sm" data-growth-view="prompts">Запустить проверку</button>');
-    $('#growthTasks').innerHTML = tasks.length ? tasks.sort((a, b) => b.updatedAt - a.updatedAt).map(renderTaskCard).join('') : emptyGrowth('fa-list-check', 'Нет задач в работе', 'Примите подтверждённую возможность, чтобы создать первую задачу.');
-    $('#growthResults').innerHTML = results.length ? results.sort((a, b) => b.updatedAt - a.updatedAt).map(renderResultCard).join('') : emptyGrowth('fa-chart-line', 'Пока нет измеренных результатов', 'Завершите задачу и выполните свежую проверку эффекта.');
+    const activeTab = $('[data-growth-tab].active')?.dataset.growthTab || 'opportunities';
+    updateGrowthSummary(opportunities, tasks, results, activeTab);
+    $('#growthOpportunities').innerHTML = opportunities.length ? opportunities.map(renderOpportunityCard).join('') : emptyGrowth('Пока нет подтверждённых возможностей', 'Для рекомендации нужны две проверки одного промпта в одной модели.', '<button class="btn btn-primary btn-sm" data-growth-view="prompts">Запустить проверку</button>');
+    $('#growthTasks').innerHTML = tasks.length ? tasks.sort((a, b) => b.updatedAt - a.updatedAt).map(renderTaskCard).join('') : emptyGrowth('Нет задач в работе', 'Выберите подтверждённую возможность и превратите её в конкретную задачу.', '<button class="btn btn-ghost btn-sm" data-growth-open-tab="opportunities">Посмотреть возможности</button>');
+    $('#growthResults').innerHTML = results.length ? results.sort((a, b) => b.updatedAt - a.updatedAt).map(renderResultCard).join('') : emptyGrowth('Пока нет измеренных результатов', 'Завершите задачу и выполните свежую проверку эффекта.', '<button class="btn btn-ghost btn-sm" data-growth-open-tab="tasks">Перейти к задачам</button>');
     bindGrowthActions();
 }
 function renderOpportunityCard(item) {
     const competitors = item.competitors.length ? item.competitors.slice(0, 4).join(', ') : 'не обнаружены';
     const latest = item.evidenceRows.at(-1);
-    return `<article class="growth-card growth-opportunity"><div class="growth-card-main"><div class="growth-card-badges"><span class="growth-priority ${item.priority}">${item.priority === 'high' ? 'Высокий' : 'Средний'} приоритет</span><span class="growth-tag">${escapeHtml(PROVIDERS[item.provider] || item.provider)}</span><span class="growth-tag">${item.count} подтверждения</span></div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><div class="growth-evidence"><strong>Промпт</strong><span>${escapeHtml(item.query)}</span><strong>Конкуренты</strong><span>${escapeHtml(competitors)}</span><strong>Последнее доказательство</strong><span>${escapeHtml(latest.reasoning || (latest.mentioned ? 'Бренд упомянут без рекомендации.' : 'Бренд не найден в результате.'))}</span></div><div class="growth-suggestion"><strong>Что предлагает Vidno</strong><span>${escapeHtml(item.suggestedAction)}</span></div></div><div class="growth-card-actions"><button class="btn btn-primary btn-sm" data-create-task="${encodeURIComponent(item.id)}">Создать задачу</button><button class="btn btn-ghost btn-sm" data-dismiss="${encodeURIComponent(item.id)}">Неактуально</button></div></article>`;
+    return `<article class="growth-card growth-opportunity"><div class="growth-card-main"><div class="growth-card-badges"><span class="growth-priority ${item.priority}">${item.priority === 'high' ? 'Высокий' : 'Средний'} приоритет</span><span class="growth-tag">${escapeHtml(PROVIDERS[item.provider] || item.provider)}</span><span class="growth-tag">${item.count} подтверждения</span></div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><div class="growth-evidence"><strong>Промпт</strong><span>${escapeHtml(item.query)}</span><strong>Конкуренты</strong><span>${escapeHtml(competitors)}</span><strong>Последнее доказательство</strong><span>${escapeHtml(latest.reasoning || (latest.mentioned ? 'Бренд упомянут без рекомендации.' : 'Бренд не найден в результате.'))}</span></div><div class="growth-suggestion"><strong>Что предлагает Vidno</strong><span>${escapeHtml(item.suggestedAction)}</span></div></div><aside class="growth-card-actions"><span class="growth-action-label">Следующий шаг</span><button class="btn btn-primary btn-sm" data-create-task="${encodeURIComponent(item.id)}">Создать задачу</button><button class="btn btn-ghost btn-sm" data-dismiss="${encodeURIComponent(item.id)}">Неактуально</button></aside></article>`;
 }
 function renderTaskCard(task) {
-    return `<article class="growth-card"><div class="growth-card-main"><div class="growth-card-badges"><span class="growth-status status-${task.status}">${statusLabel(task.status)}</span><span class="growth-tag">${workTypeLabel(task.workType)}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(task.action)}</p><div class="growth-task-meta"><span><i class="fa-regular fa-user"></i>${escapeHtml(task.owner || 'Не назначен')}</span><span><i class="fa-regular fa-calendar"></i>${task.deadline ? new Date(`${task.deadline}T00:00:00`).toLocaleDateString('ru-RU') : 'Без срока'}</span></div></div><div class="growth-card-actions"><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть</button>${task.status === 'ready_for_check' ? `<button class="btn btn-primary btn-sm" data-measure-task="${task.id}">Проверить эффект</button>` : ''}</div></article>`;
+    const statusControl = ['planned', 'in_progress', 'ready_for_check'].includes(task.status) ? `<label class="growth-quick-status"><span class="growth-action-label">Статус</span><select class="status-${task.status}" data-quick-status="${task.id}" aria-label="Статус задачи «${escapeHtml(task.title)}»"><option value="planned"${task.status === 'planned' ? ' selected' : ''}>Запланировано</option><option value="in_progress"${task.status === 'in_progress' ? ' selected' : ''}>В работе</option><option value="ready_for_check"${task.status === 'ready_for_check' ? ' selected' : ''}>Готово к проверке</option></select></label>` : `<span class="growth-status status-${task.status}">${statusLabel(task.status)}</span>`;
+    return `<article class="growth-card growth-task"><div class="growth-card-main"><div class="growth-card-badges">${statusControl}<span class="growth-tag">${workTypeLabel(task.workType)}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-suggestion growth-task-action"><strong>Что сделать</strong><span>${escapeHtml(task.action)}</span></div><div class="growth-task-meta"><span><i class="fa-regular fa-user"></i>${escapeHtml(task.owner || 'Не назначен')}</span><span><i class="fa-regular fa-calendar"></i>${task.deadline ? new Date(`${task.deadline}T00:00:00`).toLocaleDateString('ru-RU') : 'Без срока'}</span></div></div><aside class="growth-card-actions"><span class="growth-action-label">Управление</span>${task.status === 'ready_for_check' ? `<button class="btn btn-primary btn-sm" data-measure-task="${task.id}">Проверить эффект</button>` : ''}<button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть задачу</button></aside></article>`;
 }
 function checkSummary(item) { if (!item) return 'Нет данных'; if (!item.mentioned) return 'Бренд не упомянут'; return `${isRecommendationRole(item.role) ? 'Рекомендация' : 'Бренд упомянут'}${item.position ? ` · позиция №${item.position}` : ''}`; }
 function renderResultCard(task) {
     const tone = task.verdict === 'improved' ? 'positive' : task.verdict === 'declined' ? 'negative' : 'neutral';
     const label = task.verdict === 'improved' ? 'Предварительно улучшилось' : task.verdict === 'declined' ? 'Предварительно ухудшилось' : 'Без изменений';
-    return `<article class="growth-card growth-result"><div class="growth-card-main"><div class="growth-card-badges"><span class="growth-verdict ${tone}">${label}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div><span>После</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><div class="growth-card-actions"><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть</button></div></article>`;
+    return `<article class="growth-card growth-result"><div class="growth-card-main"><div class="growth-result-head"><div class="growth-card-badges"><span class="growth-verdict ${tone}">${label}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><span class="growth-result-kicker">Контрольная проверка</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До изменений</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div class="growth-after"><span>После изменений</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><aside class="growth-card-actions"><span class="growth-action-label">Подробнее</span><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть результат</button></aside></article>`;
 }
 function bindGrowthActions() {
     $$('[data-create-task]').forEach(button => button.addEventListener('click', () => openOpportunity(decodeURIComponent(button.dataset.createTask))));
     $$('[data-dismiss]').forEach(button => button.addEventListener('click', () => { const rows = new Set(loadJson(DISMISSED_KEY)); rows.add(decodeURIComponent(button.dataset.dismiss)); localStorage.setItem(DISMISSED_KEY, JSON.stringify([...rows])); renderGrowth(); }));
     $$('[data-edit-task]').forEach(button => button.addEventListener('click', () => openTask(button.dataset.editTask)));
+    $$('[data-quick-status]').forEach(select => select.addEventListener('change', () => updateTaskStatus(select.dataset.quickStatus, select.value)));
     $$('[data-measure-task]').forEach(button => button.addEventListener('click', () => measureTask(button.dataset.measureTask, button)));
     $$('[data-growth-view="prompts"]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
+    $$('[data-growth-open-tab]').forEach(button => button.addEventListener('click', () => showGrowthTab(button.dataset.growthOpenTab)));
 }
 async function openOpportunity(id) {
     activeRecommendation = recommendations().find(item => item.id === id);
@@ -322,13 +361,40 @@ async function measureTask(id, button) {
         else alert(`Проверка не выполнена: ${error.message}`);
     } finally { button.disabled = false; button.textContent = original; }
 }
-function showGrowthTab(tabName) { $$('[data-growth-tab]').forEach(tab => tab.classList.toggle('active', tab.dataset.growthTab === tabName)); $('#growthOpportunities').hidden = tabName !== 'opportunities'; $('#growthTasks').hidden = tabName !== 'tasks'; $('#growthResults').hidden = tabName !== 'results'; }
+function showGrowthTab(tabName) {
+    $$('[data-growth-tab]').forEach(tab => { const active = tab.dataset.growthTab === tabName; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', active); });
+    $('#growthOpportunities').hidden = tabName !== 'opportunities'; $('#growthTasks').hidden = tabName !== 'tasks'; $('#growthResults').hidden = tabName !== 'results';
+    updateGrowthSummary(Array(Number($('#opportunityCount').textContent)).fill(null), Array(Number($('#taskCount').textContent)).fill(null), Array(Number($('#resultCount').textContent)).fill(null), tabName);
+}
+function updateTaskStatus(id, status) {
+    const editableStatuses = ['planned', 'in_progress', 'ready_for_check'];
+    if (!editableStatuses.includes(status)) return;
+    const task = growthTasks.find(item => item.id === id);
+    if (!task || !editableStatuses.includes(task.status) || task.status === status) return;
+    task.status = status;
+    task.updatedAt = Date.now();
+    saveGrowthTasks();
+    renderGrowth();
+}
 $('#briefClose').addEventListener('click', () => $('#briefDialog').close());
 $$('[data-growth-tab]').forEach(button => button.addEventListener('click', () => showGrowthTab(button.dataset.growthTab)));
-function renderCompetitors() { const counts = new Map(); activeHistory().flatMap(item => item.competitors || []).forEach(name => counts.set(name, (counts.get(name) || 0) + 1)); $('#competitorList').innerHTML = counts.size ? [...counts].sort((a,b) => b[1]-a[1]).map(([name,count]) => `<div class="app-data-row"><strong>${escapeHtml(name)}</strong><span>${count} упоминаний в проверках</span></div>`).join('') : '<div class="app-empty"><strong>Нет данных о конкурентах</strong><span>Они появятся в результатах live-проверок.</span></div>'; }
+function preferredVariant(variants) { return [...variants.entries()].sort((a, b) => b[1].count - a[1].count || a[1].order - b[1].order)[0]?.[0] || ''; }
+function normalizedCompetitors() {
+    const rows = new Map(); let order = 0;
+    activeHistory().forEach(item => {
+        const inCheck = new Map();
+        (item.competitors || []).forEach(value => { const name = normalizeBrandName(value); const key = brandKey(name); if (key && key !== activeBrandKey && !inCheck.has(key)) inCheck.set(key, name); });
+        inCheck.forEach((name, key) => { if (!rows.has(key)) rows.set(key, { key, mentions: 0, checks: 0, variants: new Map() }); const row = rows.get(key); row.mentions++; row.checks++; const variant = row.variants.get(name) || { count: 0, order: order++ }; variant.count++; row.variants.set(name, variant); });
+    });
+    return [...rows.values()].map(row => ({ ...row, name: preferredVariant(row.variants) })).sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name, 'ru'));
+}
+function rankedRow(name, value, detail, index, total, meta = '', avatar = '') { const width = percentage(value, total || value); return `<div class="app-data-row app-rank-row"><span class="app-rank-index">${index + 1}</span><div class="app-rank-main">${avatar}<div><strong>${escapeHtml(name)}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div></div><div class="app-rank-result"><strong>${escapeHtml(detail)}</strong><span class="app-rank-track"><i style="width:${width}%"></i></span></div></div>`; }
+function setRankingToggle(selector, expanded, count) { const button = $(selector); button.hidden = count <= 10; button.textContent = expanded ? 'Свернуть' : `Показать все · ${count}`; button.setAttribute('aria-expanded', expanded); }
+function renderCompetitors() { const rows = normalizedCompetitors(); const total = activeHistory().length; const visible = competitorExpanded ? rows : rows.slice(0, 10); $('#competitorList').innerHTML = visible.length ? visible.map((row, index) => rankedRow(row.name, row.checks, `${row.mentions} упомин. · ${percentage(row.checks, total)}%`, index, total, `В ${row.checks} из ${total} проверок`, companyAvatarMarkup(row.name))).join('') : '<div class="app-empty"><strong>Нет данных о конкурентах</strong><span>Они появятся в результатах live-проверок.</span></div>'; setRankingToggle('#competitorToggle', competitorExpanded, rows.length); bindAvatarFallbacks(); }
 function sourceCategory(domain) { if (/(forbes|rbc|tass|ria|vedomosti|kommersant|lenta|gazeta|news|media)/.test(domain)) return 'СМИ'; if (/(vc\.ru|habr|reddit|forum|otzovik|irecommend)/.test(domain)) return 'Сообщество и отзывы'; if (/(wiki|catalog|yell|2gis|zoon)/.test(domain)) return 'Каталог и справочник'; return 'Профильный сайт'; }
 function renderSources() {
     const counts = new Map();
+    const checkCounts = new Map();
     activeHistory().flatMap(item => item.sources || []).forEach(source => {
         try {
             const value = typeof source === 'string' ? source : source.url;
@@ -336,21 +402,25 @@ function renderSources() {
             counts.set(host, (counts.get(host) || 0) + 1);
         } catch {}
     });
+    activeHistory().forEach(item => { const domains = new Set(); (item.sources || []).forEach(source => { try { const value = typeof source === 'string' ? source : source.url; domains.add(new URL(value).hostname.replace(/^www\./, '')); } catch {} }); domains.forEach(host => checkCounts.set(host, (checkCounts.get(host) || 0) + 1)); });
     const rows = [...counts].sort((a, b) => b[1] - a[1]);
     const empty = '<div class="app-empty"><strong>Нет источников</strong><span>Они появятся после первой live-проверки.</span></div>';
-    const markup = rows.length ? rows.map(([name, count]) => `<div class="app-data-row"><strong>${escapeHtml(name)}</strong><span>${count} цитирований · ${sourceCategory(name)}</span></div>`).join('') : empty;
+    const total = activeHistory().length; const visible = sourceExpanded ? rows : rows.slice(0, 10);
+    const markup = visible.length ? visible.map(([name, count], index) => rankedRow(name, checkCounts.get(name) || 0, `${count} появл. · ${percentage(checkCounts.get(name) || 0, total)}%`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
     $('#sourceList').innerHTML = markup;
-    $('#homeSourceList').innerHTML = rows.length ? rows.slice(0, 5).map(([name, count]) => `<div class="app-data-row"><strong>${escapeHtml(name)}</strong><span>${count} цитирований · ${sourceCategory(name)}</span></div>`).join('') : empty;
+    $('#homeSourceList').innerHTML = rows.length ? rows.slice(0, 5).map(([name, count], index) => rankedRow(name, checkCounts.get(name) || 0, `${count} появл.`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
+    setRankingToggle('#sourceToggle', sourceExpanded, rows.length); bindAvatarFallbacks();
 }
+$$('[data-ranking-toggle]').forEach(button => button.addEventListener('click', () => { if (button.dataset.rankingToggle === 'competitors') { competitorExpanded = !competitorExpanded; renderCompetitors(); } else { sourceExpanded = !sourceExpanded; renderSources(); } }));
 const dashboardCharts = {};
 function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].destroy(); }
 function percentage(value, total) { return total ? Math.round(value / total * 100) : 0; }
 function brandRows() {
     const rowsHistory = activeHistory();
-    const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { name: ownName, mentions: 0, positions: [], citations: 0, sentiments: [] }]]);
-    rowsHistory.forEach(item => { const key = brandKey(item.brand); const own = rows.get(key) || rows.get(activeBrandKey); if (item.mentioned) own.mentions++; if (item.position) own.positions.push(item.position); if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || [])); (item.competitors || []).forEach(name => { const competitorKey = brandKey(name); if (!rows.has(competitorKey)) rows.set(competitorKey, { name, mentions: 0, positions: [], citations: 0, sentiments: [] }); rows.get(competitorKey).mentions++; }); });
+    const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { key: activeBrandKey, name: ownName, mentions: 0, positions: [], citations: 0, sentiments: [], variants: new Map([[ownName, { count: 1, order: 0 }]]) }]]); let order = 1;
+    rowsHistory.forEach(item => { const own = rows.get(activeBrandKey); if (item.mentioned) own.mentions++; if (item.position) own.positions.push(item.position); if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || [])); const seen = new Set(); (item.competitors || []).forEach(value => { const name = normalizeBrandName(value); const competitorKey = brandKey(name); if (!competitorKey || competitorKey === activeBrandKey || seen.has(competitorKey)) return; seen.add(competitorKey); if (!rows.has(competitorKey)) rows.set(competitorKey, { key: competitorKey, name, mentions: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(competitorKey); row.mentions++; const variant = row.variants.get(name) || { count: 0, order: order++ }; variant.count++; row.variants.set(name, variant); }); });
     const totalMentions = [...rows.values()].reduce((sum, row) => sum + row.mentions, 0);
-    return [...rows.values()].map(row => ({ ...row, sov: percentage(row.mentions, totalMentions), visibility: percentage(row.mentions, rowsHistory.length), citationRate: percentage(row.citations, rowsHistory.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null })).sort((a, b) => b.mentions - a.mentions);
+    return [...rows.values()].map(row => ({ ...row, name: row.key === activeBrandKey ? ownName : preferredVariant(row.variants), sov: percentage(row.mentions, totalMentions), visibility: percentage(row.mentions, rowsHistory.length), citationRate: percentage(row.citations, rowsHistory.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null })).sort((a, b) => b.mentions - a.mentions);
 }
 function dominantSentiment(values) { const counts = values.reduce((result, value) => ({ ...result, [value]: (result[value] || 0) + 1 }), {}); return Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'Нет данных'; }
 function renderMetricsDashboard() {
@@ -362,63 +432,63 @@ function renderMetricsDashboard() {
     $('#metricPosition').textContent = own.averagePosition ? own.averagePosition.toFixed(1) : '—'; $('#metricPositionNote').textContent = own.averagePosition ? 'в списочных рекомендациях' : 'Нет позиций';
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
-function renderLeaderBoard() { $('#leaderboardBody').innerHTML = brandRows().length ? brandRows().map(row => `<tr class="${brandKey(row.name) === activeBrandKey ? 'is-current' : ''}"><td><strong>${escapeHtml(row.name)}</strong></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? row.averagePosition.toFixed(1) : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="7" class="ws-empty-row">Данные появятся после первой проверки</td></tr>'; }
-function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const name = PROVIDERS[item.provider] || item.model || item.provider; if (!groups.has(name)) groups.set(name, { total: 0, mentioned: 0 }); const row = groups.get(name); row.total++; if (item.mentioned) row.mentioned++; }); return groups; }
-function renderModelMetrics() { const groups = modelGroups(); $('#modelMetrics').innerHTML = groups.size ? [...groups].map(([name, row]) => `<div class="app-data-row"><strong>${escapeHtml(name)}</strong><span>${percentage(row.mentioned, row.total)}% · ${row.mentioned} из ${row.total}</span></div>`).join('') : '<div class="app-empty"><strong>Нет данных по моделям</strong></div>'; }
+function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = activeHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? row.averagePosition.toFixed(1) : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
+function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const provider = item.provider || ''; const name = PROVIDERS[provider] || item.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (item.mentioned) row.mentioned++; }); return groups; }
+function modelRow(row, index, compact = false) { return `<div class="model-row${row.total < 2 ? ' low-sample' : ''}"><span class="model-rank">${index + 1}</span><div class="model-name">${modelAvatarMarkup(row.provider, row.name)}<div><strong>${escapeHtml(row.name)}</strong><small>${row.total < 2 ? 'Мало данных' : `${row.total} проверок`}</small></div></div><div class="model-score"><strong>${row.value}%</strong><span>${row.mentioned} из ${row.total}</span></div><div class="model-meter"><i style="width:${row.value}%"></i></div>${compact ? '' : `<span class="model-verdict">${row.value >= 60 ? 'Высокая видимость' : row.value >= 30 ? 'Есть потенциал' : 'Требует внимания'}</span>`}</div>`; }
+function renderModelMetrics() { const groups = [...modelGroups().values()].map(row => ({ ...row, value: percentage(row.mentioned, row.total) })).sort((a, b) => b.value - a.value || b.total - a.total); const empty = '<div class="app-empty"><strong>Нет данных по моделям</strong><span>Запустите проверки в нужных AI-моделях.</span></div>'; $('#modelMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index, true)).join('') : empty; $('#visibilityMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index)).join('') : ''; $('#visibilityEmpty').hidden = Boolean(groups.length); const best = groups[0]; $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки'; }
 function renderExclusivity() { const mentioned = activeHistory().filter(item => item.mentioned); const exclusive = mentioned.filter(item => !(item.competitors || []).length).length; const compared = mentioned.length - exclusive; $('#exclusivityMetrics').innerHTML = `<div class="app-data-row"><strong>Эксклюзивное упоминание</strong><span>${percentage(exclusive, mentioned.length)}% · ${exclusive} ответов</span></div><div class="app-data-row"><strong>В сравнении с конкурентами</strong><span>${percentage(compared, mentioned.length)}% · ${compared} ответов</span></div>`; }
 function chartTheme() {
     const style = getComputedStyle(document.documentElement);
-    return { accent: style.getPropertyValue('--accent').trim(), accent2: style.getPropertyValue('--accent-2').trim(), night: style.getPropertyValue('--night').trim(), text: style.getPropertyValue('--text').trim(), muted: style.getPropertyValue('--text-soft').trim(), border: style.getPropertyValue('--border').trim(), soft: style.getPropertyValue('--bg-soft').trim() };
+    return { accent: style.getPropertyValue('--accent').trim(), accent2: style.getPropertyValue('--accent-2').trim(), night: style.getPropertyValue('--night').trim(), text: style.getPropertyValue('--text').trim(), muted: style.getPropertyValue('--text-soft').trim(), border: style.getPropertyValue('--border').trim(), soft: style.getPropertyValue('--bg-soft').trim(), surface: style.getPropertyValue('--surface').trim() };
 }
 function chartDate(item, index) {
-    if (!item.createdAt) return `Проверка ${index + 1}`;
-    return new Date(item.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+    return `Проверка ${index + 1}`;
 }
 function lineGradient(chart, color) {
     const { ctx, chartArea } = chart;
     if (!chartArea) return color;
     const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
     gradient.addColorStop(0, color);
+    gradient.addColorStop(.42, color);
     gradient.addColorStop(1, 'transparent');
     return gradient;
 }
-const centerLabelPlugin = { id: 'centerLabel', afterDraw(chart, args, options) { if (!options?.label) return; const { ctx, chartArea } = chart; const x = (chartArea.left + chartArea.right) / 2; const y = (chartArea.top + chartArea.bottom) / 2; ctx.save(); ctx.textAlign = 'center'; ctx.fillStyle = options.color; ctx.font = '800 26px Inter'; ctx.fillText(options.label, x, y - 2); ctx.fillStyle = options.muted; ctx.font = '600 11px Inter'; ctx.fillText(options.caption, x, y + 17); ctx.restore(); } };
+const centerLabelPlugin = { id: 'centerLabel', beforeDatasetsDraw(chart, args, options) { if (!options?.label) return; const { ctx, chartArea } = chart; const x = (chartArea.left + chartArea.right) / 2; const y = (chartArea.top + chartArea.bottom) / 2; ctx.save(); ctx.textAlign = 'center'; ctx.fillStyle = options.color; ctx.font = '800 26px Inter'; ctx.fillText(options.label, x, y - 2); ctx.fillStyle = options.muted; ctx.font = '600 11px Inter'; ctx.fillText(options.caption, x, y + 17); ctx.restore(); } };
 function renderDashboardCharts() {
     if (!window.Chart) return;
-    const rowsHistory = activeHistory(); const theme = chartTheme(); const rows = brandRows().slice(0, 5);
-    const own = rows.find(row => brandKey(row.name) === activeBrandKey) || rows[0];
-    destroyChart('trend'); destroyChart('sov'); destroyChart('visibility');
+    const rowsHistory = activeHistory(); const theme = chartTheme(); const allRows = brandRows(); const own = allRows.find(row => row.key === activeBrandKey) || allRows[0]; const rows = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 4)].filter(Boolean);
+    destroyChart('trend'); destroyChart('sov');
     const hasHistory = rowsHistory.length > 0;
-    [['overviewChart', 'overviewEmpty'], ['sovChart', 'sovEmpty'], ['visibilityChart', 'visibilityEmpty']].forEach(([chartId, emptyId]) => { $(`#${chartId}`).hidden = !hasHistory; $(`#${emptyId}`).hidden = hasHistory; });
+    const hasTrend = rowsHistory.length > 1;
+    $('#overviewChart').hidden = !hasTrend; $('#overviewEmpty').hidden = hasTrend;
+    $('#sovChart').hidden = !hasHistory; $('#sovEmpty').hidden = hasHistory; $('#sovLegend').hidden = !hasHistory;
     if (!hasHistory) {
         $('#overviewInsight').textContent = 'Начните с проверки';
         $('#sovInsight').textContent = 'Данные появятся здесь';
-        $('#visibilityInsight').textContent = 'Нужны проверки';
         return;
     }
     const ownTrend = own ? rowsHistory.map((item, index) => percentage(rowsHistory.slice(0, index + 1).filter(value => value.mentioned).length, index + 1)) : [];
     const trendDelta = ownTrend.length > 1 ? ownTrend.at(-1) - ownTrend[0] : 0;
-    $('#overviewInsight').textContent = own ? `${trendDelta >= 0 ? '+' : ''}${trendDelta} п.п. за период` : 'Нужны проверки';
-    dashboardCharts.trend = new Chart($('#overviewChart'), {
+    const leader = allRows[0]; $('#overviewInsight').textContent = own ? `${rowsHistory.length} проверок · ${trendDelta >= 0 ? '+' : ''}${trendDelta} п.п. · лидер ${leader?.name || '—'}` : 'Нужны проверки';
+    if (!hasTrend) {
+        $('#overviewInsight').textContent = 'Нужна ещё 1 проверка';
+        $('#overviewEmpty').querySelector('strong').textContent = 'Для динамики нужны две проверки';
+        $('#overviewEmpty').querySelector('p').textContent = 'Повторите проверку позже — мы сравним изменения и покажем тренд.';
+    } else dashboardCharts.trend = new Chart($('#overviewChart'), {
         type: 'line',
         data: { labels: rowsHistory.map(chartDate), datasets: rows.map(row => {
             const isOwn = brandKey(row.name) === activeBrandKey;
-            return { label: row.name, data: rowsHistory.map((item, index) => { const relevant = rowsHistory.slice(0, index + 1); return isOwn ? percentage(relevant.filter(value => value.mentioned).length, relevant.length) : percentage(relevant.filter(value => value.competitors?.some(name => brandKey(name) === brandKey(row.name))).length, relevant.length); }), borderColor: isOwn ? theme.accent : theme.muted, backgroundColor: context => isOwn ? lineGradient(context.chart, theme.accent) : 'transparent', borderWidth: isOwn ? 3 : 1.5, tension: .38, fill: isOwn, pointRadius: context => isOwn && context.dataIndex === rowsHistory.length - 1 ? 5 : 0, pointHoverRadius: 6, pointBackgroundColor: theme.accent };
+            return { label: row.name, data: rowsHistory.map((item, index) => { const relevant = rowsHistory.slice(0, index + 1); return isOwn ? percentage(relevant.filter(value => value.mentioned).length, relevant.length) : percentage(relevant.filter(value => value.competitors?.some(name => brandKey(name) === brandKey(row.name))).length, relevant.length); }), borderColor: isOwn ? theme.accent : theme.muted, backgroundColor: context => isOwn ? lineGradient(context.chart, theme.accent) : 'transparent', borderWidth: isOwn ? 3.5 : 1.25, borderDash: isOwn ? [] : [5, 5], tension: .42, cubicInterpolationMode: 'monotone', fill: isOwn, pointRadius: context => isOwn && context.dataIndex === rowsHistory.length - 1 ? 5 : 0, pointHoverRadius: 7, pointBorderWidth: 3, pointBorderColor: theme.soft, pointBackgroundColor: theme.accent };
         }) },
-        options: { responsive: true, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 7, color: theme.text, font: { size: 11 } } }, tooltip: { callbacks: { label: context => `${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 5, font: { size: 10 } } }, y: { min: 0, max: 100, ticks: { color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border } } } }
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.night, titleColor: theme.soft, bodyColor: theme.soft, borderColor: theme.accent, borderWidth: 1, cornerRadius: 8, padding: 12, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return [`${PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'}`, item?.query ? `Запрос: ${item.query}` : '']; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
     });
-    const ownRank = own ? rows.findIndex(row => brandKey(row.name) === brandKey(own.name)) + 1 : 0;
+    const ownRank = own ? allRows.findIndex(row => row.key === activeBrandKey) + 1 : 0;
     $('#sovInsight').textContent = own ? `#${ownRank} в нише · ${own.sov}% SoV` : 'Нужны проверки';
+    const sovSelected = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 3)].filter(Boolean); const selectedKeys = new Set(sovSelected.map(row => row.key)); const otherMentions = allRows.filter(row => !selectedKeys.has(row.key)).reduce((sum, row) => sum + row.mentions, 0); const sovRows = otherMentions ? [...sovSelected, { key: 'other', name: 'Остальные', mentions: otherMentions }] : sovSelected; const totalMentions = allRows.reduce((sum, row) => sum + row.mentions, 0);
+    $('#sovLegend').innerHTML = sovRows.map((row, index) => `<div><i data-sov-color="${index}"></i><span class="identity-name">${row.key === 'other' ? monogramMarkup(row.name) : companyAvatarMarkup(row.name)}<span>${escapeHtml(row.name)}</span></span><strong>${percentage(row.mentions, totalMentions)}%</strong></div>`).join(''); bindAvatarFallbacks();
     dashboardCharts.sov = new Chart($('#sovChart'), {
-        type: 'doughnut', data: { labels: rows.map(row => row.name), datasets: [{ data: rows.map(row => row.sov), backgroundColor: rows.map(row => brandKey(row.name) === activeBrandKey ? theme.accent : theme.soft), borderColor: theme.border, borderWidth: 2, hoverOffset: 7 }] },
-        options: { cutout: '68%', plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: 'Share of Voice', color: theme.text, muted: theme.muted }, legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 8, color: theme.text, font: { size: 11 }, generateLabels: chart => chart.data.labels.map((label, index) => ({ text: `${label}  ${chart.data.datasets[0].data[index] || 0}%`, fillStyle: chart.data.datasets[0].backgroundColor[index], strokeStyle: 'transparent', index })) } }, tooltip: { callbacks: { label: context => `${context.label}: ${context.parsed}%` } } } }, plugins: [centerLabelPlugin]
-    });
-    const models = [...modelGroups()].map(([name, row]) => ({ name, value: percentage(row.mentioned, row.total), total: row.total })).sort((a, b) => b.value - a.value);
-    const best = models[0];
-    $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки';
-    dashboardCharts.visibility = new Chart($('#visibilityChart'), {
-        type: 'bar', data: { labels: models.map(model => model.name), datasets: [{ data: models.map(model => model.value), backgroundColor: models.map((model, index) => index === 0 ? theme.accent : theme.accent2), borderRadius: 7, borderSkipped: false, barThickness: 24 }] },
-        options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: context => `${context.parsed.x}% · ${models[context.dataIndex].total} проверок` } } }, scales: { x: { min: 0, max: 100, ticks: { color: theme.muted, callback: value => `${value}%` }, grid: { color: theme.border } }, y: { ticks: { color: theme.text, font: { weight: '600' } }, grid: { display: false } } } }
+        type: 'doughnut', data: { labels: sovRows.map(row => row.name), datasets: [{ data: sovRows.map(row => row.mentions), backgroundColor: sovRows.map((row, index) => row.key === activeBrandKey ? theme.accent : index === 1 ? theme.accent2 : index === 2 ? theme.muted : index === 3 ? theme.border : theme.soft), borderColor: theme.surface, borderWidth: 5, hoverOffset: 0, spacing: 2 }] },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '76%', rotation: -95, circumference: 360, layout: { padding: 2 }, plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: `место #${ownRank}`, color: theme.text, muted: theme.muted }, legend: { display: false }, tooltip: { displayColors: false, backgroundColor: theme.night, titleColor: theme.surface, bodyColor: theme.surface, caretPadding: 8, cornerRadius: 8, padding: 11, callbacks: { title: contexts => contexts[0]?.label || '', label: context => `${percentage(context.raw, totalMentions)}% доли голоса` } } } }, plugins: [centerLabelPlugin]
     });
 }
 renderBrandSelector();

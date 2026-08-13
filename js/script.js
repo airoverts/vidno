@@ -34,7 +34,7 @@ const rnd = (min, max) => _seededRandom() * (max - min) + min;
 const rndInt = (min, max) => Math.floor(rnd(min, max + 1));
 const pick = arr => arr[rndInt(0, arr.length - 1)];
 
-const AI_MODELS = ['ChatGPT', 'Claude', 'Perplexity', 'YandexGPT', 'GigaChat', 'Gemini', 'Copilot'];
+const AI_MODELS = ['ChatGPT', 'Claude', 'Perplexity', 'Алиса AI', 'GigaChat', 'Gemini', 'Copilot'];
 
 const QUERIES_POOL = [
     'лучший сервис видимости бренда в AI',
@@ -675,7 +675,7 @@ const analyzeModels = [
     { name: 'ChatGPT', percent: 78 },
     { name: 'Claude', percent: 57 },
     { name: 'Perplexity', percent: 92 },
-    { name: 'YandexGPT', percent: 64 },
+    { name: 'Алиса AI', percent: 64 },
     { name: 'GigaChat', percent: 45 },
     { name: 'Gemini', percent: 83 }
 ];
@@ -695,7 +695,7 @@ const WS_API = 'http://localhost:8000/api';
 const WS_PROVIDERS = {
     gigachat: 'GigaChat',
     deepseek: 'DeepSeek',
-    yandex: 'YandexGPT'
+    yandex: 'Алиса AI'
 };
 const WS_HISTORY_KEY = 'vidno-workspace-history';
 let wsHistory = loadWsHistory();
