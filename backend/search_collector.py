@@ -3,6 +3,7 @@ import ipaddress
 import re
 import socket
 import threading
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin, urlparse
 from ddgs import DDGS
@@ -148,19 +149,8 @@ def extract_page_text(url: str) -> str:
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe", "noscript"]):
             tag.decompose()
 
-        paragraphs = soup.find_all("p")
-        text_parts = []
-        for p in paragraphs:
-            t = p.get_text(strip=True)
-            if len(t) > 20:
-                text_parts.append(t)
-
-        if not text_parts:
-            body = soup.find("body")
-            if body:
-                text_parts = [body.get_text(separator="\n", strip=True)]
-
-        full_text = "\n".join(text_parts)
+        content = soup.find("article") or soup.find("main") or soup.find("body")
+        full_text = content.get_text(separator="\n", strip=True) if content else ""
         full_text = re.sub(r"\n{3,}", "\n\n", full_text)
         full_text = re.sub(r" {2,}", " ", full_text)
 
@@ -199,6 +189,46 @@ def summarize_text(text: str, sentences_count: int = SENTENCES_COUNT) -> str:
         return text[:500]
 
 
+def find_brand_mentions(text: str, brand: str) -> list[str]:
+    if not text or not brand:
+        return []
+
+    def normalized(value: str) -> str:
+        value = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
+        value = re.sub(r"[\W_]+", " ", value, flags=re.UNICODE)
+        return " ".join(value.split())
+
+    normalized_brand = normalized(brand)
+    normalized_text = normalized(text)
+    if not normalized_brand or not re.search(rf"(?<!\w){re.escape(normalized_brand)}(?!\w)", normalized_text):
+        return []
+
+    brand_tokens = [re.escape(token) for token in normalized_brand.split()]
+    original_pattern = re.compile(rf"(?<!\w){r'[\W_]+'.join(brand_tokens)}(?!\w)", re.IGNORECASE | re.UNICODE)
+    matches = []
+    for match in original_pattern.finditer(unicodedata.normalize("NFKC", text).replace("ё", "е").replace("Ё", "Е")):
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        excerpt = " ".join(text[start:end].split())
+        if excerpt and excerpt not in matches:
+            matches.append(excerpt)
+        if len(matches) == 3:
+            break
+    return matches or [brand]
+
+
+def apply_brand_evidence(sources: list[dict], brand: str) -> list[dict]:
+    for source in sources:
+        page_text = source.get("page_text", "")
+        fallback_text = "\n".join(filter(None, [source.get("title", ""), source.get("snippet", "")]))
+        evidence_text = "\n".join(filter(None, [fallback_text, page_text]))
+        matches = find_brand_mentions(evidence_text, brand)
+        source["brand_check_status"] = "found" if matches else ("not_found" if page_text else "unavailable")
+        source["brand_matches"] = matches
+        source["brand_check_basis"] = "page" if page_text else ("search_snippet" if matches else "unavailable")
+    return sources
+
+
 def collect_search_results(query: str, max_results: int = 10) -> list[dict]:
     logger.info(f"[Search] Сбор результатов из DuckDuckGo для запроса: {query[:120]!r}")
 
@@ -226,6 +256,7 @@ def collect_search_results(query: str, max_results: int = 10) -> list[dict]:
                     "url": url,
                     "snippet": snippet,
                     "summary": summary,
+                    "page_text": page_text,
                     "authority_score": auth_score,
                     "authority_label": auth_label,
                 }
@@ -261,12 +292,14 @@ def format_context(search_results: list[dict]) -> str:
         summary = result.get("summary", result.get("snippet", ""))
         auth_score = result.get("authority_score", 3)
         auth_label = result.get("authority_label", "низкая")
+        brand_matches = result.get("brand_matches", [])
+        brand_evidence = "\nФрагменты с брендом: " + " | ".join(brand_matches) if brand_matches else ""
 
         part = f"""Источник {result['index']}: {result['title']}
 URL: {result['url']}
 Авторитетность: {auth_label} ({auth_score}/10)
 Сниппет: {result.get('snippet', '')}
-Выжимка: {summary}"""
+Выжимка: {summary}{brand_evidence}"""
         context_parts.append(part)
 
     return "\n\n".join(context_parts)

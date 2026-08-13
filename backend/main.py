@@ -19,7 +19,7 @@ load_dotenv()
 from gigachat_client import check_brand as check_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured, _call_gigachat
 from deepseek_client import check_brand as check_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured, _call_deepseek
 from yandex_client import check_brand as check_yandex, get_cache_identity as get_yandex_cache_identity, get_model_name as get_yandex_model, is_configured as is_yandex_configured
-from search_collector import collect_and_format
+from search_collector import apply_brand_evidence, collect_and_format, format_context
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 
 logging.basicConfig(level=logging.INFO)
@@ -136,7 +136,8 @@ def _run_check(req: CheckRequest):
     provider = req.provider
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
-    cache_identity = provider_config.get("cache_identity", provider_config["model"])()
+    cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|source-evidence-v2'
+    search_cache_key = f"source-evidence-v2:{query}"
     
     logger.info(f"[API] Запрос: provider={provider}, brand={brand[:80]!r}, query={query[:120]!r}, context_provided={bool(context)}")
     
@@ -159,7 +160,7 @@ def _run_check(req: CheckRequest):
     has_custom_context = bool(context)
     
     if not context:
-        cached_search = None if req.force_refresh else get_search_cache(query)
+        cached_search = None if req.force_refresh else get_search_cache(search_cache_key)
         if cached_search:
             context, sources = cached_search
             logger.info(f"[API] Использован контекст из кэша ({len(sources)} источников)")
@@ -167,12 +168,16 @@ def _run_check(req: CheckRequest):
             logger.info("[API] Контекст не найден в кэше, собираем данные из DuckDuckGo")
             context, sources = collect_and_format(query, max_results=10)
             if context and sources:
-                set_search_cache(query, context, sources)
+                set_search_cache(search_cache_key, context, sources)
             logger.info(f"[API] Собрано {len(sources)} источников")
 
     if not context:
         return JSONResponse(status_code=502, content={"error": "Не удалось собрать данные по запросу"})
     
+    if sources:
+        apply_brand_evidence(sources, brand)
+        context = format_context(sources)
+
     result = provider_config["check"](brand, query, context)
 
     if result.get("error"):
@@ -189,6 +194,9 @@ def _run_check(req: CheckRequest):
                 "url": s.get("url", ""),
                 "authority_score": s.get("authority_score", 3),
                 "authority_label": s.get("authority_label", "низкая"),
+                "brand_check_status": s.get("brand_check_status", "unavailable"),
+                "brand_check_basis": s.get("brand_check_basis", "unavailable"),
+                "brand_matches": s.get("brand_matches", []),
             }
             for s in sources
         ]
@@ -202,6 +210,13 @@ def _run_check(req: CheckRequest):
                     analysis["title"] = source.get("title", "")
                     analysis["authority_score"] = source.get("authority_score", 3)
                     analysis["authority_label"] = source.get("authority_label", "низкая")
+                    status = source.get("brand_check_status", "unavailable")
+                    analysis["brand_check_status"] = status
+                    analysis["brand_check_basis"] = source.get("brand_check_basis", "unavailable")
+                    analysis["brand_matches"] = source.get("brand_matches", [])
+                    if status != "unavailable":
+                        analysis["mentions_brand"] = status == "found"
+            result["sources_count"] = sum(item.get("mentions_brand") is True for item in result["source_analysis"])
 
     if not has_custom_context:
         set_result_cache(brand, query, result, provider, cache_identity)

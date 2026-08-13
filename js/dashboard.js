@@ -152,20 +152,30 @@ $('#wsCheck').addEventListener('click', async () => {
 });
 
 function showError(message) { const error = $('#wsError'); error.textContent = message; error.hidden = false; }
+function resultPosition(data) {
+    const direct = Number(data?.position) || null;
+    const weighted = Number(data?.weighted_position) || null;
+    return direct ? { value: direct, kind: 'direct' } : weighted ? { value: weighted, kind: 'weighted' } : { value: null, kind: null };
+}
+function positionText(position, kind = 'direct') {
+    if (!position) return '';
+    const value = Number.isInteger(position) ? position : position.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+    return kind === 'weighted' ? `Средняя позиция ${value}` : `Позиция №${value}`;
+}
 function renderResult(data) {
     const result = $('#wsResult');
+    const position = resultPosition(data);
     $('#wsVerdict').className = `ws-verdict ${data.mentioned ? 'mentioned' : 'not-mentioned'}`;
     $('#wsVerdict').innerHTML = data.mentioned ? '<i class="fa-solid fa-circle-check"></i> Бренд упомянут' : '<i class="fa-solid fa-circle-xmark"></i> Бренд не упомянут';
-    $('#wsMeta').innerHTML = [data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], data.model && ['Модель', data.model], data.position && ['Позиция', `#${data.position}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
+    $('#wsMeta').innerHTML = [data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${position.value}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
     bindAvatarFallbacks();
     setTextBlock('#wsReasoningWrap', '#wsReasoning', data.reasoning);
     const quotes = Array.isArray(data.quotes) ? data.quotes : [];
     $('#wsQuotes').innerHTML = quotes.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsQuotesWrap').hidden = !quotes.length;
     const brands = Array.isArray(data.mentioned_brands) ? data.mentioned_brands : [];
     $('#wsBrands').innerHTML = brands.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsBrandsWrap').hidden = !brands.length;
-    const analysis = new Map((data.source_analysis || []).map(item => [item.source_index, item]));
     const sources = Array.isArray(data.sources) ? data.sources : [];
-    $('#wsSources').innerHTML = sources.map((source, index) => { const item = analysis.get(index + 1); return `<div class="ws-source-card"><i class="fa-solid ${item?.mentions_brand ? 'fa-circle-check ws-source-mentioned' : 'fa-circle-minus ws-source-not-mentioned'}"></i><a class="ws-source-link" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a><span class="ws-source-auth">${escapeHtml(source.authority_label || '')}</span></div>`; }).join(''); $('#wsSourcesWrap').hidden = !sources.length;
+    $('#wsSources').innerHTML = sources.map(source => `<div class="ws-source-card"><a class="ws-source-link" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a><span class="ws-source-auth">${escapeHtml(source.authority_label || 'не определена')}</span></div>`).join(''); $('#wsSourcesWrap').hidden = !sources.length;
     result.hidden = false;
 }
 function setTextBlock(wrapSelector, contentSelector, value) { $(contentSelector).textContent = value || ''; $(wrapSelector).hidden = !value; }
@@ -174,7 +184,8 @@ function saveCheck(data, brand, query, provider) {
     const cited = sources.some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(brand.toLowerCase()));
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const normalizedBrand = normalizeBrandName(brand);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: brandKey(normalizedBrand), query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], mentioned: Boolean(data.mentioned), position: Number(data.weighted_position || data.position) || null, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== brandKey(normalizedBrand)), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const position = resultPosition(data);
+    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: brandKey(normalizedBrand), query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== brandKey(normalizedBrand)), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
     history.push(saved);
     history = history.slice(-100);
     saveHistory();
@@ -239,7 +250,7 @@ function migrateLegacyBriefs() {
     saveGrowthTasks();
     localStorage.setItem(TASKS_MIGRATION_KEY, '1');
 }
-function snapshotCheck(item) { return item ? { id: item.id || null, createdAt: item.createdAt || Date.now(), mentioned: Boolean(item.mentioned), position: Number(item.position) || null, role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] } : null; }
+function snapshotCheck(item) { return item ? { id: item.id || null, createdAt: item.createdAt || Date.now(), mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || 'weighted', role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] } : null; }
 function growthTaskForBrand(task) { return brandKey(task.brand) === activeBrandKey; }
 function statusLabel(status) { return ({ planned: 'Запланировано', in_progress: 'В работе', ready_for_check: 'Готово к проверке', measured: 'Измерено' })[status] || status; }
 function workTypeLabel(type) { return ({ content: 'Контент', seo: 'SEO', pr: 'PR', technical: 'Техническая' })[type] || type; }
@@ -279,11 +290,12 @@ function renderTaskCard(task) {
     const statusControl = ['planned', 'in_progress', 'ready_for_check'].includes(task.status) ? `<label class="growth-quick-status"><span class="growth-action-label">Статус</span><select class="status-${task.status}" data-quick-status="${task.id}" aria-label="Статус задачи «${escapeHtml(task.title)}»"><option value="planned"${task.status === 'planned' ? ' selected' : ''}>Запланировано</option><option value="in_progress"${task.status === 'in_progress' ? ' selected' : ''}>В работе</option><option value="ready_for_check"${task.status === 'ready_for_check' ? ' selected' : ''}>Готово к проверке</option></select></label>` : `<span class="growth-status status-${task.status}">${statusLabel(task.status)}</span>`;
     return `<article class="growth-card growth-task"><div class="growth-card-main"><div class="growth-card-badges">${statusControl}<span class="growth-tag">${workTypeLabel(task.workType)}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-suggestion growth-task-action"><strong>Что сделать</strong><span>${escapeHtml(task.action)}</span></div><div class="growth-task-meta"><span><i class="fa-regular fa-user"></i>${escapeHtml(task.owner || 'Не назначен')}</span><span><i class="fa-regular fa-calendar"></i>${task.deadline ? new Date(`${task.deadline}T00:00:00`).toLocaleDateString('ru-RU') : 'Без срока'}</span></div></div><aside class="growth-card-actions"><span class="growth-action-label">Управление</span>${task.status === 'ready_for_check' ? `<button class="btn btn-primary btn-sm" data-measure-task="${task.id}">Проверить эффект</button>` : ''}<button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть задачу</button></aside></article>`;
 }
-function checkSummary(item) { if (!item) return 'Нет данных'; if (!item.mentioned) return 'Бренд не упомянут'; return `${isRecommendationRole(item.role) ? 'Рекомендация' : 'Бренд упомянут'}${item.position ? ` · позиция №${item.position}` : ''}`; }
+function checkSummary(item) { if (!item) return 'Нет данных'; if (!item.mentioned) return 'Бренд не упомянут'; return `${isRecommendationRole(item.role) ? 'Рекомендация' : 'Бренд упомянут'}${item.position ? ` · ${positionText(item.position, item.positionKind || 'weighted').toLocaleLowerCase('ru-RU')}` : ''}`; }
 function renderResultCard(task) {
     const tone = task.verdict === 'improved' ? 'positive' : task.verdict === 'declined' ? 'negative' : 'neutral';
     const label = task.verdict === 'improved' ? 'Предварительно улучшилось' : task.verdict === 'declined' ? 'Предварительно ухудшилось' : 'Без изменений';
-    return `<article class="growth-card growth-result"><div class="growth-card-main"><div class="growth-result-head"><div class="growth-card-badges"><span class="growth-verdict ${tone}">${label}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><span class="growth-result-kicker">Контрольная проверка</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До изменений</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div class="growth-after"><span>После изменений</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><aside class="growth-card-actions"><span class="growth-action-label">Подробнее</span><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть результат</button></aside></article>`;
+    const icon = tone === 'positive' ? 'fa-arrow-trend-up' : tone === 'negative' ? 'fa-arrow-trend-down' : 'fa-equals';
+    return `<article class="growth-card growth-result result-${tone}"><div class="growth-card-main"><div class="growth-result-head"><div><span class="growth-result-kicker">Результат контрольной проверки</span><div class="growth-result-verdict ${tone}"><i class="fa-solid ${icon}"></i><strong>${label}</strong></div></div><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До изменений</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div class="growth-after"><span>После изменений</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><aside class="growth-card-actions"><span class="growth-action-label">Подробнее</span><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть результат</button></aside></article>`;
 }
 function bindGrowthActions() {
     $$('[data-create-task]').forEach(button => button.addEventListener('click', () => openOpportunity(decodeURIComponent(button.dataset.createTask))));
@@ -345,7 +357,7 @@ function deleteActiveTask() {
     growthTasks = growthTasks.filter(item => item.id !== task.id); saveGrowthTasks(); $('#briefDialog').close(); renderGrowth();
 }
 function resultLevel(item) { if (!item?.mentioned) return 0; return isRecommendationRole(item.role) ? 2 : 1; }
-function compareChecks(before, after) { const beforeLevel = resultLevel(before); const afterLevel = resultLevel(after); if (afterLevel > beforeLevel) return 'improved'; if (afterLevel < beforeLevel) return 'declined'; const beforePosition = Number(before?.position) || null; const afterPosition = Number(after?.position) || null; if (beforePosition && afterPosition && afterPosition < beforePosition) return 'improved'; if (beforePosition && afterPosition && afterPosition > beforePosition) return 'declined'; return 'unchanged'; }
+function compareChecks(before, after) { const beforeLevel = resultLevel(before); const afterLevel = resultLevel(after); if (afterLevel > beforeLevel) return 'improved'; if (afterLevel < beforeLevel) return 'declined'; const beforePosition = Number(before?.position) || null; const afterPosition = Number(after?.position) || null; const beforeKind = before?.positionKind || 'weighted'; const afterKind = after?.positionKind || 'weighted'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition < beforePosition) return 'improved'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition > beforePosition) return 'declined'; return 'unchanged'; }
 async function measureTask(id, button) {
     const task = growthTasks.find(item => item.id === id); if (!task || task.status !== 'ready_for_check' || !task.query) return;
     const original = button.textContent; button.disabled = true; button.textContent = 'Проверяем…';
@@ -438,11 +450,26 @@ function modelRow(row, index, compact = false) { return `<div class="model-row${
 function renderModelMetrics() { const groups = [...modelGroups().values()].map(row => ({ ...row, value: percentage(row.mentioned, row.total) })).sort((a, b) => b.value - a.value || b.total - a.total); const empty = '<div class="app-empty"><strong>Нет данных по моделям</strong><span>Запустите проверки в нужных AI-моделях.</span></div>'; $('#modelMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index, true)).join('') : empty; $('#visibilityMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index)).join('') : ''; $('#visibilityEmpty').hidden = Boolean(groups.length); const best = groups[0]; $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки'; }
 function renderExclusivity() { const mentioned = activeHistory().filter(item => item.mentioned); const exclusive = mentioned.filter(item => !(item.competitors || []).length).length; const compared = mentioned.length - exclusive; $('#exclusivityMetrics').innerHTML = `<div class="app-data-row"><strong>Эксклюзивное упоминание</strong><span>${percentage(exclusive, mentioned.length)}% · ${exclusive} ответов</span></div><div class="app-data-row"><strong>В сравнении с конкурентами</strong><span>${percentage(compared, mentioned.length)}% · ${compared} ответов</span></div>`; }
 function chartTheme() {
-    const style = getComputedStyle(document.documentElement);
-    return { accent: style.getPropertyValue('--accent').trim(), accent2: style.getPropertyValue('--accent-2').trim(), night: style.getPropertyValue('--night').trim(), text: style.getPropertyValue('--text').trim(), muted: style.getPropertyValue('--text-soft').trim(), border: style.getPropertyValue('--border').trim(), soft: style.getPropertyValue('--bg-soft').trim(), surface: style.getPropertyValue('--surface').trim() };
+    const style = getComputedStyle(document.querySelector('.app-body') || document.documentElement);
+    return { accent: style.getPropertyValue('--accent').trim(), accent2: style.getPropertyValue('--accent-2').trim(), ok: style.getPropertyValue('--ok').trim(), warn: style.getPropertyValue('--warn').trim(), night: style.getPropertyValue('--night').trim(), text: style.getPropertyValue('--text').trim(), muted: style.getPropertyValue('--text-soft').trim(), border: style.getPropertyValue('--border').trim(), soft: style.getPropertyValue('--bg-soft').trim(), surface: style.getPropertyValue('--surface').trim() };
 }
 function chartDate(item, index) {
-    return `Проверка ${index + 1}`;
+    if (!item?.createdAt) return `Проверка ${index + 1}`;
+    return new Date(item.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function sovTimeline(rowsHistory, brandKeys) {
+    const counts = new Map();
+    let totalMentions = 0;
+    const series = new Map(brandKeys.map(key => [key, []]));
+    rowsHistory.forEach(item => {
+        const mentionedInCheck = new Set();
+        if (item.mentioned) mentionedInCheck.add(activeBrandKey);
+        (item.competitors || []).forEach(name => { const key = brandKey(name); if (key && key !== activeBrandKey) mentionedInCheck.add(key); });
+        mentionedInCheck.forEach(key => counts.set(key, (counts.get(key) || 0) + 1));
+        totalMentions += mentionedInCheck.size;
+        brandKeys.forEach(key => series.get(key).push(percentage(counts.get(key) || 0, totalMentions)));
+    });
+    return series;
 }
 function lineGradient(chart, color) {
     const { ctx, chartArea } = chart;
@@ -467,7 +494,8 @@ function renderDashboardCharts() {
         $('#sovInsight').textContent = 'Данные появятся здесь';
         return;
     }
-    const ownTrend = own ? rowsHistory.map((item, index) => percentage(rowsHistory.slice(0, index + 1).filter(value => value.mentioned).length, index + 1)) : [];
+    const trendSeries = sovTimeline(rowsHistory, rows.map(row => row.key));
+    const ownTrend = own ? trendSeries.get(activeBrandKey) || [] : [];
     const trendDelta = ownTrend.length > 1 ? ownTrend.at(-1) - ownTrend[0] : 0;
     const leader = allRows[0]; $('#overviewInsight').textContent = own ? `${rowsHistory.length} проверок · ${trendDelta >= 0 ? '+' : ''}${trendDelta} п.п. · лидер ${leader?.name || '—'}` : 'Нужны проверки';
     if (!hasTrend) {
@@ -476,11 +504,12 @@ function renderDashboardCharts() {
         $('#overviewEmpty').querySelector('p').textContent = 'Повторите проверку позже — мы сравним изменения и покажем тренд.';
     } else dashboardCharts.trend = new Chart($('#overviewChart'), {
         type: 'line',
-        data: { labels: rowsHistory.map(chartDate), datasets: rows.map(row => {
+        data: { labels: rowsHistory.map(chartDate), datasets: rows.map((row, datasetIndex) => {
             const isOwn = brandKey(row.name) === activeBrandKey;
-            return { label: row.name, data: rowsHistory.map((item, index) => { const relevant = rowsHistory.slice(0, index + 1); return isOwn ? percentage(relevant.filter(value => value.mentioned).length, relevant.length) : percentage(relevant.filter(value => value.competitors?.some(name => brandKey(name) === brandKey(row.name))).length, relevant.length); }), borderColor: isOwn ? theme.accent : theme.muted, backgroundColor: context => isOwn ? lineGradient(context.chart, theme.accent) : 'transparent', borderWidth: isOwn ? 3.5 : 1.25, borderDash: isOwn ? [] : [5, 5], tension: .42, cubicInterpolationMode: 'monotone', fill: isOwn, pointRadius: context => isOwn && context.dataIndex === rowsHistory.length - 1 ? 5 : 0, pointHoverRadius: 7, pointBorderWidth: 3, pointBorderColor: theme.soft, pointBackgroundColor: theme.accent };
+            const comparisonColor = [theme.accent2, theme.ok, theme.warn, theme.muted][datasetIndex - 1] || theme.muted;
+            return { label: row.name, data: trendSeries.get(row.key) || [], borderColor: isOwn ? theme.accent : comparisonColor, backgroundColor: isOwn ? theme.accent : comparisonColor, borderWidth: isOwn ? 3 : 1.5, borderDash: isOwn ? [] : [5, 5], tension: .28, cubicInterpolationMode: 'monotone', fill: false, pointRadius: context => isOwn || context.dataIndex === rowsHistory.length - 1 ? 3 : 0, pointHoverRadius: 6, pointBorderWidth: 2, pointBorderColor: theme.surface, pointBackgroundColor: isOwn ? theme.accent : comparisonColor };
         }) },
-        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.night, titleColor: theme.soft, bodyColor: theme.soft, borderColor: theme.accent, borderWidth: 1, cornerRadius: 8, padding: 12, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return [`${PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'}`, item?.query ? `Запрос: ${item.query}` : '']; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.surface, titleColor: theme.text, bodyColor: theme.text, borderColor: theme.border, borderWidth: 1, cornerRadius: 8, padding: 10, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return [`${PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'}`, item?.query ? `Запрос: ${item.query}` : '']; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
     });
     const ownRank = own ? allRows.findIndex(row => row.key === activeBrandKey) + 1 : 0;
     $('#sovInsight').textContent = own ? `#${ownRank} в нише · ${own.sov}% SoV` : 'Нужны проверки';
