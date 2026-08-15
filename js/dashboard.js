@@ -1,8 +1,10 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : '/api';
-const PROVIDERS = { gigachat: 'GigaChat', deepseek: 'DeepSeek', yandex: 'Алиса AI' };
-const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', deepseek: 'assets/ai/deepseek.svg', yandex: 'assets/ai/alice-ai.svg' };
+const IS_LOCAL_FRONTEND = location.protocol === 'file:' || (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000');
+const API_BASE = IS_LOCAL_FRONTEND ? 'http://localhost:8000/api' : '/api';
+const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg' };
+const CHECK_PROVIDERS = ['gigachat', 'yandex'];
 const HISTORY_KEY = 'vidno-dashboard-check-history';
 const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
 const BRIEFS_KEY = 'vidno-growth-briefs';
@@ -10,13 +12,17 @@ const TASKS_KEY = 'vidno-growth-tasks';
 const DISMISSED_KEY = 'vidno-growth-dismissed';
 const TASKS_MIGRATION_KEY = 'vidno-growth-tasks-migrated-v1';
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
+const BRAND_IDENTITIES_KEY = 'vidno-dashboard-brand-identities-v1';
 let history = loadHistory();
+let brandIdentities = loadBrandIdentities();
+bootstrapBrandIdentities();
 let growthTasks = loadJson(TASKS_KEY);
 let activeBrandKey = loadActiveBrandKey();
 let activeRecommendation = null;
 let activeGrowthTaskId = null;
 let competitorExpanded = false;
 let sourceExpanded = false;
+let selectedProviders = new Set(CHECK_PROVIDERS);
 
 function loadJson(key) {
     try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; }
@@ -28,12 +34,64 @@ function loadHistory() {
     if (legacy.length) localStorage.setItem(HISTORY_KEY, JSON.stringify(legacy));
     return legacy;
 }
-function saveHistory() { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-100))); }
+function saveHistory() {
+    const rows = history.slice(-100);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(rows)); }
+    catch {
+        const compact = rows.map((item, index) => index >= rows.length - 20 ? item : { ...item, providerResults: (item.providerResults || []).map(result => { const { raw_answer, ...rest } = result; return rest; }) });
+        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(compact)); }
+        catch { localStorage.setItem(HISTORY_KEY, JSON.stringify(compact.slice(-20).map(item => ({ ...item, providerResults: (item.providerResults || []).map(result => { const { raw_answer, sources, source_analysis, ...rest } = result; return rest; }) })))); }
+    }
+}
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } }
 function normalizeBrandName(value) { return String(value || '').trim().replace(/\s+/g, ' '); }
-function brandKey(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU'); }
-function identityText(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/[^a-zа-яё0-9]+/gi, ''); }
+function identityText(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, ''); }
+function automaticIdentityText(value) { const normalized = normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '').replace(/\.(?:ru|ру|рф|com|net|org|io|ai)$/i, ''); return identityText(normalized); }
+function domainText(value) { const raw = normalizeBrandName(value); if (!/^https?:\/\//i.test(raw) && !raw.includes('.')) return ''; try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, ''); } catch { return ''; } }
+function identityVariants(identity) { return [identity.canonicalName, ...(identity.aliases || [])].map(normalizeBrandName).filter(Boolean); }
+function identityFor(value) {
+    const token = automaticIdentityText(value); const domain = domainText(value);
+    return brandIdentities.find(identity => identityVariants(identity).some(alias => automaticIdentityText(alias) === token) || Boolean(domain && (identity.domains || []).some(item => domainText(item) === domain))) || null;
+}
+function brandKey(value) { const direct = brandIdentities.find(identity => identity.canonicalId === value); return direct?.canonicalId || identityFor(value)?.canonicalId || `auto:${automaticIdentityText(value)}`; }
+function canonicalBrand(value) { const identity = identityFor(value); return identity ? { id: identity.canonicalId, name: identity.canonicalName, aliases: [...identity.aliases], domains: [...identity.domains] } : { id: brandKey(value), name: normalizeBrandName(value), aliases: [], domains: [] }; }
+function loadBrandIdentities() {
+    try { const stored = JSON.parse(localStorage.getItem(BRAND_IDENTITIES_KEY) || '{}'); return Array.isArray(stored.items) ? stored.items.filter(item => item?.canonicalId && item?.canonicalName).map(item => ({ canonicalId: String(item.canonicalId), canonicalName: normalizeBrandName(item.canonicalName), aliases: Array.isArray(item.aliases) ? item.aliases.map(normalizeBrandName).filter(Boolean) : [], domains: Array.isArray(item.domains) ? item.domains.map(domainText).filter(Boolean) : [] })) : []; } catch { return []; }
+}
+function saveBrandIdentities() { localStorage.setItem(BRAND_IDENTITIES_KEY, JSON.stringify({ version: 1, items: brandIdentities })); }
+function ensureBrandIdentity(value) {
+    const name = normalizeBrandName(value); if (!name) return null;
+    const existing = identityFor(name); if (existing) return existing;
+    const identity = { canonicalId: crypto.randomUUID(), canonicalName: name, aliases: [], domains: [] };
+    brandIdentities.push(identity); saveBrandIdentities(); return identity;
+}
+function bootstrapBrandIdentities() {
+    let changed = false;
+    history.forEach(item => { const name = normalizeBrandName(item.brand); if (!name || identityFor(name)) return; brandIdentities.push({ canonicalId: crypto.randomUUID(), canonicalName: name, aliases: [], domains: [] }); changed = true; });
+    const initialName = normalizeBrandName($('#wsBrand')?.value || 'Vidno');
+    if (!brandIdentities.length && initialName) { brandIdentities.push({ canonicalId: crypto.randomUUID(), canonicalName: initialName, aliases: [], domains: [] }); changed = true; }
+    if (changed) saveBrandIdentities();
+}
+function addBrandAlias(canonicalId, value, type = 'alias') {
+    const name = normalizeBrandName(value); const target = brandIdentities.find(item => item.canonicalId === canonicalId); if (!target || !name) return false;
+    const existing = identityFor(name);
+    if (existing && existing.canonicalId !== target.canonicalId) {
+        target.aliases.push(existing.canonicalName, ...(existing.aliases || [])); target.domains.push(...(existing.domains || []));
+        brandIdentities = brandIdentities.filter(item => item.canonicalId !== existing.canonicalId);
+    }
+    brandIdentities.forEach(item => { item.aliases = (item.aliases || []).filter(alias => identityText(alias) !== identityText(name)); item.domains = (item.domains || []).filter(domain => domainText(domain) !== domainText(name)); });
+    if (type === 'domain') { const domain = domainText(name); if (domain && !(target.domains || []).some(item => domainText(item) === domain)) target.domains.push(domain); }
+    else if (identityText(name) !== identityText(target.canonicalName) && !(target.aliases || []).some(alias => identityText(alias) === identityText(name))) target.aliases.push(name);
+    target.aliases = [...new Map(target.aliases.map(alias => [identityText(alias), alias])).values()].filter(alias => identityText(alias) !== identityText(target.canonicalName));
+    target.domains = [...new Map(target.domains.map(domain => [domainText(domain), domainText(domain)])).values()].filter(Boolean);
+    saveBrandIdentities(); return true;
+}
+function removeBrandAlias(canonicalId, value, type = 'alias') {
+    const target = brandIdentities.find(item => item.canonicalId === canonicalId); if (!target) return;
+    if (type === 'domain') target.domains = target.domains.filter(item => domainText(item) !== domainText(value)); else target.aliases = target.aliases.filter(item => identityText(item) !== identityText(value));
+    saveBrandIdentities();
+}
 function brandInitials(value) { const words = normalizeBrandName(value).split(/\s+/).filter(Boolean); return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : words[0]?.slice(0, 2) || '?').toLocaleUpperCase('ru-RU'); }
 function faviconUrl(domain) { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`; }
 function monogramMarkup(name) { const tone = [...brandKey(name)].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 4; return `<span class="identity-avatar identity-monogram tone-${tone}" aria-hidden="true">${escapeHtml(brandInitials(name))}</span>`; }
@@ -55,13 +113,42 @@ function loadActiveBrandKey() {
     if (saved && available.has(saved)) return saved;
     return brandKey(history.at(-1)?.brand || $('#wsBrand')?.value || 'Vidno');
 }
-function activeHistory() { return history.filter(item => brandKey(item.brand) === activeBrandKey); }
+function selectedResults(item) {
+    const results = Array.isArray(item.providerResults) ? item.providerResults : Array.isArray(item.provider_results) ? item.provider_results : [];
+    const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
+    return results.filter(result => selectedProviders.has(result.provider)).map(result => canonicalizeProviderResult(result, identity));
+}
+function enrichCompetitors(item) {
+    const ownKey = brandKey(item.brand);
+    const competitors = orderedMentionsFor(item).map(mention => mention.name).filter(name => brandKey(name) !== ownKey);
+    return { ...item, competitors };
+}
+function activeHistory() {
+    return history.filter(item => brandKey(item.brand) === activeBrandKey).map(item => {
+        const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
+        if (item.provider !== 'all') return selectedProviders.has(item.provider) ? enrichCompetitors({ ...item, ...canonicalizeProviderResult(item, identity), brand: canonical.name }) : null;
+        const results = selectedResults(item);
+        if (!results.length) {
+            if (selectedProviders.size !== CHECK_PROVIDERS.length) return null;
+            const ordered = orderedMentionsFor(item); const own = ordered.find(mention => mention.canonical_id === canonical.id || brandKey(mention.name) === canonical.id);
+            return enrichCompetitors({ ...item, brand: canonical.name, mentioned: Boolean(own || item.mentioned), position: own?.position || item.position || null, orderedMentions: ordered });
+        }
+        if (results.length === 1) {
+            const result = results[0];
+            const position = resultPosition(result);
+            return enrichCompetitors({ ...item, ...result, id: item.id, createdAt: item.createdAt, brand: item.brand, brandKey: item.brandKey, query: item.query, providerResults: results, orderedMentions: result.ordered_mentions || [], position: position.value, positionKind: position.kind, competitors: (result.mentioned_brands || []).filter(name => name && brandKey(name) !== brandKey(item.brand)), cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())) });
+        }
+        const mentionedResults = results.filter(result => result.mentioned);
+        const ordered = canonicalizeMentionList(results.flatMap(result => result.ordered_mentions || []));
+        return enrichCompetitors({ ...item, brand: canonical.name, providerResults: results, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, orderedMentions: ordered, competitors: ordered.filter(mention => mention.canonical_id !== canonical.id).map(mention => mention.canonical_name) });
+    }).filter(Boolean);
+}
 function currentBrand() {
-    return [...history].reverse().find(item => brandKey(item.brand) === activeBrandKey)?.brand || normalizeBrandName($('#wsBrand').value) || 'Vidno';
+    return brandIdentities.find(item => item.canonicalId === activeBrandKey)?.canonicalName || [...history].reverse().find(item => brandKey(item.brand) === activeBrandKey)?.brand || normalizeBrandName($('#wsBrand').value) || 'Vidno';
 }
 function brandOptions() {
     const brands = new Map();
-    history.forEach(item => { const key = brandKey(item.brand); if (key) brands.set(key, normalizeBrandName(item.brand)); });
+    history.forEach(item => { const identity = canonicalBrand(item.brand); if (identity.id) brands.set(identity.id, identity.name); });
     if (!brands.has(activeBrandKey)) brands.set(activeBrandKey, normalizeBrandName($('#wsBrand').value) || 'Vidno');
     return [...brands].map(([key, name]) => ({ key, name }));
 }
@@ -87,6 +174,7 @@ function renderAllForActiveBrand() {
     renderSources();
     renderMetricsDashboard();
     renderGrowth();
+    renderBrandSettings();
     bindAvatarFallbacks();
 }
 
@@ -103,13 +191,28 @@ function selectView(view) {
 $$('[data-view]').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
 $$('[data-empty-chart-action]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
 
-function updateProvider() {
-    const name = PROVIDERS[$('#wsProvider').value] || PROVIDERS.gigachat;
-    $('#wsCheckText').textContent = `Проверить в ${name}`;
-    $('#wsLoaderText').textContent = `Анализируем ответ через ${name}…`;
+function updateProviderFilter() {
+    const total = CHECK_PROVIDERS.length;
+    const count = selectedProviders.size;
+    $('#providerFilterLabel').textContent = count === total ? 'Все' : count === 1 ? PROVIDERS[[...selectedProviders][0]] : `${count} выбрано`;
+    $('#providerFilterCount').textContent = `${count}/${total}`;
+    $$('#providerFilterMenu input').forEach(input => { input.checked = selectedProviders.has(input.value); });
 }
-$('#wsProvider').addEventListener('change', updateProvider);
-updateProvider();
+$('#providerFilterTrigger').addEventListener('click', event => {
+    event.stopPropagation();
+    const menu = $('#providerFilterMenu');
+    menu.hidden = !menu.hidden;
+    $('#providerFilterTrigger').setAttribute('aria-expanded', String(!menu.hidden));
+});
+$('#providerFilterMenu').addEventListener('click', event => event.stopPropagation());
+$$('#providerFilterMenu input').forEach(input => input.addEventListener('change', () => {
+    if (input.checked) selectedProviders.add(input.value); else selectedProviders.delete(input.value);
+    if (!selectedProviders.size) { selectedProviders.add(input.value); input.checked = true; }
+    updateProviderFilter(); renderAllForActiveBrand();
+}));
+$('#providerFilterAll').addEventListener('click', () => { selectedProviders = new Set(CHECK_PROVIDERS); updateProviderFilter(); renderAllForActiveBrand(); });
+document.addEventListener('click', () => { $('#providerFilterMenu').hidden = true; $('#providerFilterTrigger').setAttribute('aria-expanded', 'false'); });
+updateProviderFilter();
 
 function apiErrorMessage(data, status) {
     const value = data?.error ?? data?.detail;
@@ -137,17 +240,20 @@ $('#wsClearCache').addEventListener('click', async () => {
 $('#wsCheck').addEventListener('click', async () => {
     const brand = normalizeBrandName($('#wsBrand').value);
     const query = $('#wsQuery').value.trim();
-    const provider = $('#wsProvider').value;
     if (!brand || !query) return showError('Введите бренд и промпт для проверки.');
+    const identity = ensureBrandIdentity(brand);
     const checkButton = $('#wsCheck');
     if (checkButton.disabled) return;
-    $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false; checkButton.disabled = true;
+    $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false; $('#wsLoaderText').textContent = 'Формируем общий результат проверки…'; checkButton.disabled = true;
     try {
-        const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, query, provider }) });
-        const data = await response.json();
+        const response = await fetch(`${API_BASE}/check-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: identity.canonicalName, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const data = canonicalizeCheckResult(await response.json(), identity);
         if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
-        renderResult(data); saveCheck(data, brand, query, provider);
-    } catch (error) { showError(`Не удалось выполнить проверку: ${error.message}`); }
+        renderResult(data);
+        saveCheck(data, brand, query, 'all');
+        const errors = (data.provider_errors || []).map(item => `${PROVIDERS[item.provider] || item.provider}: ${item.error}`);
+        if (errors.length) showError(`Часть данных недоступна: ${errors.join('; ')}`);
+    } catch (error) { if ($('#wsError').hidden) showError(`Не удалось выполнить проверку: ${error.message}`); }
     finally { $('#wsLoader').hidden = true; checkButton.disabled = false; }
 });
 
@@ -167,7 +273,8 @@ function renderResult(data) {
     const position = resultPosition(data);
     $('#wsVerdict').className = `ws-verdict ${data.mentioned ? 'mentioned' : 'not-mentioned'}`;
     $('#wsVerdict').innerHTML = data.mentioned ? '<i class="fa-solid fa-circle-check"></i> Бренд упомянут' : '<i class="fa-solid fa-circle-xmark"></i> Бренд не упомянут';
-    $('#wsMeta').innerHTML = [data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${position.value}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
+    const showModelDetails = data.provider !== 'all';
+    $('#wsMeta').innerHTML = [showModelDetails && data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], showModelDetails && data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${position.value}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
     bindAvatarFallbacks();
     setTextBlock('#wsReasoningWrap', '#wsReasoning', data.reasoning);
     const quotes = Array.isArray(data.quotes) ? data.quotes : [];
@@ -179,13 +286,42 @@ function renderResult(data) {
     result.hidden = false;
 }
 function setTextBlock(wrapSelector, contentSelector, value) { $(contentSelector).textContent = value || ''; $(wrapSelector).hidden = !value; }
+function canonicalizeMentionList(values) {
+    const rows = Array.isArray(values) ? values : []; const seen = new Set();
+    return rows.map((mention, index) => { const observedName = normalizeBrandName(mention?.observed_name || mention?.name); const identity = canonicalBrand(mention?.canonical_name || observedName); return { ...mention, name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
+}
+function normalizedAnswerText(value) { return ` ${String(value || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9.]+/gi, ' ').replace(/\s+/g, ' ').trim()} `; }
+function answerContainsIdentity(answer, identity) {
+    const text = normalizedAnswerText(answer); if (!text.trim()) return false;
+    return identityVariants(identity).some(alias => { const needle = normalizedAnswerText(alias); return needle.trim().length > 1 && text.includes(needle); }) || (identity.domains || []).some(domain => text.includes(` ${domainText(domain)} `));
+}
+function canonicalizeProviderResult(result, targetIdentity) {
+    const supplied = result?.ordered_mentions || result?.orderedMentions || [];
+    let ordered = canonicalizeMentionList(supplied);
+    const rawAnswer = result?.raw_answer || result?.rawAnswer || '';
+    const targetPresent = ordered.some(mention => mention.canonical_id === targetIdentity.canonicalId);
+    const foundInAnswer = answerContainsIdentity(rawAnswer, targetIdentity);
+    if (foundInAnswer && !targetPresent) ordered.push({ name: targetIdentity.canonicalName, observed_name: targetIdentity.canonicalName, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, position: ordered.length + 1, role: result?.role && result.role !== 'не упомянут' ? result.role : 'упоминание' });
+    ordered = canonicalizeMentionList(ordered);
+    const own = ordered.find(mention => mention.canonical_id === targetIdentity.canonicalId);
+    const mentioned = Boolean(own || (!rawAnswer && result?.mentioned));
+    return { ...result, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, observed_name: result?.observed_name || targetIdentity.canonicalName, mentioned, position: own?.position || null, ordered_mentions: ordered, mentioned_brands: ordered.filter(mention => mention.canonical_id !== targetIdentity.canonicalId).map(mention => mention.canonical_name) };
+}
+function canonicalizeCheckResult(data, identity) {
+    if (!data || typeof data !== 'object') return data;
+    const providerResults = (data.provider_results || []).map(result => canonicalizeProviderResult(result, identity));
+    if (!providerResults.length) return canonicalizeProviderResult(data, identity);
+    const ordered = canonicalizeMentionList(providerResults.flatMap(result => result.ordered_mentions || []));
+    const mentionedResults = providerResults.filter(result => result.mentioned);
+    return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, mentioned_brands: ordered.filter(mention => mention.canonical_id !== identity.canonicalId).map(mention => mention.canonical_name) };
+}
 function saveCheck(data, brand, query, provider) {
     const sources = (data.sources || []).map(source => ({ title: source.title, url: source.url }));
     const cited = sources.some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(brand.toLowerCase()));
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
-    const normalizedBrand = normalizeBrandName(brand);
+    const identity = ensureBrandIdentity(data.canonical_name || brand); const normalizedBrand = identity.canonicalName;
     const position = resultPosition(data);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: brandKey(normalizedBrand), query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== brandKey(normalizedBrand)), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
     history.push(saved);
     history = history.slice(-100);
     saveHistory();
@@ -195,7 +331,7 @@ function saveCheck(data, brand, query, provider) {
 function renderHistory() {
     const rows = activeHistory();
     $('#historyCount').textContent = `${rows.length} ${rows.length === 1 ? 'проверка' : 'проверок'}`;
-    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)} · ${escapeHtml(PROVIDERS[item.provider] || item.provider)} · ${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
+    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
 }
 
 function normalizeQuery(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU'); }
@@ -363,8 +499,9 @@ async function measureTask(id, button) {
     const original = button.textContent; button.disabled = true; button.textContent = 'Проверяем…';
     const errorTarget = $('#briefDialog').open ? $('#growthBriefStatus') : null;
     try {
-        const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: task.brand, query: task.query, provider: task.provider, force_refresh: true }) });
-        const data = await response.json(); if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+        const identity = ensureBrandIdentity(task.brand);
+        const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: identity.canonicalName, query: task.query, provider: task.provider, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const data = canonicalizeCheckResult(await response.json(), identity); if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
         const saved = saveCheck(data, task.brand, task.query, task.provider);
         task.postCheck = snapshotCheck(saved); task.verdict = compareChecks(task.baseline, task.postCheck); task.status = 'measured'; task.updatedAt = Date.now(); saveGrowthTasks();
         if ($('#briefDialog').open) $('#briefDialog').close(); showGrowthTab('results'); renderGrowth();
@@ -400,9 +537,41 @@ function normalizedCompetitors() {
     });
     return [...rows.values()].map(row => ({ ...row, name: preferredVariant(row.variants) })).sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name, 'ru'));
 }
-function rankedRow(name, value, detail, index, total, meta = '', avatar = '') { const width = percentage(value, total || value); return `<div class="app-data-row app-rank-row"><span class="app-rank-index">${index + 1}</span><div class="app-rank-main">${avatar}<div><strong>${escapeHtml(name)}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div></div><div class="app-rank-result"><strong>${escapeHtml(detail)}</strong><span class="app-rank-track"><i style="width:${width}%"></i></span></div></div>`; }
+function transliterateBrand(value) { const map = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ы: 'y', э: 'e', ю: 'yu', я: 'ya', ь: '', ъ: '' }; return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'e').split('').map(char => map[char] ?? char).join('').replace(/[^a-z0-9]+/g, ''); }
+function aliasSuggestion(name) { const own = currentBrand(); const candidate = domainText(name) ? domainText(name).split('.')[0] : name; return transliterateBrand(candidate) && transliterateBrand(candidate) === transliterateBrand(own); }
+function rankedRow(name, value, detail, index, total, meta = '', avatar = '', action = '') { const width = percentage(value, total || value); return `<div class="app-data-row app-rank-row"><span class="app-rank-index">${index + 1}</span><div class="app-rank-main">${avatar}<div><strong>${escapeHtml(name)}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div></div><div class="app-rank-result"><strong>${escapeHtml(detail)}</strong><span class="app-rank-track"><i style="width:${width}%"></i></span>${action}</div></div>`; }
 function setRankingToggle(selector, expanded, count) { const button = $(selector); button.hidden = count <= 10; button.textContent = expanded ? 'Свернуть' : `Показать все · ${count}`; button.setAttribute('aria-expanded', expanded); }
-function renderCompetitors() { const rows = normalizedCompetitors(); const total = activeHistory().length; const visible = competitorExpanded ? rows : rows.slice(0, 10); $('#competitorList').innerHTML = visible.length ? visible.map((row, index) => rankedRow(row.name, row.checks, `${row.mentions} упомин. · ${percentage(row.checks, total)}%`, index, total, `В ${row.checks} из ${total} проверок`, companyAvatarMarkup(row.name))).join('') : '<div class="app-empty"><strong>Нет данных о конкурентах</strong><span>Они появятся в результатах live-проверок.</span></div>'; setRankingToggle('#competitorToggle', competitorExpanded, rows.length); bindAvatarFallbacks(); }
+function renderCompetitors() { const rows = normalizedCompetitors(); const total = activeHistory().length; const visible = competitorExpanded ? rows : rows.slice(0, 10); $('#competitorList').innerHTML = visible.length ? visible.map((row, index) => rankedRow(row.name, row.checks, `${row.mentions} упомин. · ${percentage(row.checks, total)}%`, index, total, `В ${row.checks} из ${total} проверок`, companyAvatarMarkup(row.name), `<button class="brand-merge-action${aliasSuggestion(row.name) ? ' suggested' : ''}" type="button" data-merge-alias="${encodeURIComponent(row.name)}">${aliasSuggestion(row.name) ? 'Возможный псевдоним' : 'Объединить с брендом'}</button>`)).join('') : '<div class="app-empty"><strong>Нет данных о конкурентах</strong><span>Они появятся в результатах live-проверок.</span></div>'; setRankingToggle('#competitorToggle', competitorExpanded, rows.length); bindAvatarFallbacks(); $$('[data-merge-alias]').forEach(button => button.addEventListener('click', () => mergeAliasWithActive(decodeURIComponent(button.dataset.mergeAlias)))); }
+function activeBrandIdentity() { return brandIdentities.find(item => item.canonicalId === activeBrandKey) || ensureBrandIdentity(currentBrand()); }
+function mergeAliasWithActive(value) {
+    const identity = activeBrandIdentity(); if (!identity || !window.confirm(`Считать «${value}» вариантом бренда «${identity.canonicalName}»? История и метрики будут пересчитаны.`)) return;
+    addBrandAlias(identity.canonicalId, value, domainText(value) ? 'domain' : 'alias'); renderBrandSelector(); renderAllForActiveBrand(); renderBrandSettings();
+}
+function renderBrandSettings() {
+    const identity = activeBrandIdentity(); if (!identity || !$('#canonicalBrandName')) return;
+    $('#canonicalBrandName').value = identity.canonicalName;
+    const chip = (value, type) => `<span class="brand-chip">${escapeHtml(value)}<button type="button" aria-label="Удалить ${escapeHtml(value)}" data-remove-brand-value="${encodeURIComponent(value)}" data-brand-value-type="${type}">×</button></span>`;
+    $('#brandAliasList').innerHTML = identity.aliases.length ? identity.aliases.map(value => chip(value, 'alias')).join('') : '<span class="brand-settings-empty">Других названий пока нет</span>';
+    $('#brandDomainList').innerHTML = identity.domains.length ? identity.domains.map(value => chip(value, 'domain')).join('') : '<span class="brand-settings-empty">Домены пока не добавлены</span>';
+    const suggestions = normalizedCompetitors().filter(row => aliasSuggestion(row.name)).slice(0, 5);
+    $('#brandSuggestions').innerHTML = suggestions.length ? `<strong>Возможные варианты вашего бренда</strong><p>Подтвердите только те названия, которые действительно относятся к одной компании.</p><div class="brand-chip-list">${suggestions.map(row => `<button class="brand-suggestion-chip" type="button" data-merge-alias="${encodeURIComponent(row.name)}">${escapeHtml(row.name)} <i class="fa-solid fa-plus"></i></button>`).join('')}</div>` : '';
+    $$('[data-remove-brand-value]').forEach(button => button.addEventListener('click', () => { removeBrandAlias(identity.canonicalId, decodeURIComponent(button.dataset.removeBrandValue), button.dataset.brandValueType); renderAllForActiveBrand(); }));
+    $$('#brandSuggestions [data-merge-alias]').forEach(button => button.addEventListener('click', () => mergeAliasWithActive(decodeURIComponent(button.dataset.mergeAlias))));
+}
+function addIdentityValue(inputSelector, type) {
+    const input = $(inputSelector); const value = normalizeBrandName(input.value); const identity = activeBrandIdentity(); if (!value || !identity) return;
+    addBrandAlias(identity.canonicalId, value, type); input.value = ''; renderAllForActiveBrand();
+}
+$('#addBrandAlias').addEventListener('click', () => addIdentityValue('#brandAliasInput', 'alias'));
+$('#addBrandDomain').addEventListener('click', () => addIdentityValue('#brandDomainInput', 'domain'));
+$('#brandAliasInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandAliasInput', 'alias'); } });
+$('#brandDomainInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandDomainInput', 'domain'); } });
+$('#saveCanonicalBrand').addEventListener('click', () => {
+    const identity = activeBrandIdentity(); const name = normalizeBrandName($('#canonicalBrandName').value); if (!identity || !name) return;
+    const conflict = identityFor(name); if (conflict && conflict.canonicalId !== identity.canonicalId) return showError('Это название уже относится к другому бренду. Сначала удалите его из той карточки.');
+    if (identityText(identity.canonicalName) !== identityText(name)) identity.aliases.push(identity.canonicalName);
+    identity.canonicalName = name; identity.aliases = identity.aliases.filter(alias => identityText(alias) !== identityText(name)); saveBrandIdentities(); $('#wsBrand').value = name; renderBrandSelector(); renderAllForActiveBrand();
+});
 function sourceCategory(domain) { if (/(forbes|rbc|tass|ria|vedomosti|kommersant|lenta|gazeta|news|media)/.test(domain)) return 'СМИ'; if (/(vc\.ru|habr|reddit|forum|otzovik|irecommend)/.test(domain)) return 'Сообщество и отзывы'; if (/(wiki|catalog|yell|2gis|zoon)/.test(domain)) return 'Каталог и справочник'; return 'Профильный сайт'; }
 function renderSources() {
     const counts = new Map();
@@ -427,25 +596,43 @@ $$('[data-ranking-toggle]').forEach(button => button.addEventListener('click', (
 const dashboardCharts = {};
 function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].destroy(); }
 function percentage(value, total) { return total ? Math.round(value / total * 100) : 0; }
+function answerRowsFor(item) {
+    const results = selectedResults(item);
+    return results.length ? results.map(result => ({ ...item, ...result, brand: item.brand, query: item.query, orderedMentions: result.ordered_mentions || result.orderedMentions || [], cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())), sentiments: (result.source_analysis || []).filter(analysis => analysis.mentions_brand).map(analysis => analysis.sentiment).filter(Boolean) })) : [item];
+}
+function orderedMentionsFor(item) {
+    const supplied = Array.isArray(item.orderedMentions) ? item.orderedMentions : Array.isArray(item.ordered_mentions) ? item.ordered_mentions : [];
+    if (supplied.length) {
+        return canonicalizeMentionList(supplied);
+    }
+    const names = (item.competitors || []).map(normalizeBrandName).filter(Boolean);
+    if (item.mentioned) names.splice(Math.max(0, Math.min(names.length, (Number(item.position) || names.length + 1) - 1)), 0, normalizeBrandName(item.brand));
+    const seen = new Set();
+    return canonicalizeMentionList(names.filter(name => { const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true; }).map((name, index) => ({ name, observed_name: name, position: index + 1, role: brandKey(name) === brandKey(item.brand) ? item.role || 'упоминание' : 'упоминание' })));
+}
 function brandRows() {
     const rowsHistory = activeHistory();
-    const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { key: activeBrandKey, name: ownName, mentions: 0, positions: [], citations: 0, sentiments: [], variants: new Map([[ownName, { count: 1, order: 0 }]]) }]]); let order = 1;
-    rowsHistory.forEach(item => { const own = rows.get(activeBrandKey); if (item.mentioned) own.mentions++; if (item.position) own.positions.push(item.position); if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || [])); const seen = new Set(); (item.competitors || []).forEach(value => { const name = normalizeBrandName(value); const competitorKey = brandKey(name); if (!competitorKey || competitorKey === activeBrandKey || seen.has(competitorKey)) return; seen.add(competitorKey); if (!rows.has(competitorKey)) rows.set(competitorKey, { key: competitorKey, name, mentions: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(competitorKey); row.mentions++; const variant = row.variants.get(name) || { count: 0, order: order++ }; variant.count++; row.variants.set(name, variant); }); });
-    const totalMentions = [...rows.values()].reduce((sum, row) => sum + row.mentions, 0);
-    return [...rows.values()].map(row => ({ ...row, name: row.key === activeBrandKey ? ownName : preferredVariant(row.variants), sov: percentage(row.mentions, totalMentions), visibility: percentage(row.mentions, rowsHistory.length), citationRate: percentage(row.citations, rowsHistory.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null })).sort((a, b) => b.mentions - a.mentions);
+    const answerRows = rowsHistory.flatMap(answerRowsFor);
+    const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { key: activeBrandKey, name: ownName, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map([[ownName, { count: 1, order: 0 }]]) }]]); let order = 1;
+    answerRows.forEach(item => {
+        const own = rows.get(activeBrandKey); if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || []));
+        orderedMentionsFor(item).forEach(mention => { const key = brandKey(mention.name); if (!rows.has(key)) rows.set(key, { key, name: mention.name, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(key); row.mentions++; row.voiceWeight += 1 / mention.position; row.positions.push(mention.position); const variant = row.variants.get(mention.name) || { count: 0, order: order++ }; variant.count++; row.variants.set(mention.name, variant); });
+    });
+    const totalWeight = [...rows.values()].reduce((sum, row) => sum + row.voiceWeight, 0);
+    return [...rows.values()].map(row => ({ ...row, name: row.key === activeBrandKey ? ownName : preferredVariant(row.variants), sov: percentage(row.voiceWeight, totalWeight), visibility: percentage(row.mentions, answerRows.length), citationRate: percentage(row.citations, answerRows.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null, answerCount: answerRows.length })).sort((a, b) => b.voiceWeight - a.voiceWeight || b.mentions - a.mentions);
 }
 function dominantSentiment(values) { const counts = values.reduce((result, value) => ({ ...result, [value]: (result[value] || 0) + 1 }), {}); return Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'Нет данных'; }
 function renderMetricsDashboard() {
     const rowsHistory = activeHistory();
     const own = brandRows().find(row => brandKey(row.name) === activeBrandKey) || brandRows()[0] || { sov: 0, visibility: 0, citationRate: 0, averagePosition: null };
     $('#metricSov').textContent = `${own.sov}%`; $('#metricSovNote').textContent = rowsHistory.length ? `${own.mentions || 0} упоминаний среди брендов` : 'Нет проверок';
-    $('#metricVisibility').textContent = `${own.visibility}%`; $('#metricVisibilityNote').textContent = rowsHistory.length ? `в ${own.mentions || 0} из ${rowsHistory.length} ответов` : 'Нет проверок';
+    $('#metricVisibility').textContent = `${own.visibility}%`; $('#metricVisibilityNote').textContent = rowsHistory.length ? `в ${own.mentions || 0} из ${own.answerCount || rowsHistory.length} ответов` : 'Нет проверок';
     $('#metricCitation').textContent = `${own.citationRate}%`; $('#metricCitationNote').textContent = rowsHistory.length ? `${own.citations || 0} ответов со ссылкой` : 'Нет проверок';
     $('#metricPosition').textContent = own.averagePosition ? own.averagePosition.toFixed(1) : '—'; $('#metricPositionNote').textContent = own.averagePosition ? 'в списочных рекомендациях' : 'Нет позиций';
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
 function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = activeHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? row.averagePosition.toFixed(1) : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
-function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const provider = item.provider || ''; const name = PROVIDERS[provider] || item.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (item.mentioned) row.mentioned++; }); return groups; }
+function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const modelResults = selectedResults(item); (modelResults.length ? modelResults : [item]).forEach(result => { const provider = result.provider || ''; const name = PROVIDERS[provider] || result.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (result.mentioned) row.mentioned++; }); }); return groups; }
 function modelRow(row, index, compact = false) { return `<div class="model-row${row.total < 2 ? ' low-sample' : ''}"><span class="model-rank">${index + 1}</span><div class="model-name">${modelAvatarMarkup(row.provider, row.name)}<div><strong>${escapeHtml(row.name)}</strong><small>${row.total < 2 ? 'Мало данных' : `${row.total} проверок`}</small></div></div><div class="model-score"><strong>${row.value}%</strong><span>${row.mentioned} из ${row.total}</span></div><div class="model-meter"><i style="width:${row.value}%"></i></div>${compact ? '' : `<span class="model-verdict">${row.value >= 60 ? 'Высокая видимость' : row.value >= 30 ? 'Есть потенциал' : 'Требует внимания'}</span>`}</div>`; }
 function renderModelMetrics() { const groups = [...modelGroups().values()].map(row => ({ ...row, value: percentage(row.mentioned, row.total) })).sort((a, b) => b.value - a.value || b.total - a.total); const empty = '<div class="app-empty"><strong>Нет данных по моделям</strong><span>Запустите проверки в нужных AI-моделях.</span></div>'; $('#modelMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index, true)).join('') : empty; $('#visibilityMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index)).join('') : ''; $('#visibilityEmpty').hidden = Boolean(groups.length); const best = groups[0]; $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки'; }
 function renderExclusivity() { const mentioned = activeHistory().filter(item => item.mentioned); const exclusive = mentioned.filter(item => !(item.competitors || []).length).length; const compared = mentioned.length - exclusive; $('#exclusivityMetrics').innerHTML = `<div class="app-data-row"><strong>Эксклюзивное упоминание</strong><span>${percentage(exclusive, mentioned.length)}% · ${exclusive} ответов</span></div><div class="app-data-row"><strong>В сравнении с конкурентами</strong><span>${percentage(compared, mentioned.length)}% · ${compared} ответов</span></div>`; }
@@ -458,16 +645,12 @@ function chartDate(item, index) {
     return new Date(item.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 function sovTimeline(rowsHistory, brandKeys) {
-    const counts = new Map();
-    let totalMentions = 0;
+    const weights = new Map();
+    let totalWeight = 0;
     const series = new Map(brandKeys.map(key => [key, []]));
     rowsHistory.forEach(item => {
-        const mentionedInCheck = new Set();
-        if (item.mentioned) mentionedInCheck.add(activeBrandKey);
-        (item.competitors || []).forEach(name => { const key = brandKey(name); if (key && key !== activeBrandKey) mentionedInCheck.add(key); });
-        mentionedInCheck.forEach(key => counts.set(key, (counts.get(key) || 0) + 1));
-        totalMentions += mentionedInCheck.size;
-        brandKeys.forEach(key => series.get(key).push(percentage(counts.get(key) || 0, totalMentions)));
+        answerRowsFor(item).forEach(answer => orderedMentionsFor(answer).forEach(mention => { const key = brandKey(mention.name); const weight = 1 / mention.position; weights.set(key, (weights.get(key) || 0) + weight); totalWeight += weight; }));
+        brandKeys.forEach(key => series.get(key).push(percentage(weights.get(key) || 0, totalWeight)));
     });
     return series;
 }
@@ -513,11 +696,11 @@ function renderDashboardCharts() {
     });
     const ownRank = own ? allRows.findIndex(row => row.key === activeBrandKey) + 1 : 0;
     $('#sovInsight').textContent = own ? `#${ownRank} в нише · ${own.sov}% SoV` : 'Нужны проверки';
-    const sovSelected = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 3)].filter(Boolean); const selectedKeys = new Set(sovSelected.map(row => row.key)); const otherMentions = allRows.filter(row => !selectedKeys.has(row.key)).reduce((sum, row) => sum + row.mentions, 0); const sovRows = otherMentions ? [...sovSelected, { key: 'other', name: 'Остальные', mentions: otherMentions }] : sovSelected; const totalMentions = allRows.reduce((sum, row) => sum + row.mentions, 0);
-    $('#sovLegend').innerHTML = sovRows.map((row, index) => `<div><i data-sov-color="${index}"></i><span class="identity-name">${row.key === 'other' ? monogramMarkup(row.name) : companyAvatarMarkup(row.name)}<span>${escapeHtml(row.name)}</span></span><strong>${percentage(row.mentions, totalMentions)}%</strong></div>`).join(''); bindAvatarFallbacks();
+    const sovSelected = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 3)].filter(Boolean); const selectedKeys = new Set(sovSelected.map(row => row.key)); const otherWeight = allRows.filter(row => !selectedKeys.has(row.key)).reduce((sum, row) => sum + row.voiceWeight, 0); const sovRows = otherWeight ? [...sovSelected, { key: 'other', name: 'Остальные', voiceWeight: otherWeight }] : sovSelected; const totalWeight = allRows.reduce((sum, row) => sum + row.voiceWeight, 0);
+    $('#sovLegend').innerHTML = sovRows.map((row, index) => `<div><i data-sov-color="${index}"></i><span class="identity-name">${row.key === 'other' ? monogramMarkup(row.name) : companyAvatarMarkup(row.name)}<span>${escapeHtml(row.name)}</span></span><strong>${percentage(row.voiceWeight, totalWeight)}%</strong></div>`).join(''); bindAvatarFallbacks();
     dashboardCharts.sov = new Chart($('#sovChart'), {
-        type: 'doughnut', data: { labels: sovRows.map(row => row.name), datasets: [{ data: sovRows.map(row => row.mentions), backgroundColor: sovRows.map((row, index) => row.key === activeBrandKey ? theme.accent : index === 1 ? theme.accent2 : index === 2 ? theme.muted : index === 3 ? theme.border : theme.soft), borderColor: theme.surface, borderWidth: 5, hoverOffset: 0, spacing: 2 }] },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '76%', rotation: -95, circumference: 360, layout: { padding: 2 }, plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: `место #${ownRank}`, color: theme.text, muted: theme.muted }, legend: { display: false }, tooltip: { displayColors: false, backgroundColor: theme.night, titleColor: theme.surface, bodyColor: theme.surface, caretPadding: 8, cornerRadius: 8, padding: 11, callbacks: { title: contexts => contexts[0]?.label || '', label: context => `${percentage(context.raw, totalMentions)}% доли голоса` } } } }, plugins: [centerLabelPlugin]
+        type: 'doughnut', data: { labels: sovRows.map(row => row.name), datasets: [{ data: sovRows.map(row => row.voiceWeight), backgroundColor: sovRows.map((row, index) => row.key === activeBrandKey ? theme.accent : index === 1 ? theme.accent2 : index === 2 ? theme.muted : index === 3 ? theme.border : theme.soft), borderColor: theme.surface, borderWidth: 5, hoverOffset: 0, spacing: 2 }] },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '76%', rotation: -95, circumference: 360, layout: { padding: 2 }, plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: `место #${ownRank}`, color: theme.text, muted: theme.muted }, legend: { display: false }, tooltip: { displayColors: false, backgroundColor: theme.night, titleColor: theme.surface, bodyColor: theme.surface, caretPadding: 8, cornerRadius: 8, padding: 11, callbacks: { title: contexts => contexts[0]?.label || '', label: context => `${percentage(context.raw, totalWeight)}% доли голоса` } } } }, plugins: [centerLabelPlugin]
     });
 }
 renderBrandSelector();

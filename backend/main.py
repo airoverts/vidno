@@ -6,6 +6,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -19,7 +20,7 @@ load_dotenv()
 from gigachat_client import check_brand as check_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured, _call_gigachat
 from deepseek_client import check_brand as check_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured, _call_deepseek
 from yandex_client import check_brand as check_yandex, get_cache_identity as get_yandex_cache_identity, get_model_name as get_yandex_model, is_configured as is_yandex_configured
-from search_collector import apply_brand_evidence, collect_and_format, format_context
+from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 
 logging.basicConfig(level=logging.INFO)
@@ -96,6 +97,21 @@ class CheckRequest(BaseModel):
     context: str = Field(default="", max_length=60000)
     provider: Literal["gigachat", "deepseek", "yandex"] = "gigachat"
     force_refresh: bool = False
+    canonical_id: str = Field(default="", max_length=200)
+    canonical_name: str = Field(default="", max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
+    domains: list[str] = Field(default_factory=list, max_length=50)
+
+
+class CheckAllRequest(BaseModel):
+    brand: str = Field(min_length=1, max_length=200)
+    query: str = Field(min_length=1, max_length=2000)
+    context: str = Field(default="", max_length=60000)
+    force_refresh: bool = False
+    canonical_id: str = Field(default="", max_length=200)
+    canonical_name: str = Field(default="", max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
+    domains: list[str] = Field(default_factory=list, max_length=50)
 
 
 class BriefRequest(BaseModel):
@@ -129,14 +145,109 @@ def check(req: CheckRequest, request: Request):
         _check_semaphore.release()
 
 
-def _run_check(req: CheckRequest):
+@app.post("/api/check-all")
+def check_all(req: CheckAllRequest, request: Request):
+    client_host = request.client.host if request.client else "unknown"
+    _enforce_rate_limit(client_host)
+    if not _check_semaphore.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Сервис занят, повторите запрос позже")
+    try:
+        provider_results = []
+        errors = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {executor.submit(_run_check, CheckRequest(**req.model_dump(), provider=provider), False): provider for provider in ("gigachat", "yandex")}
+            for future in as_completed(futures):
+                provider = futures[future]
+                try:
+                    result = future.result()
+                except Exception as error:
+                    logger.exception("[API] Ошибка агрегированной проверки provider=%s", provider)
+                    errors.append({"provider": provider, "error": str(error)})
+                    continue
+                if isinstance(result, JSONResponse):
+                    payload = json.loads(result.body)
+                    errors.append({"provider": provider, "error": payload.get("error", "Ошибка провайдера")})
+                else:
+                    provider_results.append(result)
+        if not provider_results:
+            return JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors})
+        return _aggregate_results(provider_results, errors)
+    finally:
+        _check_semaphore.release()
+
+
+def _aggregate_results(results, errors):
+    mentioned_results = [item for item in results if item.get("mentioned")]
+    positions = [item.get("position") or item.get("weighted_position") for item in mentioned_results]
+    positions = [float(value) for value in positions if value]
+    mention_scores = {}
+    mention_roles = {}
+    for item in results:
+        for mention in item.get("ordered_mentions", []):
+            name = str(mention.get("canonical_name") or mention.get("name", "")).strip()
+            position = mention.get("position")
+            if not name or not isinstance(position, int) or position < 1:
+                continue
+            key = str(mention.get("canonical_id") or name.casefold())
+            mention_scores[key] = mention_scores.get(key, {"name": name, "score": 0.0, "canonical_id": key})
+            mention_scores[key]["score"] += 1 / position
+            mention_roles.setdefault(key, mention.get("role", "упоминание"))
+    ordered_mentions = [
+        {"name": item["name"], "position": index, "role": mention_roles.get(key, "упоминание"), "canonical_id": item["canonical_id"], "canonical_name": item["name"]}
+        for index, (key, item) in enumerate(sorted(mention_scores.items(), key=lambda pair: (-pair[1]["score"], pair[1]["name"].casefold())), start=1)
+    ]
+    target_ids = {str(item.get("canonical_id")) for item in results if item.get("canonical_id")}
+    competitors = [item["canonical_name"] for item in ordered_mentions if item["canonical_id"] not in target_ids] if target_ids else list(dict.fromkeys(name for result in results for name in result.get("mentioned_brands", []) if name))
+    quotes = list(dict.fromkeys(quote for item in results for quote in item.get("quotes", []) if quote))
+    sources_by_url = {}
+    for item in results:
+        for source in item.get("sources", []):
+            key = source.get("url") or source.get("title")
+            if key and key not in sources_by_url:
+                sources_by_url[key] = source
+    if len(mentioned_results) == len(results):
+        reasoning = f"Бренд упомянут во всех полученных ответах ({len(mentioned_results)} из {len(results)})."
+    elif mentioned_results:
+        reasoning = f"Бренд упомянут в {len(mentioned_results)} из {len(results)} полученных ответов."
+    else:
+        reasoning = "Бренд не упомянут в полученных ответах."
+    detailed_reasoning = " ".join(dict.fromkeys(item.get("reasoning") for item in results if item.get("reasoning")))
+    return {
+        "provider": "all",
+        "model": "GigaChat + Алиса AI",
+        "mentioned": bool(mentioned_results),
+        "position": sum(positions) / len(positions) if positions else None,
+        "role": "рекомендация" if any("рекомендац" in str(item.get("role", "")).lower() for item in results) else ("упоминание" if mentioned_results else "не упомянут"),
+        "reasoning": f"{reasoning} {detailed_reasoning}".strip(),
+        "quotes": quotes,
+        "mentioned_brands": competitors,
+        "ordered_mentions": ordered_mentions,
+        "sources": list(sources_by_url.values()),
+        "source_analysis": [analysis for item in results for analysis in item.get("source_analysis", [])],
+        "provider_results": results,
+        "provider_errors": errors,
+        "canonical_id": next((item.get("canonical_id") for item in results if item.get("canonical_id")), None),
+        "canonical_name": next((item.get("canonical_name") for item in results if item.get("canonical_name")), None),
+        "observed_name": next((item.get("observed_name") for item in results if item.get("observed_name")), None),
+    }
+
+
+def _run_check(req: CheckRequest, use_result_cache: bool = True):
     brand = " ".join(req.brand.split()) if req.brand else ""
     query = " ".join(req.query.split()) if req.query else ""
     context = req.context.strip() if req.context else None
     provider = req.provider
+    aliases = list(dict.fromkeys(" ".join(value.split()) for value in req.aliases if value and value.strip()))
+    domains = list(dict.fromkeys(" ".join(value.split()) for value in req.domains if value and value.strip()))
+    canonical_id = " ".join(req.canonical_id.split())
+    canonical_name = " ".join(req.canonical_name.split())
+    if any(len(value) > 200 for value in aliases + domains):
+        return JSONResponse(status_code=422, content={"error": "Псевдоним или домен слишком длинный"})
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
-    cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|source-evidence-v2'
+    identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
+    cache_version = f"canonical-brands-v1:{identity_cache}"
+    cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
     logger.info(f"[API] Запрос: provider={provider}, brand={brand[:80]!r}, query={query[:120]!r}, context_provided={bool(context)}")
@@ -148,9 +259,9 @@ def _run_check(req: CheckRequest):
     if not provider_config["configured"]():
         return JSONResponse(status_code=503, content={"error": f"Провайдер {provider} не настроен"})
 
-    cached_result = None if req.force_refresh else get_result_cache(brand, query, provider, cache_identity)
+    cached_result = None if req.force_refresh or not use_result_cache else get_result_cache(brand, query, provider, cache_identity)
     if cached_result and not context:
-        if "sources" in cached_result:
+        if provider == "yandex" or "sources" in cached_result:
             logger.info("[API] Возвращён результат из кэша")
             return cached_result
         else:
@@ -159,7 +270,7 @@ def _run_check(req: CheckRequest):
     sources = []
     has_custom_context = bool(context)
     
-    if not context:
+    if not context and provider != "yandex":
         cached_search = None if req.force_refresh else get_search_cache(search_cache_key)
         if cached_search:
             context, sources = cached_search
@@ -171,14 +282,13 @@ def _run_check(req: CheckRequest):
                 set_search_cache(search_cache_key, context, sources)
             logger.info(f"[API] Собрано {len(sources)} источников")
 
-    if not context:
+    if not context and provider != "yandex":
         return JSONResponse(status_code=502, content={"error": "Не удалось собрать данные по запросу"})
     
-    if sources:
-        apply_brand_evidence(sources, brand)
-        context = format_context(sources)
-
-    result = provider_config["check"](brand, query, context)
+    if provider in {"gigachat", "yandex"}:
+        result = provider_config["check"](brand, query, context or "", canonical_id, canonical_name, aliases, domains)
+    else:
+        result = provider_config["check"](brand, query, context or "")
 
     if result.get("error"):
         return JSONResponse(status_code=502, content=result)
@@ -187,6 +297,7 @@ def _run_check(req: CheckRequest):
     result["model"] = model
     
     if sources:
+        apply_brand_evidence(sources, brand)
         result["sources"] = [
             {
                 "index": s.get("index"),
@@ -218,7 +329,7 @@ def _run_check(req: CheckRequest):
                         analysis["mentions_brand"] = status == "found"
             result["sources_count"] = sum(item.get("mentions_brand") is True for item in result["source_analysis"])
 
-    if not has_custom_context:
+    if not has_custom_context and use_result_cache:
         set_result_cache(brand, query, result, provider, cache_identity)
     
     logger.info(f"[API] Результат: mentioned={result.get('mentioned')}, position={result.get('position')}, sources={len(result.get('sources', []))}")

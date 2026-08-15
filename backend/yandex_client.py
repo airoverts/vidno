@@ -6,7 +6,7 @@ import time
 import httpx
 from dotenv import load_dotenv
 
-from rag_analysis import build_analysis_messages, parse_analysis_response
+from gigachat_client import analyze_natural_answer
 
 load_dotenv()
 
@@ -75,32 +75,52 @@ def _response_text(data: dict) -> str:
     return answer
 
 
-def _build_input(brand: str, query: str, context: str) -> str:
-    messages = build_analysis_messages(brand, query, context)
-    return "\n\n".join(str(message.get("content", "")) for message in messages if message.get("content"))
+def _web_evidence(data: dict) -> tuple[bool, list[dict]]:
+    web_search_used = False
+    sources = {}
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).lower()
+        status = str(item.get("status", "completed")).lower()
+        if item_type in {"web_search", "web_search_call"} and status in {"completed", "succeeded"}:
+            web_search_used = True
+        if item_type != "message":
+            continue
+        for content in item.get("content") or []:
+            if not isinstance(content, dict) or content.get("type") != "output_text":
+                continue
+            for annotation in content.get("annotations") or []:
+                if not isinstance(annotation, dict) or annotation.get("type") != "url_citation":
+                    continue
+                url = annotation.get("url")
+                if isinstance(url, str) and url.startswith(("http://", "https://")):
+                    sources.setdefault(url, {"url": url, "title": str(annotation.get("title") or url), "authority_score": 5, "authority_label": "не определена"})
+    return web_search_used, list(sources.values())
 
 
-def _call_agent(brand: str, query: str, context: str) -> str:
+def _call_agent(query: str) -> tuple[str, list[dict], bool]:
     response = _post_with_retry({
         "prompt": {"id": AGENT_ID},
-        "input": _build_input(brand, query, context),
+        "input": query,
         "stream": False,
         "store": False,
     })
     response.raise_for_status()
-    return _response_text(response.json())
+    data = response.json()
+    web_search_used, sources = _web_evidence(data)
+    return _response_text(data), sources, web_search_used
 
 
-def check_brand(brand: str, query: str, context: str) -> dict:
+def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
     if not is_configured():
         return {"error": "YandexGPT не настроен"}
-    if not context or not context.strip():
-        return {"error": "Контекст не предоставлен"}
-
     logger.info("[YandexGPT] Проверка бренда %r по запросу %r", brand[:80], query[:120])
     try:
-        answer = _call_agent(brand, query, context)
-        analysis = parse_analysis_response(answer, context)
+        raw_answer, sources, web_search_used = _call_agent(query)
+        if not web_search_used or not sources:
+            return {"error": "Встроенный веб-поиск Алисы не подтверждён источниками"}
+        analysis = analyze_natural_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         logger.error("[YandexGPT] HTTP ошибка: %s", status)
@@ -123,5 +143,8 @@ def check_brand(brand: str, query: str, context: str) -> dict:
         "brand": brand,
         "query": query,
         **analysis,
+        "raw_answer": raw_answer,
+        "sources": sources,
+        "web_search_used": True,
         "rag": True,
     }

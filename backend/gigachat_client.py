@@ -8,7 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import httpx
 import logging
-from rag_analysis import ANALYSIS_RESPONSE_SCHEMA, build_analysis_messages, parse_analysis_response
+from rag_analysis import ANALYSIS_RESPONSE_SCHEMA, build_answer_analysis_messages, parse_analysis_response
+from brand_identity import canonicalize_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -93,17 +94,18 @@ def get_model_name() -> str:
     return MODEL_NAME
 
 
-def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2000, response_format: dict | None = None) -> str:
+def _call_gigachat(messages: list, temperature: float | None = None, max_tokens: int = 2000, response_format: dict | None = None) -> str:
     if not is_configured():
         raise RuntimeError("GigaChat не настроен")
     
     payload = {
         "model": MODEL_NAME,
         "messages": messages,
-        "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
     if response_format:
         payload["response_format"] = response_format
     
@@ -142,27 +144,63 @@ def _call_gigachat(messages: list, temperature: float = 0.0, max_tokens: int = 2
     return content.strip()
 
 
-def analyze_brand_rag(brand: str, query: str, context: str) -> dict:
-    logger.info(f"[RAG] Анализ бренда {brand[:80]!r} для запроса {query[:120]!r}")
-    messages = build_analysis_messages(brand, query, context)
+def generate_natural_answer(query: str, context: str) -> str:
+    messages = [
+        {"role": "system", "content": "Ответь как обычный AI-ассистент в пользовательском приложении. Используй предоставленные поисковые материалы как актуальную справку, но не обсуждай внутренний поиск, мониторинг или анализ брендов. Дай прямой, полезный и естественный ответ на запрос пользователя. Не выдумывай факты, которых нет в материалах."},
+        {"role": "user", "content": f"<search_context>\n{context}\n</search_context>\n\nЗапрос пользователя: {query}"},
+    ]
+    return _call_gigachat(messages, max_tokens=3000)
+
+
+def _validate_ordered_mentions(analysis: dict, brand: str, raw_answer: str) -> dict:
+    mentions = analysis.get("ordered_mentions", [])
+    normalized_names = ["".join(char for char in str(item.get("name", "")).casefold() if char.isalnum()) for item in mentions]
+    positions = [item.get("position") for item in mentions]
+    if any(not name for name in normalized_names) or len(set(normalized_names)) != len(normalized_names) or positions != list(range(1, len(mentions) + 1)):
+        raise ValueError("ordered_mentions содержит некорректный порядок или дубликаты")
+    brand_identity = "".join(char for char in brand.casefold() if char.isalnum())
+    brand_positions = [item["position"] for item, name in zip(mentions, normalized_names) if name == brand_identity]
+    brand_index = raw_answer.casefold().find(brand.casefold())
+    if brand_index >= 0 and not brand_positions:
+        insert_at = sum(1 for item in mentions if 0 <= raw_answer.casefold().find(str(item["name"]).casefold()) < brand_index)
+        mentions.insert(insert_at, {"name": brand, "position": insert_at + 1, "role": analysis.get("role") if analysis.get("role") != "не упомянут" else "упоминание"})
+    if brand_index < 0 and brand_positions:
+        mentions = [item for item in mentions if "".join(char for char in str(item.get("name", "")).casefold() if char.isalnum()) != brand_identity]
+    for index, item in enumerate(mentions, start=1):
+        item["position"] = index
+    analysis["ordered_mentions"] = mentions
+    analysis["mentioned_brands"] = [item["name"] for item in mentions if "".join(char for char in str(item.get("name", "")).casefold() if char.isalnum()) != brand_identity]
+    analysis["mentioned"] = brand_index >= 0
+    matching = [item for item in mentions if "".join(char for char in str(item.get("name", "")).casefold() if char.isalnum()) == brand_identity]
+    analysis["position"] = matching[0]["position"] if matching else None
+    if not analysis["mentioned"]:
+        analysis["role"] = "не упомянут"
+    return analysis
+
+
+def analyze_natural_answer(brand: str, query: str, raw_answer: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+    logger.info(f"[Analysis] Анализ естественного ответа для бренда {brand[:80]!r}")
+    analysis_brand = canonical_name or brand
+    messages = build_answer_analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
     response_format = {"type": "json_schema", "schema": ANALYSIS_RESPONSE_SCHEMA, "strict": True}
     answer = ""
     try:
         answer = _call_gigachat(messages, temperature=0.0, max_tokens=5000, response_format=response_format)
-        analysis = parse_analysis_response(answer, context)
+        analysis = parse_analysis_response(answer, raw_answer, target_brand=analysis_brand)
     except ValueError as error:
         logger.warning(f"[RAG] Повторный запрос для исправления JSON: {error}")
         repair_messages = list(messages)
         if answer:
             repair_messages.append({"role": "assistant", "content": answer})
-        repair_messages.append({"role": "user", "content": "Верни заново один полный компактный JSON, соответствующий заданной схеме. Обязательно включи source_analysis для каждого источника."})
+        repair_messages.append({"role": "user", "content": "Верни заново один полный компактный JSON по заданной схеме. ordered_mentions должен содержать бренды в порядке появления. source_analysis верни пустым массивом."})
         answer = _call_gigachat(repair_messages, temperature=0.0, max_tokens=5000, response_format=response_format)
-        analysis = parse_analysis_response(answer, context)
-    logger.info(f"[RAG] JSON успешно проверен: mentioned={analysis['mentioned']}, position={analysis['position']}")
+        analysis = parse_analysis_response(answer, raw_answer, target_brand=analysis_brand)
+    analysis = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains)
+    logger.info(f"[Analysis] JSON проверен: mentioned={analysis['mentioned']}, position={analysis['position']}")
     return analysis
 
 
-def check_brand(brand: str, query: str, context: str) -> dict:
+def check_brand(brand: str, query: str, context: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
     if not is_configured():
         logger.error("[RAG] GigaChat не настроен (отсутствуют CLIENT_ID или CLIENT_SECRET)")
         return {"error": "GigaChat не настроен"}
@@ -174,7 +212,8 @@ def check_brand(brand: str, query: str, context: str) -> dict:
         return {"error": "Контекст не предоставлен. Соберите данные через search_collector."}
     
     try:
-        analysis = analyze_brand_rag(brand, query, context)
+        raw_answer = generate_natural_answer(query, context)
+        analysis = analyze_natural_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as e:
         status = e.response.status_code
         logger.error("[RAG] HTTP ошибка GigaChat: %s", status)
@@ -208,8 +247,13 @@ def check_brand(brand: str, query: str, context: str) -> dict:
         "reasoning": analysis["reasoning"],
         "quotes": analysis["quotes"],
         "mentioned_brands": analysis["mentioned_brands"],
+        "ordered_mentions": analysis.get("ordered_mentions", []),
         "source_analysis": analysis.get("source_analysis", []),
         "sources_count": analysis.get("sources_count", 0),
         "total_sources": analysis.get("total_sources", 0),
+        "raw_answer": raw_answer,
+        "observed_name": analysis.get("observed_name"),
+        "canonical_id": analysis.get("canonical_id"),
+        "canonical_name": analysis.get("canonical_name"),
         "rag": True
     }

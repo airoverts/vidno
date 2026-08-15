@@ -17,6 +17,12 @@ class SourceAnalysis(BaseModel):
     key_point: str
 
 
+class OrderedMention(BaseModel):
+    name: str
+    position: PositiveInt
+    role: Literal["рекомендация", "сравнение", "упоминание в списке", "упоминание"]
+
+
 class BrandAnalysis(BaseModel):
     mentioned: StrictBool
     position: Optional[PositiveInt] = None
@@ -25,6 +31,7 @@ class BrandAnalysis(BaseModel):
     reasoning: str
     quotes: list[str]
     mentioned_brands: list[str]
+    ordered_mentions: list[OrderedMention]
     source_analysis: list[SourceAnalysis]
     sources_count: NonNegativeInt
     total_sources: NonNegativeInt
@@ -43,6 +50,19 @@ ANALYSIS_RESPONSE_SCHEMA = {
         "reasoning": {"type": "string"},
         "quotes": {"type": "array", "items": {"type": "string"}},
         "mentioned_brands": {"type": "array", "items": {"type": "string"}},
+        "ordered_mentions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "position": {"type": "integer", "minimum": 1},
+                    "role": {"type": "string", "enum": ["рекомендация", "сравнение", "упоминание в списке", "упоминание"]},
+                },
+                "required": ["name", "position", "role"],
+                "additionalProperties": False,
+            },
+        },
         "source_analysis": {
             "type": "array",
             "items": {
@@ -66,7 +86,7 @@ ANALYSIS_RESPONSE_SCHEMA = {
     },
     "required": [
         "mentioned", "position", "weighted_position", "role", "reasoning", "quotes",
-        "mentioned_brands", "source_analysis", "sources_count", "total_sources",
+        "mentioned_brands", "ordered_mentions", "source_analysis", "sources_count", "total_sources",
     ],
     "additionalProperties": False,
 }
@@ -95,6 +115,7 @@ SYSTEM_PROMPT_ANALYZE = """Ты — аналитик видимости брен
   "reasoning": "краткое обоснование для пользователя с учётом авторитетности источников",
   "quotes": ["цитата 1 из контекста", "цитата 2"],
   "mentioned_brands": ["бренд 1", "бренд 2"],
+  "ordered_mentions": [{{"name": "бренд 1", "position": 1, "role": "рекомендация"}}],
   "source_analysis": [
     {{"source_index": 1, "authority": 8, "mentions_brand": true, "sentiment": "положительный/нейтральный/отрицательный", "key_point": "краткая суть упоминания"}}
   ],
@@ -109,6 +130,14 @@ def build_analysis_messages(brand: str, query: str, context: str) -> list[dict]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT_ANALYZE},
         {"role": "user", "content": f"Параметры анализа в JSON: {request_data}\nКоличество источников: {len(source_indexes) or 'не указано'}\n\n<search_context>\n{context}\n</search_context>\n\nПроанализируй видимость бренда по всем источникам, учитывая их авторитетность."}
+    ]
+
+
+def build_answer_analysis_messages(brand: str, query: str, answer: str, aliases: list[str] | None = None, domains: list[str] | None = None) -> list[dict]:
+    request_data = json.dumps({"query": query, "brand": brand, "aliases": aliases or [], "domains": domains or []}, ensure_ascii=False)
+    return [
+        {"role": "system", "content": """Ты извлекаешь измеримые данные из уже готового ответа AI-ассистента. Анализируй только текст ответа, не добавляй внешние знания. Определи, упомянут ли целевой бренд, его роль и позицию. В ordered_mentions перечисли все бренды и компании строго в порядке первого появления; позиции должны начинаться с 1 и не повторяться. Прямые цитаты должны дословно встречаться в ответе. Верни только JSON по заданной схеме."""},
+        {"role": "user", "content": f"Параметры проверки: {request_data}\n\n<assistant_answer>\n{answer}\n</assistant_answer>"},
     ]
 
 
@@ -138,22 +167,55 @@ def _extract_json(text: str) -> dict:
     return max(candidates, key=lambda value: len(required.intersection(value))) if candidates else {}
 
 
-def parse_analysis_response(answer: str, context: str) -> dict:
+def parse_analysis_response(answer: str, context: str, normalize_source_indexes: bool = False, target_brand: str = "") -> dict:
     parsed = _extract_json(answer)
     if not parsed:
         raise ValueError("модель вернула ответ в неверном формате")
 
+    if "mentioned" not in parsed:
+        for alias in ("brand_mentioned", "target_brand_mentioned"):
+            if alias in parsed:
+                parsed["mentioned"] = parsed[alias]
+                break
+    if "mentioned" not in parsed:
+        parsed["mentioned"] = bool(target_brand and target_brand.casefold() in context.casefold())
+    if "position" not in parsed:
+        parsed["position"] = parsed.get("brand_position", parsed.get("target_brand_position"))
+    if "weighted_position" not in parsed:
+        parsed["weighted_position"] = None
+    if "role" not in parsed:
+        parsed["role"] = parsed.get("mention_role") or ("упоминание" if parsed.get("mentioned") else "не упомянут")
+    if parsed.get("role") not in {"рекомендация", "сравнение", "упоминание в списке", "упоминание", "не упомянут"}:
+        parsed["role"] = "упоминание" if parsed.get("mentioned") else "не упомянут"
+    if "reasoning" not in parsed:
+        parsed["reasoning"] = str(parsed.get("analysis") or parsed.get("reason") or "Результат извлечён из ответа AI-ассистента.")
+    if "ordered_mentions" not in parsed and isinstance(parsed.get("brands_in_order"), list):
+        parsed["ordered_mentions"] = parsed["brands_in_order"]
+    raw_mentions = parsed.get("ordered_mentions") or []
+    if raw_mentions and all(isinstance(item, str) for item in raw_mentions):
+        parsed["ordered_mentions"] = [{"name": name, "position": index, "role": "упоминание в списке"} for index, name in enumerate(raw_mentions, start=1)]
+    parsed.setdefault("sources_count", 0)
+    parsed.setdefault("total_sources", 0)
+
     for field in ("quotes", "mentioned_brands", "source_analysis"):
+        if isinstance(parsed.get(field), dict):
+            parsed[field] = [value for value in parsed[field].values() if isinstance(value, str)] if field != "source_analysis" else []
+
+    for field in ("quotes", "mentioned_brands", "ordered_mentions", "source_analysis"):
         if parsed.get(field) is None:
             parsed[field] = []
     allowed_sentiments = {"положительный", "нейтральный", "отрицательный"}
-    for item in parsed.get("source_analysis", []):
+    for index, item in enumerate(parsed.get("source_analysis", []), start=1):
         if item.get("sentiment") not in allowed_sentiments:
             item["sentiment"] = "нейтральный"
         for field in ("source_index", "authority"):
             value = item.get(field)
             if isinstance(value, str) and value.isdigit():
                 item[field] = int(value)
+        if normalize_source_indexes and (not isinstance(item.get("source_index"), int) or item["source_index"] < 1):
+            item["source_index"] = index
+        if normalize_source_indexes and (not isinstance(item.get("authority"), int) or not 1 <= item["authority"] <= 10):
+            item["authority"] = 5
     for field in ("position", "sources_count", "total_sources"):
         value = parsed.get(field)
         if isinstance(value, str) and value.isdigit():
@@ -163,6 +225,9 @@ def parse_analysis_response(answer: str, context: str) -> dict:
             parsed["weighted_position"] = float(parsed["weighted_position"])
         except ValueError:
             parsed["weighted_position"] = None
+    if normalize_source_indexes:
+        parsed["total_sources"] = max(int(parsed.get("total_sources") or 0), len(parsed.get("source_analysis", [])))
+        parsed["sources_count"] = min(int(parsed.get("sources_count") or 0), parsed["total_sources"])
 
     try:
         if hasattr(BrandAnalysis, "model_validate"):
@@ -230,6 +295,7 @@ def parse_analysis_response(answer: str, context: str) -> dict:
         "reasoning": parsed["reasoning"],
         "quotes": parsed["quotes"],
         "mentioned_brands": parsed["mentioned_brands"],
+        "ordered_mentions": parsed["ordered_mentions"],
         "source_analysis": parsed["source_analysis"],
         "sources_count": parsed["sources_count"],
         "total_sources": parsed["total_sources"],
