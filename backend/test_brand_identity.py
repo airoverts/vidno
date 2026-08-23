@@ -91,6 +91,30 @@ class CanonicalBrandTests(unittest.TestCase):
         self.assertEqual(result["canonical_name"], "Островок")
         self.assertEqual(result["ordered_mentions"][0]["canonical_id"], "ostrovok")
 
+    def test_numeric_and_hallucinated_competitors_are_removed(self):
+        result = canonicalize_analysis(
+            {
+                "ordered_mentions": [
+                    {"name": "1", "position": 1, "role": "упоминание в списке"},
+                    {"name": "Nike", "position": 2, "role": "рекомендация"},
+                    {"name": "Adidas", "position": 3, "role": "сравнение"},
+                ],
+                "role": "не упомянут",
+            },
+            "В ответе рекомендован Nike.",
+            "Demix",
+        )
+        self.assertEqual(result["mentioned_brands"], ["Nike"])
+        self.assertEqual(result["ordered_mentions"][0]["position"], 1)
+
+    def test_alphanumeric_brand_is_retained(self):
+        result = canonicalize_analysis(
+            {"ordered_mentions": [{"name": "3M", "position": 1, "role": "рекомендация"}], "role": "не упомянут"},
+            "Для этой задачи подходит 3M.",
+            "Другой бренд",
+        )
+        self.assertEqual(result["mentioned_brands"], ["3M"])
+
 
 if __name__ == "__main__":
     unittest.main()

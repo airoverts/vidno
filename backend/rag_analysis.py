@@ -136,7 +136,7 @@ def build_analysis_messages(brand: str, query: str, context: str) -> list[dict]:
 def build_answer_analysis_messages(brand: str, query: str, answer: str, aliases: list[str] | None = None, domains: list[str] | None = None) -> list[dict]:
     request_data = json.dumps({"query": query, "brand": brand, "aliases": aliases or [], "domains": domains or []}, ensure_ascii=False)
     return [
-        {"role": "system", "content": """Ты извлекаешь измеримые данные из уже готового ответа AI-ассистента. Анализируй только текст ответа, не добавляй внешние знания. Определи, упомянут ли целевой бренд, его роль и позицию. В ordered_mentions перечисли все бренды и компании строго в порядке первого появления; позиции должны начинаться с 1 и не повторяться. Прямые цитаты должны дословно встречаться в ответе. Верни только JSON по заданной схеме."""},
+        {"role": "system", "content": """Ты извлекаешь измеримые данные из уже готового ответа AI-ассистента. Анализируй только текст ответа, не добавляй внешние знания. Определи, упомянут ли целевой бренд, его роль и позицию. В ordered_mentions перечисли все бренды и компании строго в порядке первого появления; в name пиши только дословное название без номера, маркера списка и позиции. Не включай сущности, которых нет в тексте ответа. Позиции должны начинаться с 1 и не повторяться. Прямые цитаты должны дословно встречаться в ответе. Верни только JSON по заданной схеме."""},
         {"role": "user", "content": f"Параметры проверки: {request_data}\n\n<assistant_answer>\n{answer}\n</assistant_answer>"},
     ]
 
@@ -167,6 +167,63 @@ def _extract_json(text: str) -> dict:
     return max(candidates, key=lambda value: len(required.intersection(value))) if candidates else {}
 
 
+def _brand_name(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = re.sub(r"^\s*(?:\d+\s*[.)-]\s*|[-*•]+\s*)", "", value).strip()
+    return name if name and any(char.isalpha() for char in name) else ""
+
+
+def _brand_names(value) -> list[str]:
+    if isinstance(value, dict):
+        candidates = [*value.values(), *value.keys()]
+    elif isinstance(value, list):
+        candidates = value
+    else:
+        candidates = []
+    names = []
+    seen = set()
+    for item in candidates:
+        if isinstance(item, dict):
+            item = next((item.get(key) for key in ("name", "company", "brand", "title") if item.get(key)), "")
+        name = _brand_name(item)
+        key = name.casefold()
+        if name and key not in seen:
+            seen.add(key)
+            names.append(name)
+    return names
+
+
+def _ordered_mentions(value, fallback_names: list[str]) -> list[dict]:
+    if isinstance(value, dict):
+        value = list(value.values())
+    if not isinstance(value, list):
+        value = []
+    mentions = []
+    seen = set()
+    allowed_roles = {"рекомендация", "сравнение", "упоминание в списке", "упоминание"}
+    for item in value:
+        if isinstance(item, str):
+            name = _brand_name(item)
+            role = "упоминание в списке"
+        elif isinstance(item, dict):
+            name = _brand_name(next((item.get(key) for key in ("name", "company", "brand", "title") if item.get(key)), ""))
+            role = item.get("role") if item.get("role") in allowed_roles else "упоминание в списке"
+        else:
+            continue
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        mentions.append({"name": name, "position": len(mentions) + 1, "role": role})
+    for name in fallback_names:
+        key = name.casefold()
+        if key not in seen:
+            seen.add(key)
+            mentions.append({"name": name, "position": len(mentions) + 1, "role": "упоминание в списке"})
+    return mentions
+
+
 def parse_analysis_response(answer: str, context: str, normalize_source_indexes: bool = False, target_brand: str = "") -> dict:
     parsed = _extract_json(answer)
     if not parsed:
@@ -189,15 +246,14 @@ def parse_analysis_response(answer: str, context: str, normalize_source_indexes:
         parsed["role"] = "упоминание" if parsed.get("mentioned") else "не упомянут"
     if "reasoning" not in parsed:
         parsed["reasoning"] = str(parsed.get("analysis") or parsed.get("reason") or "Результат извлечён из ответа AI-ассистента.")
-    if "ordered_mentions" not in parsed and isinstance(parsed.get("brands_in_order"), list):
-        parsed["ordered_mentions"] = parsed["brands_in_order"]
-    raw_mentions = parsed.get("ordered_mentions") or []
-    if raw_mentions and all(isinstance(item, str) for item in raw_mentions):
-        parsed["ordered_mentions"] = [{"name": name, "position": index, "role": "упоминание в списке"} for index, name in enumerate(raw_mentions, start=1)]
+    mentioned_brands = _brand_names(parsed.get("mentioned_brands"))
+    parsed["mentioned_brands"] = mentioned_brands
+    raw_mentions = parsed.get("ordered_mentions", parsed.get("brands_in_order"))
+    parsed["ordered_mentions"] = _ordered_mentions(raw_mentions, mentioned_brands)
     parsed.setdefault("sources_count", 0)
     parsed.setdefault("total_sources", 0)
 
-    for field in ("quotes", "mentioned_brands", "source_analysis"):
+    for field in ("quotes", "source_analysis"):
         if isinstance(parsed.get(field), dict):
             parsed[field] = [value for value in parsed[field].values() if isinstance(value, str)] if field != "source_analysis" else []
 

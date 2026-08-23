@@ -46,6 +46,7 @@ function saveHistory() {
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } }
 function normalizeBrandName(value) { return String(value || '').trim().replace(/\s+/g, ' '); }
+function plausibleBrandName(value) { const name = normalizeBrandName(value).replace(/^\d+\s*[.)-]\s*/, ''); return /[a-zа-яё]/i.test(name) ? name : ''; }
 function identityText(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, ''); }
 function automaticIdentityText(value) { const normalized = normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '').replace(/\.(?:ru|ру|рф|com|net|org|io|ai)$/i, ''); return identityText(normalized); }
 function domainText(value) { const raw = normalizeBrandName(value); if (!/^https?:\/\//i.test(raw) && !raw.includes('.')) return ''; try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, ''); } catch { return ''; } }
@@ -170,6 +171,7 @@ function setActiveBrand(value, syncInput = true, resetResult = true) {
 }
 function renderAllForActiveBrand() {
     renderHistory();
+    renderAiAnswers();
     renderCompetitors();
     renderSources();
     renderMetricsDashboard();
@@ -187,6 +189,7 @@ function selectView(view) {
     if (view === 'growth') renderGrowth();
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
+    if (view === 'answers') renderAiAnswers();
 }
 $$('[data-view]').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
 $$('[data-empty-chart-action]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
@@ -213,6 +216,31 @@ $$('#providerFilterMenu input').forEach(input => input.addEventListener('change'
 $('#providerFilterAll').addEventListener('click', () => { selectedProviders = new Set(CHECK_PROVIDERS); updateProviderFilter(); renderAllForActiveBrand(); });
 document.addEventListener('click', () => { $('#providerFilterMenu').hidden = true; $('#providerFilterTrigger').setAttribute('aria-expanded', 'false'); });
 updateProviderFilter();
+
+async function suggestPrompts() {
+    const brand = normalizeBrandName($('#wsBrand').value);
+    if (!brand) return showError('Введите бренд, чтобы подобрать промпты.');
+    const button = $('#wsSuggestPrompts'); const refresh = $('#refreshPromptSuggestions'); const wrap = $('#promptSuggestions');
+    $('#wsError').hidden = true; wrap.hidden = false; button.disabled = true; refresh.disabled = true;
+    $('#promptSuggestionList').innerHTML = '';
+    $('#promptSuggestionStatus').innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> GigaChat определяет категорию бренда и готовит запросы…';
+    try {
+        const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
+        const response = await fetch(`${API_BASE}/prompt-suggestions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, existing_queries: existingQueries }) });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+        const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
+        if (!prompts.length) throw new Error('GigaChat не вернул подходящих промптов');
+        $('#promptSuggestionList').innerHTML = prompts.map((prompt, index) => `<button class="prompt-suggestion-item" type="button" data-suggested-prompt="${encodeURIComponent(prompt)}"><span>${index + 1}</span><strong>${escapeHtml(prompt)}</strong><i class="fa-solid fa-arrow-right"></i></button>`).join('');
+        $('#promptSuggestionStatus').textContent = 'Выберите промпт — он подставится в поле проверки.';
+        $$('[data-suggested-prompt]').forEach(item => item.addEventListener('click', () => { $('#wsQuery').value = decodeURIComponent(item.dataset.suggestedPrompt); $('#wsQuery').focus(); item.classList.add('selected'); setTimeout(() => item.classList.remove('selected'), 700); }));
+    } catch (error) {
+        $('#promptSuggestionStatus').textContent = error.message;
+        showError(`Не удалось подобрать промпты: ${error.message}`);
+    } finally { button.disabled = false; refresh.disabled = false; }
+}
+$('#wsSuggestPrompts').addEventListener('click', suggestPrompts);
+$('#refreshPromptSuggestions').addEventListener('click', suggestPrompts);
 
 function apiErrorMessage(data, status) {
     const value = data?.error ?? data?.detail;
@@ -288,7 +316,7 @@ function renderResult(data) {
 function setTextBlock(wrapSelector, contentSelector, value) { $(contentSelector).textContent = value || ''; $(wrapSelector).hidden = !value; }
 function canonicalizeMentionList(values) {
     const rows = Array.isArray(values) ? values : []; const seen = new Set();
-    return rows.map((mention, index) => { const observedName = normalizeBrandName(mention?.observed_name || mention?.name); const identity = canonicalBrand(mention?.canonical_name || observedName); return { ...mention, name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
+    return rows.map((mention, index) => { const observedName = plausibleBrandName(mention?.observed_name || mention?.name || mention?.company || mention?.brand); const identity = canonicalBrand(mention?.canonical_name || observedName); return { ...mention, name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.observed_name || !mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
 }
 function normalizedAnswerText(value) { return ` ${String(value || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9.]+/gi, ' ').replace(/\s+/g, ' ').trim()} `; }
 function answerContainsIdentity(answer, identity) {
@@ -321,7 +349,7 @@ function saveCheck(data, brand, query, provider) {
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const identity = ensureBrandIdentity(data.canonical_name || brand); const normalizedBrand = identity.canonicalName;
     const position = resultPosition(data);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
     history.push(saved);
     history = history.slice(-100);
     saveHistory();
@@ -537,6 +565,39 @@ function normalizedCompetitors() {
     });
     return [...rows.values()].map(row => ({ ...row, name: preferredVariant(row.variants) })).sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name, 'ru'));
 }
+
+function aiAnswerRows() {
+    return history.filter(item => brandKey(item.brand) === activeBrandKey).flatMap(item => {
+        const providerResults = Array.isArray(item.providerResults) ? item.providerResults : Array.isArray(item.provider_results) ? item.provider_results : [];
+        const results = providerResults.length ? providerResults : [item];
+        return results.map((result, index) => ({
+            id: `${item.id || item.createdAt}-${result.provider || item.provider || index}`,
+            createdAt: item.createdAt,
+            query: item.query,
+            provider: result.provider || item.provider,
+            model: result.model || item.model || PROVIDERS[result.provider || item.provider],
+            answer: result.raw_answer || result.rawAnswer || (providerResults.length ? '' : item.raw_answer || item.rawAnswer || ''),
+        }));
+    }).filter(item => item.answer).sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+}
+
+function renderAiAnswers() {
+    const rows = aiAnswerRows();
+    $('#aiAnswerCount').textContent = `${rows.length} ${rows.length === 1 ? 'ответ' : rows.length >= 2 && rows.length <= 4 ? 'ответа' : 'ответов'}`;
+    $('#aiAnswerList').innerHTML = rows.length ? rows.map(row => {
+        const providerName = PROVIDERS[row.provider] || row.model || row.provider || 'AI-модель';
+        const date = row.createdAt ? new Date(row.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна';
+        return `<article class="ai-answer-card"><div class="ai-answer-head"><div class="ai-answer-model">${modelAvatarMarkup(row.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${escapeHtml(date)}</span></div></div><button class="btn btn-ghost btn-sm ai-answer-copy" type="button" data-copy-ai-answer="${escapeHtml(row.id)}"><i class="fa-regular fa-copy"></i>Копировать</button></div><div class="ai-answer-query"><span>Ваш запрос</span><strong>${escapeHtml(row.query || 'Запрос не сохранён')}</strong></div><div class="ai-answer-body">${escapeHtml(row.answer)}</div></article>`;
+    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat и Алисы появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
+    bindAvatarFallbacks();
+    $$('[data-copy-ai-answer]').forEach(button => button.addEventListener('click', async () => {
+        const row = rows.find(item => item.id === button.dataset.copyAiAnswer); if (!row) return;
+        try { await navigator.clipboard.writeText(row.answer); button.innerHTML = '<i class="fa-solid fa-check"></i>Скопировано'; }
+        catch { button.textContent = 'Не удалось скопировать'; }
+        setTimeout(() => { button.innerHTML = '<i class="fa-regular fa-copy"></i>Копировать'; }, 1600);
+    }));
+    $$('#aiAnswerList [data-view]').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
+}
 function transliterateBrand(value) { const map = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ы: 'y', э: 'e', ю: 'yu', я: 'ya', ь: '', ъ: '' }; return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'e').split('').map(char => map[char] ?? char).join('').replace(/[^a-z0-9]+/g, ''); }
 function aliasSuggestion(name) { const own = currentBrand(); const candidate = domainText(name) ? domainText(name).split('.')[0] : name; return transliterateBrand(candidate) && transliterateBrand(candidate) === transliterateBrand(own); }
 function rankedRow(name, value, detail, index, total, meta = '', avatar = '', action = '') { const width = percentage(value, total || value); return `<div class="app-data-row app-rank-row"><span class="app-rank-index">${index + 1}</span><div class="app-rank-main">${avatar}<div><strong>${escapeHtml(name)}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div></div><div class="app-rank-result"><strong>${escapeHtml(detail)}</strong><span class="app-rank-track"><i style="width:${width}%"></i></span>${action}</div></div>`; }
@@ -605,7 +666,7 @@ function orderedMentionsFor(item) {
     if (supplied.length) {
         return canonicalizeMentionList(supplied);
     }
-    const names = (item.competitors || []).map(normalizeBrandName).filter(Boolean);
+    const names = (item.competitors || []).map(plausibleBrandName).filter(Boolean);
     if (item.mentioned) names.splice(Math.max(0, Math.min(names.length, (Number(item.position) || names.length + 1) - 1)), 0, normalizeBrandName(item.brand));
     const seen = new Set();
     return canonicalizeMentionList(names.filter(name => { const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true; }).map((name, index) => ({ name, observed_name: name, position: index + 1, role: brandKey(name) === brandKey(item.brand) ? item.role || 'упоминание' : 'упоминание' })));

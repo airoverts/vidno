@@ -120,7 +120,6 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         raw_answer, sources, web_search_used = _call_agent(query)
         if not web_search_used or not sources:
             return {"error": "Встроенный веб-поиск Алисы не подтверждён источниками"}
-        analysis = analyze_natural_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         logger.error("[YandexGPT] HTTP ошибка: %s", status)
@@ -138,6 +137,21 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
     except Exception as error:
         logger.error("[YandexGPT] Ошибка обработки: %s", type(error).__name__, exc_info=True)
         return {"error": "Ошибка обработки ответа YandexGPT"}
+
+    try:
+        analysis = analyze_natural_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+    except httpx.HTTPStatusError as error:
+        logger.error("[YandexGPT] Ошибка сервиса анализа ответа: %s", error.response.status_code)
+        return {"error": "Сервис анализа ответа Алисы временно недоступен"}
+    except httpx.RequestError as error:
+        logger.error("[YandexGPT] Ошибка подключения к сервису анализа: %s", type(error).__name__)
+        return {"error": "Сервис анализа ответа Алисы временно недоступен"}
+    except (ValueError, TypeError) as error:
+        logger.error("[YandexGPT] Не удалось разобрать ответ Алисы: %s", error)
+        return {"error": "Не удалось разобрать ответ Алисы"}
+    except Exception as error:
+        logger.error("[YandexGPT] Ошибка анализа ответа: %s", type(error).__name__, exc_info=True)
+        return {"error": "Ошибка анализа ответа Алисы"}
 
     return {
         "brand": brand,

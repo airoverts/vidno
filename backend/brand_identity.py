@@ -62,10 +62,15 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
 
     for item in analysis.get("ordered_mentions") or []:
         observed_name = clean_name(item.get("observed_name") or item.get("name"))
-        if not observed_name:
+        if not observed_name or not any(char.isalpha() for char in observed_name):
             continue
         observed_keys = {safe_key(observed_name), safe_key(normalize_domain(observed_name))}
         is_target = bool(observed_keys.intersection(target_keys))
+        observed_match, _ = find_observed_alias(raw_answer, [observed_name])
+        if not is_target and not observed_match:
+            continue
+        if observed_match:
+            observed_name = observed_match
         key = f"canonical:{identity_id}" if is_target else f"observed:{safe_key(observed_name)}"
         if key in mention_keys:
             continue
