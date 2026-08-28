@@ -6,7 +6,8 @@ import time
 import httpx
 from dotenv import load_dotenv
 
-from gigachat_client import analyze_natural_answer
+from brand_identity import canonicalize_analysis
+from rag_analysis import ANALYSIS_RESPONSE_SCHEMA, build_answer_analysis_messages, parse_analysis_response
 
 load_dotenv()
 
@@ -28,7 +29,7 @@ def get_model_name() -> str:
 
 def get_cache_identity() -> str:
     fingerprint = hashlib.sha256(AGENT_ID.encode()).hexdigest()[:16] if AGENT_ID else "unconfigured"
-    return f"{MODEL_NAME}:{fingerprint}"
+    return f"{MODEL_NAME}:{fingerprint}:analysis-v2"
 
 
 def _post_with_retry(payload: dict) -> httpx.Response:
@@ -112,6 +113,34 @@ def _call_agent(query: str) -> tuple[str, list[dict], bool]:
     return _response_text(data), sources, web_search_used
 
 
+def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+    analysis_brand = canonical_name or brand
+    messages = build_answer_analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
+    response = _post_with_retry({
+        "prompt": {"id": AGENT_ID},
+        "input": messages,
+        "tools": [],
+        "tool_choice": "none",
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "vidno_brand_analysis",
+                "schema": ANALYSIS_RESPONSE_SCHEMA,
+                "strict": True,
+            }
+        },
+        "stream": False,
+        "store": False,
+    })
+    response.raise_for_status()
+    data = response.json()
+    web_search_used, _ = _web_evidence(data)
+    if web_search_used:
+        raise ValueError("YandexGPT запустил веб-поиск во время внутреннего анализа")
+    analysis = parse_analysis_response(_response_text(data), raw_answer, target_brand=analysis_brand)
+    return canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains)
+
+
 def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
     if not is_configured():
         return {"error": "YandexGPT не настроен"}
@@ -139,19 +168,21 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         return {"error": "Ошибка обработки ответа YandexGPT"}
 
     try:
-        analysis = analyze_natural_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+        analysis = _analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as error:
-        logger.error("[YandexGPT] Ошибка сервиса анализа ответа: %s", error.response.status_code)
-        return {"error": "Сервис анализа ответа Алисы временно недоступен"}
+        status = error.response.status_code
+        logger.error("[YandexGPT] Ошибка структурного анализа: %s", status)
+        if status in {401, 403}:
+            return {"error": "Ошибка авторизации YandexGPT при анализе ответа"}
+        if status == 429:
+            return {"error": "Превышен лимит запросов YandexGPT при анализе ответа"}
+        return {"error": f"Ошибка анализа ответа YandexGPT: {status}"}
     except httpx.RequestError as error:
-        logger.error("[YandexGPT] Ошибка подключения к сервису анализа: %s", type(error).__name__)
-        return {"error": "Сервис анализа ответа Алисы временно недоступен"}
+        logger.error("[YandexGPT] Ошибка подключения при анализе: %s", type(error).__name__)
+        return {"error": "Ошибка подключения к YandexGPT при анализе ответа"}
     except (ValueError, TypeError) as error:
-        logger.error("[YandexGPT] Не удалось разобрать ответ Алисы: %s", error)
-        return {"error": "Не удалось разобрать ответ Алисы"}
-    except Exception as error:
-        logger.error("[YandexGPT] Ошибка анализа ответа: %s", type(error).__name__, exc_info=True)
-        return {"error": "Ошибка анализа ответа Алисы"}
+        logger.error("[YandexGPT] Некорректный структурный анализ: %s", error)
+        return {"error": "YandexGPT вернул некорректный структурированный анализ"}
 
     return {
         "brand": brand,
@@ -159,6 +190,7 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         **analysis,
         "raw_answer": raw_answer,
         "sources": sources,
+        "total_sources": len(sources),
         "web_search_used": True,
         "rag": True,
     }

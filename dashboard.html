@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="app-body">
+<body class="app-body auth-pending">
     <div class="app-shell">
         <aside class="app-sidebar">
             <a class="app-logo" href="index.html"><span class="logo-icon"><i class="fa-solid fa-eye"></i></span><span>Vid<span>no</span></span></a>
@@ -30,16 +30,17 @@
             <button class="app-setup" data-view="setup"><i class="fa-solid fa-sliders"></i>Настроить проект</button>
         </aside>
         <main class="app-main">
-            <div class="app-topbar"><span id="appBreadcrumb">Главная</span><div class="app-topbar-actions"><label class="app-brand-switcher">Активный бренд<select id="activeBrandSelect" aria-label="Активный бренд"></select></label><button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button><a href="index.html">На лендинг <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div></div>
+            <div class="app-topbar"><span id="appBreadcrumb">Главная</span><div class="app-topbar-actions"><label class="app-brand-switcher">Активный бренд<select id="activeBrandSelect" aria-label="Активный бренд"></select></label><button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button><span class="app-user"><span id="appUserName"></span><button id="appLogout" type="button" aria-label="Выйти" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></span><a href="index.html">На лендинг <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div></div>
             <section class="app-view active" id="view-home">
                 <div class="app-home-toolbar">
                     <div class="provider-filter" id="providerFilter">
                         <button class="provider-filter-trigger" id="providerFilterTrigger" type="button" aria-expanded="false" aria-controls="providerFilterMenu"><span>Провайдеры</span><strong id="providerFilterLabel">Все</strong><i class="fa-solid fa-chevron-down"></i></button>
                         <div class="provider-filter-menu" id="providerFilterMenu" hidden>
-                            <div class="provider-filter-head"><strong>Выбрать провайдеры</strong><span id="providerFilterCount">2/2</span></div>
+                            <div class="provider-filter-head"><strong>Выбрать провайдеры</strong><span id="providerFilterCount">3/3</span></div>
                             <button class="provider-filter-all" id="providerFilterAll" type="button">Выбрать все</button>
                             <label><input type="checkbox" value="gigachat" checked><span class="identity-avatar model-avatar"><img src="assets/ai/gigachat.svg" alt=""></span><strong>GigaChat</strong><i class="fa-solid fa-check"></i></label>
                             <label><input type="checkbox" value="yandex" checked><span class="identity-avatar model-avatar"><img src="assets/ai/alice-ai.svg" alt=""></span><strong>Алиса AI</strong><i class="fa-solid fa-check"></i></label>
+                            <label><input type="checkbox" value="gemini" checked><span class="identity-avatar model-avatar"><img src="assets/ai/gemini.svg" alt=""></span><strong>Gemini</strong><i class="fa-solid fa-check"></i></label>
                         </div>
                     </div>
                 </div>
@@ -69,7 +70,7 @@
                     <div id="aiAnswerList" class="ai-answer-list"></div>
                 </div>
             </section>
-            <section class="app-view" id="view-visibility"><div class="app-card app-view-first-card"><div class="app-card-head"><div><h2>Рейтинг моделей</h2><span>Видимость и объём выборки по каждой AI-модели</span></div><div class="chart-callout" id="visibilityInsight"></div></div><div id="visibilityMetrics" class="model-comparison"></div><div class="chart-empty model-empty" id="visibilityEmpty" hidden><strong>Пока нет данных по AI-моделям</strong><p>Запустите проверку в GigaChat и Алисе AI — мы сравним видимость вашего бренда.</p><button class="btn btn-primary btn-sm" data-empty-chart-action>Запустить проверку</button></div></div></section>
+            <section class="app-view" id="view-visibility"><div class="app-card app-view-first-card"><div class="app-card-head"><div><h2>Рейтинг моделей</h2><span>Видимость и объём выборки по каждой AI-модели</span></div><div class="chart-callout" id="visibilityInsight"></div></div><div id="visibilityMetrics" class="model-comparison"></div><div class="chart-empty model-empty" id="visibilityEmpty" hidden><strong>Пока нет данных по AI-моделям</strong><p>Запустите проверку в GigaChat, Алисе AI и Gemini — мы сравним видимость вашего бренда.</p><button class="btn btn-primary btn-sm" data-empty-chart-action>Запустить проверку</button></div></div></section>
             <section class="app-view" id="view-competitors"><div class="app-card app-view-first-card"><div class="app-card-head"><div><h2>Рейтинг конкурентов</h2><span>Частота появления в ответах AI</span></div><button class="btn btn-primary btn-sm" data-view="prompts">Новая проверка</button></div><div id="competitorList" class="app-data-list app-ranked-list"></div><button class="ranking-toggle" id="competitorToggle" data-ranking-toggle="competitors" aria-controls="competitorList" aria-expanded="false" hidden>Показать все</button></div></section>
             <section class="app-view" id="view-sources"><div class="app-card app-view-first-card"><div class="app-card-head"><div><h2>Рейтинг источников</h2><span>Частота использования в последних проверках</span></div><button class="btn btn-primary btn-sm" data-view="prompts">Новая проверка</button></div><div id="sourceList" class="app-data-list app-ranked-list"></div><button class="ranking-toggle" id="sourceToggle" data-ranking-toggle="sources" aria-controls="sourceList" aria-expanded="false" hidden>Показать все</button></div></section>
             <section class="app-view" id="view-growth">
@@ -99,7 +100,8 @@
         </main>
     </div>
     <dialog class="brief-dialog growth-dialog" id="briefDialog"><button class="brief-close" id="briefClose" aria-label="Закрыть">×</button><div id="briefContent"></div></dialog>
+    <script src="js/auth.js?v=20260827-2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20260823-1"></script>
+    <script src="js/dashboard.js?v=20260828-2"></script>
 </body>
 </html>

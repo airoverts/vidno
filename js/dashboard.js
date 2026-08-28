@@ -2,9 +2,9 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const IS_LOCAL_FRONTEND = location.protocol === 'file:' || (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000');
 const API_BASE = IS_LOCAL_FRONTEND ? 'http://localhost:8000/api' : '/api';
-const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI' };
-const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg' };
-const CHECK_PROVIDERS = ['gigachat', 'yandex'];
+const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg' };
+const CHECK_PROVIDERS = ['gigachat', 'yandex', 'gemini'];
 const HISTORY_KEY = 'vidno-dashboard-check-history';
 const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
 const BRIEFS_KEY = 'vidno-growth-briefs';
@@ -226,7 +226,8 @@ async function suggestPrompts() {
     $('#promptSuggestionStatus').innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> GigaChat определяет категорию бренда и готовит запросы…';
     try {
         const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
-        const response = await fetch(`${API_BASE}/prompt-suggestions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, existing_queries: existingQueries }) });
+        const identity = identityFor(brand);
+        const response = await fetch(`${API_BASE}/prompt-suggestions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, existing_queries: existingQueries, domains: identity?.domains || [] }) });
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
         const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
@@ -588,7 +589,7 @@ function renderAiAnswers() {
         const providerName = PROVIDERS[row.provider] || row.model || row.provider || 'AI-модель';
         const date = row.createdAt ? new Date(row.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна';
         return `<article class="ai-answer-card"><div class="ai-answer-head"><div class="ai-answer-model">${modelAvatarMarkup(row.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${escapeHtml(date)}</span></div></div><button class="btn btn-ghost btn-sm ai-answer-copy" type="button" data-copy-ai-answer="${escapeHtml(row.id)}"><i class="fa-regular fa-copy"></i>Копировать</button></div><div class="ai-answer-query"><span>Ваш запрос</span><strong>${escapeHtml(row.query || 'Запрос не сохранён')}</strong></div><div class="ai-answer-body">${escapeHtml(row.answer)}</div></article>`;
-    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat и Алисы появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
+    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat, Алисы и Gemini появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
     bindAvatarFallbacks();
     $$('[data-copy-ai-answer]').forEach(button => button.addEventListener('click', async () => {
         const row = rows.find(item => item.id === button.dataset.copyAiAnswer); if (!row) return;

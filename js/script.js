@@ -17,6 +17,15 @@
 /* ============ 1. HELPERS & DATA ============ */
 const $  = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
+
+async function authRequest(path, options = {}) {
+    const response = await fetch(`${AUTH_API_BASE}${path}`, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || 'Не удалось выполнить запрос');
+    if (payload.session_token) localStorage.setItem('vidno-session-token', payload.session_token);
+    return payload;
+}
 
 function mulberry32(seed) {
     return function() {
@@ -239,14 +248,19 @@ function openCtaModal(type) {
             <form class="modal-form" id="modalForm">
                 <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
                 <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="••••••••" minlength="6"></div>
+                <p class="form-error" id="authError" role="alert" hidden></p>
                 <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>
             </form>
         `);
-        $('#modalForm').addEventListener('submit', e => {
+        $('#modalForm').addEventListener('submit', async e => {
             e.preventDefault();
-            closeModal();
-            showToast('Вход выполнен! Открываем дашборд…', 'fa-solid fa-circle-check');
-            setTimeout(() => { window.location.href = 'dashboard.html'; }, 600);
+            const form = e.currentTarget; const button = form.querySelector('button[type="submit"]'); const error = $('#authError');
+            button.disabled = true; error.hidden = true;
+            try {
+                await authRequest('/auth/login', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+                closeModal(); showToast('Вход выполнен! Открываем дашборд…', 'fa-solid fa-circle-check');
+                setTimeout(() => { window.location.href = 'dashboard.html'; }, 400);
+            } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false; }
         });
         return;
     }
@@ -257,14 +271,27 @@ function openCtaModal(type) {
             <div class="form-row"><label>Имя</label><input type="text" name="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
             <div class="form-row"><label>Бренд</label><input type="text" name="brand" placeholder="Название компании"></div>
+            ${isDemo ? '' : '<div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="Не менее 8 символов" minlength="8" maxlength="128" autocomplete="new-password"></div><p class="form-error" id="authError" role="alert" hidden></p>'}
             <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> ${isDemo ? 'Получить демо' : 'Создать аккаунт'}</button>
         </form>
     `);
-    $('#modalForm').addEventListener('submit', e => {
+    $('#modalForm').addEventListener('submit', async e => {
         e.preventDefault();
-        closeModal();
-        showToast(isDemo ? 'Заявка принята! Демо-отчёт придёт на почту.' : 'Аккаунт создан! Проверьте почту для активации.');
+        if (isDemo) { closeModal(); showToast('Заявка принята! Демо-отчёт придёт на почту.'); return; }
+        const form = e.currentTarget; const button = form.querySelector('button[type="submit"]'); const error = $('#authError');
+        button.disabled = true; error.hidden = true;
+        try {
+            const payload = Object.fromEntries(new FormData(form));
+            await authRequest('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
+            closeModal(); showToast('Аккаунт создан! Открываем дашборд…', 'fa-solid fa-circle-check');
+            setTimeout(() => { window.location.href = 'dashboard.html'; }, 400);
+        } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false; }
     });
+}
+
+if (new URLSearchParams(location.search).get('auth') === 'login') {
+    history.replaceState({}, '', location.pathname);
+    openCtaModal('login');
 }
 
 function openPlanModal(plan) {
