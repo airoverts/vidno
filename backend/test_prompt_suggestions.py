@@ -4,10 +4,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts
+from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
 
 
 class PromptSuggestionTests(unittest.TestCase):
+    def test_parses_prompt_payload_from_markdown_and_leading_text(self):
+        expected = {"prompts": ["Какой бренд кроссовок лучше?"]}
+        self.assertEqual(parse_prompt_payload('```JSON\n{"prompts":["Какой бренд кроссовок лучше?"]}\n```'), expected)
+        self.assertEqual(parse_prompt_payload('Результат:\n{"prompts":["Какой бренд кроссовок лучше?"]}\nГотово.'), expected)
+
+    def test_rejects_payload_without_prompt_array(self):
+        with self.assertRaisesRegex(ValueError, "JSON с промптами"):
+            parse_prompt_payload('{"result": "empty"}')
+
     def test_removes_brand_comparisons_and_store_queries(self):
         values = [
             "Какой бренд недорогих кроссовок подходит для ежедневной ходьбы?",
@@ -49,6 +58,14 @@ class PromptSuggestionTests(unittest.TestCase):
         ]
         self.assertEqual(normalize_suggested_prompts(values, "Demix"), values[2:])
         self.assertEqual(normalize_suggested_prompts(values[:1], "Demix", require_brand_intent=False), values[:1])
+
+    def test_can_accept_natural_recommendation_without_word_brand(self):
+        values = [
+            "Какой банк лучше выбрать для ежедневных платежей?",
+            "Где оформить дебетовую карту с выгодным кэшбэком?",
+            "Какие сервисы подходят для управления финансами малого бизнеса?",
+        ]
+        self.assertEqual(normalize_suggested_prompts(values, "Т-Банк", limit=3, require_brand_intent=False), values)
 
     def test_limits_final_suggestions_to_three(self):
         values = [f"Какой бренд кроссовок выбрать для сценария {index}?" for index in range(5)]

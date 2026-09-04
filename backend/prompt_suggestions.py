@@ -1,3 +1,4 @@
+import json
 import re
 
 
@@ -27,6 +28,29 @@ def excluded_topics(brand: str) -> list[str]:
 
 def curated_prompts(brand: str) -> list[str]:
     return list(BRAND_CURATED_PROMPTS.get(" ".join(brand.split()).casefold(), []))
+
+
+def parse_prompt_payload(value: str) -> dict:
+    text = str(value or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and isinstance(parsed.get("prompts"), list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("prompts"), list):
+            return parsed
+    raise ValueError("GigaChat не вернул JSON с промптами")
 
 
 def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_brand_intent: bool = True) -> list[str]:

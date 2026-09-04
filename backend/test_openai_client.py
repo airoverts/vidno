@@ -50,6 +50,9 @@ class OpenAIClientTests(unittest.TestCase):
         self.assertEqual(sent["tools"], [{"type": "web_search"}])
         self.assertEqual(sent["tool_choice"], "required")
         self.assertFalse(sent["store"])
+        self.assertIn("российском рынке", sent["instructions"])
+        self.assertIn("реально доступны российскому пользователю", sent["instructions"])
+        self.assertNotIn("Vidno", sent["instructions"])
 
     def test_web_search_answer_rejects_missing_tool_call(self):
         payload = response_payload([{

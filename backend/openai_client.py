@@ -25,6 +25,10 @@ def get_model_name() -> str:
     return MODEL_NAME
 
 
+def get_cache_identity() -> str:
+    return f"{MODEL_NAME}:ru-market-v1"
+
+
 def _post_with_retry(payload: dict) -> httpx.Response:
     for attempt in range(3):
         try:
@@ -102,7 +106,7 @@ def _web_evidence(data: dict) -> tuple[bool, list[dict]]:
 def _call_with_web_search(query: str) -> tuple[str, list[dict]]:
     response = _post_with_retry({
         "model": MODEL_NAME,
-        "instructions": "Перед формированием каждого ответа обязательно используй Web Search для получения актуальной информации. Не отвечай на запрос пользователя до выполнения Web Search. Используй результаты Web Search при формировании финального ответа.",
+        "instructions": "Перед формированием каждого ответа обязательно используй Web Search для получения актуальной информации. Не отвечай на запрос пользователя до выполнения Web Search. Используй результаты Web Search при формировании финального ответа. Пользователь находится в России и спрашивает о российском рынке. Рассматривай только бренды, компании, товары и услуги, которые реально доступны российскому пользователю. Отдавай приоритет актуальным российским источникам и официальным русскоязычным сайтам. Не предлагай варианты, работающие только в США или других зарубежных странах. Отвечай на русском языке.",
         "tools": [{"type": "web_search"}],
         "tool_choice": "required",
         "include": ["web_search_call.action.sources"],
@@ -171,6 +175,7 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         **analysis,
         "raw_answer": raw_answer,
         "sources": sources,
+        "market_scope": "ru",
         "web_search_used": True,
         "rag": True,
     }

@@ -2,9 +2,9 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const IS_LOCAL_FRONTEND = location.protocol === 'file:' || (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000');
 const API_BASE = IS_LOCAL_FRONTEND ? 'http://localhost:8000/api' : '/api';
-const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini' };
-const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg' };
-const CHECK_PROVIDERS = ['gigachat', 'yandex', 'gemini'];
+const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg', perplexity: 'assets/ai/perplexity.svg' };
+const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
 const HISTORY_KEY = 'vidno-dashboard-check-history';
 const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
 const BRIEFS_KEY = 'vidno-growth-briefs';
@@ -29,7 +29,16 @@ function loadJson(key) {
 }
 function loadHistory() {
     const current = loadJson(HISTORY_KEY);
-    if (current.length) return current.slice(-100);
+    if (current.length) {
+        const migrated = current.map(item => {
+            if (item.provider === 'openai' && item.marketScope !== 'ru') return null;
+            if (item.provider !== 'all' || !Array.isArray(item.providerResults)) return item;
+            const providerResults = item.providerResults.filter(result => result.provider !== 'openai' || result.market_scope === 'ru');
+            return providerResults.length ? { ...item, providerResults } : null;
+        }).filter(Boolean).slice(-100);
+        if (JSON.stringify(migrated) !== JSON.stringify(current.slice(-100))) localStorage.setItem(HISTORY_KEY, JSON.stringify(migrated));
+        return migrated;
+    }
     const legacy = loadJson(LEGACY_HISTORY_KEY).slice(-100);
     if (legacy.length) localStorage.setItem(HISTORY_KEY, JSON.stringify(legacy));
     return legacy;
@@ -294,7 +303,7 @@ function resultPosition(data) {
 }
 function positionText(position, kind = 'direct') {
     if (!position) return '';
-    const value = Number.isInteger(position) ? position : position.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+    const value = Number(Number(position).toFixed(2)).toString();
     return kind === 'weighted' ? `Средняя позиция ${value}` : `Позиция №${value}`;
 }
 function renderResult(data) {
@@ -303,18 +312,14 @@ function renderResult(data) {
     $('#wsVerdict').className = `ws-verdict ${data.mentioned ? 'mentioned' : 'not-mentioned'}`;
     $('#wsVerdict').innerHTML = data.mentioned ? '<i class="fa-solid fa-circle-check"></i> Бренд упомянут' : '<i class="fa-solid fa-circle-xmark"></i> Бренд не упомянут';
     const showModelDetails = data.provider !== 'all';
-    $('#wsMeta').innerHTML = [showModelDetails && data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], showModelDetails && data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${position.value}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
+    $('#wsMeta').innerHTML = [showModelDetails && data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], showModelDetails && data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${Number(Number(position.value).toFixed(2))}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
     bindAvatarFallbacks();
-    setTextBlock('#wsReasoningWrap', '#wsReasoning', data.reasoning);
-    const quotes = Array.isArray(data.quotes) ? data.quotes : [];
-    $('#wsQuotes').innerHTML = quotes.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsQuotesWrap').hidden = !quotes.length;
     const brands = Array.isArray(data.mentioned_brands) ? data.mentioned_brands : [];
     $('#wsBrands').innerHTML = brands.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsBrandsWrap').hidden = !brands.length;
     const sources = Array.isArray(data.sources) ? data.sources : [];
     $('#wsSources').innerHTML = sources.map(source => `<div class="ws-source-card"><a class="ws-source-link" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a><span class="ws-source-auth">${escapeHtml(source.authority_label || 'не определена')}</span></div>`).join(''); $('#wsSourcesWrap').hidden = !sources.length;
     result.hidden = false;
 }
-function setTextBlock(wrapSelector, contentSelector, value) { $(contentSelector).textContent = value || ''; $(wrapSelector).hidden = !value; }
 function canonicalizeMentionList(values) {
     const rows = Array.isArray(values) ? values : []; const seen = new Set();
     return rows.map((mention, index) => { const observedName = plausibleBrandName(mention?.observed_name || mention?.name || mention?.company || mention?.brand); const identity = canonicalBrand(mention?.canonical_name || observedName); return { ...mention, name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.observed_name || !mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
@@ -350,7 +355,7 @@ function saveCheck(data, brand, query, provider) {
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const identity = ensureBrandIdentity(data.canonical_name || brand); const normalizedBrand = identity.canonicalName;
     const position = resultPosition(data);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
     history.push(saved);
     history = history.slice(-100);
     saveHistory();
@@ -589,7 +594,7 @@ function renderAiAnswers() {
         const providerName = PROVIDERS[row.provider] || row.model || row.provider || 'AI-модель';
         const date = row.createdAt ? new Date(row.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна';
         return `<article class="ai-answer-card"><div class="ai-answer-head"><div class="ai-answer-model">${modelAvatarMarkup(row.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${escapeHtml(date)}</span></div></div><button class="btn btn-ghost btn-sm ai-answer-copy" type="button" data-copy-ai-answer="${escapeHtml(row.id)}"><i class="fa-regular fa-copy"></i>Копировать</button></div><div class="ai-answer-query"><span>Ваш запрос</span><strong>${escapeHtml(row.query || 'Запрос не сохранён')}</strong></div><div class="ai-answer-body">${escapeHtml(row.answer)}</div></article>`;
-    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat, Алисы и Gemini появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
+    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat, Алисы, ChatGPT, Gemini и Perplexity появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
     bindAvatarFallbacks();
     $$('[data-copy-ai-answer]').forEach(button => button.addEventListener('click', async () => {
         const row = rows.find(item => item.id === button.dataset.copyAiAnswer); if (!row) return;
@@ -690,10 +695,10 @@ function renderMetricsDashboard() {
     $('#metricSov').textContent = `${own.sov}%`; $('#metricSovNote').textContent = rowsHistory.length ? `${own.mentions || 0} упоминаний среди брендов` : 'Нет проверок';
     $('#metricVisibility').textContent = `${own.visibility}%`; $('#metricVisibilityNote').textContent = rowsHistory.length ? `в ${own.mentions || 0} из ${own.answerCount || rowsHistory.length} ответов` : 'Нет проверок';
     $('#metricCitation').textContent = `${own.citationRate}%`; $('#metricCitationNote').textContent = rowsHistory.length ? `${own.citations || 0} ответов со ссылкой` : 'Нет проверок';
-    $('#metricPosition').textContent = own.averagePosition ? own.averagePosition.toFixed(1) : '—'; $('#metricPositionNote').textContent = own.averagePosition ? 'в списочных рекомендациях' : 'Нет позиций';
+    $('#metricPosition').textContent = own.averagePosition ? Number(own.averagePosition.toFixed(2)).toString() : '—'; $('#metricPositionNote').textContent = own.averagePosition ? 'в списочных рекомендациях' : 'Нет позиций';
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
-function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = activeHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? row.averagePosition.toFixed(1) : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
+function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = activeHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
 function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const modelResults = selectedResults(item); (modelResults.length ? modelResults : [item]).forEach(result => { const provider = result.provider || ''; const name = PROVIDERS[provider] || result.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (result.mentioned) row.mentioned++; }); }); return groups; }
 function modelRow(row, index, compact = false) { return `<div class="model-row${row.total < 2 ? ' low-sample' : ''}"><span class="model-rank">${index + 1}</span><div class="model-name">${modelAvatarMarkup(row.provider, row.name)}<div><strong>${escapeHtml(row.name)}</strong><small>${row.total < 2 ? 'Мало данных' : `${row.total} проверок`}</small></div></div><div class="model-score"><strong>${row.value}%</strong><span>${row.mentioned} из ${row.total}</span></div><div class="model-meter"><i style="width:${row.value}%"></i></div>${compact ? '' : `<span class="model-verdict">${row.value >= 60 ? 'Высокая видимость' : row.value >= 30 ? 'Есть потенциал' : 'Требует внимания'}</span>`}</div>`; }
 function renderModelMetrics() { const groups = [...modelGroups().values()].map(row => ({ ...row, value: percentage(row.mentioned, row.total) })).sort((a, b) => b.value - a.value || b.total - a.total); const empty = '<div class="app-empty"><strong>Нет данных по моделям</strong><span>Запустите проверки в нужных AI-моделях.</span></div>'; $('#modelMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index, true)).join('') : empty; $('#visibilityMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index)).join('') : ''; $('#visibilityEmpty').hidden = Boolean(groups.length); const best = groups[0]; $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки'; }
