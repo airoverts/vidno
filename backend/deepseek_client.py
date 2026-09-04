@@ -5,8 +5,6 @@ import time
 import httpx
 from dotenv import load_dotenv
 
-from rag_analysis import build_analysis_messages, parse_analysis_response
-
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -48,18 +46,20 @@ def _post_with_retry(payload: dict) -> httpx.Response:
     raise RuntimeError("Не удалось выполнить запрос к DeepSeek")
 
 
-def _call_deepseek(messages: list[dict]) -> str:
+def _call_deepseek(messages: list[dict], json_output: bool = True, max_tokens: int = 4000) -> str:
     if not is_configured():
         raise RuntimeError("DeepSeek не настроен")
 
-    response = _post_with_retry({
+    payload = {
         "model": MODEL_NAME,
         "messages": messages,
         "thinking": {"type": "disabled"},
-        "response_format": {"type": "json_object"},
-        "max_tokens": 4000,
+        "max_tokens": max_tokens,
         "stream": False,
-    })
+    }
+    if json_output:
+        payload["response_format"] = {"type": "json_object"}
+    response = _post_with_retry(payload)
     response.raise_for_status()
     data = response.json()
     choices = data.get("choices") or []
@@ -71,16 +71,18 @@ def _call_deepseek(messages: list[dict]) -> str:
     return content
 
 
-def check_brand(brand: str, query: str, context: str) -> dict:
+def generate_answer(query: str, context: str) -> dict:
     if not is_configured():
         return {"error": "DeepSeek не настроен"}
     if not context or not context.strip():
         return {"error": "Контекст не предоставлен"}
 
-    logger.info(f"[DeepSeek] Проверка бренда {brand[:80]!r} по запросу {query[:120]!r}")
+    logger.info("[DeepSeek] Генерация ответа по запросу %r", query[:120])
     try:
-        answer = _call_deepseek(build_analysis_messages(brand, query, context))
-        analysis = parse_analysis_response(answer, context)
+        raw_answer = _call_deepseek([
+            {"role": "system", "content": "Ответь как обычный AI-ассистент в пользовательском приложении. Используй предоставленные поисковые материалы как актуальную справку. Не обсуждай внутренний поиск, мониторинг или анализ брендов. Дай прямой, полезный и естественный ответ на запрос пользователя. Не выдумывай факты, которых нет в материалах."},
+            {"role": "user", "content": f"<search_context>\n{context}\n</search_context>\n\nЗапрос пользователя: {query}"},
+        ], json_output=False, max_tokens=3000)
     except httpx.HTTPStatusError as e:
         logger.error(f"[DeepSeek] HTTP ошибка: {e.response.status_code} - {e.response.text}")
         return {"error": f"Ошибка API DeepSeek: {e.response.status_code}"}
@@ -91,9 +93,16 @@ def check_brand(brand: str, query: str, context: str) -> dict:
         logger.error(f"[DeepSeek] Ошибка обработки ответа: {e}", exc_info=True)
         return {"error": "Ошибка обработки ответа DeepSeek"}
 
+    return {"raw_answer": raw_answer, "sources": []}
+
+
+def check_brand(brand: str, query: str, context: str) -> dict:
+    generated = generate_answer(query, context)
+    if "error" in generated:
+        return generated
     return {
         "brand": brand,
         "query": query,
-        **analysis,
+        **generated,
         "rag": True,
     }

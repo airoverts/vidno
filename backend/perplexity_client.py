@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv("PERPLEXITY_API_KEY", "").strip()
 MODEL_NAME = os.getenv("PERPLEXITY_MODEL", "perplexity/sonar").strip() or "perplexity/sonar"
+ANALYSIS_MODEL_NAME = os.getenv("PERPLEXITY_ANALYSIS_MODEL", MODEL_NAME).strip() or MODEL_NAME
 API_URL = "https://api.perplexity.ai/v1/agent"
+ANALYSIS_VERSION = "perplexity-direct-v1"
 
 VIDNO_INSTRUCTIONS = """You are an AI assistant used by Vidno to analyze how brands are represented in AI-generated answers.
 For EVERY user request, you MUST perform a web search before generating the final answer.
@@ -35,6 +37,10 @@ def get_model_name() -> str:
 
 def get_cache_identity() -> str:
     return f"{MODEL_NAME}|agent-web-search-v1"
+
+
+def get_analysis_cache_identity() -> str:
+    return f"{ANALYSIS_MODEL_NAME}|{ANALYSIS_VERSION}"
 
 
 def _post_with_retry(payload: dict) -> httpx.Response:
@@ -128,21 +134,66 @@ def _call_with_web_search(query: str) -> tuple[str, list[dict], list[str]]:
     return answer, sources, queries
 
 
-def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str, canonical_name: str, aliases: list[str] | None, domains: list[str] | None) -> dict:
+def generate_answer(query: str) -> dict:
+    raw_answer, sources, search_queries = _call_with_web_search(query)
+    return {"raw_answer": raw_answer, "sources": sources, "search_queries": search_queries, "web_search_used": True}
+
+
+def _analysis_messages(brand: str, query: str, raw_answer: str, aliases: list[str] | None, domains: list[str] | None) -> list[dict]:
+    return build_answer_analysis_messages(brand, query, raw_answer, aliases, domains)
+
+
+def _normalized_names(values: list[str]) -> list[str]:
+    return sorted("".join(char for char in str(value).casefold() if char.isalnum()) for value in values)
+
+
+def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+    if not is_configured():
+        raise RuntimeError("Perplexity не настроен")
     analysis_brand = canonical_name or brand
-    response = _post_with_retry({
-        "model": MODEL_NAME,
-        "input": build_answer_analysis_messages(analysis_brand, query, raw_answer, aliases, domains),
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "brand_visibility_analysis", "schema": ANALYSIS_RESPONSE_SCHEMA},
-        },
-        "max_output_tokens": 4000,
-        "store": False,
-    })
-    response.raise_for_status()
-    analysis = parse_analysis_response(_response_text(response.json()), raw_answer, target_brand=analysis_brand)
-    return canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains)
+    messages = _analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
+    previous_answer = ""
+    for attempt in range(2):
+        request_messages = list(messages)
+        if previous_answer:
+            request_messages.extend([
+                {"role": "assistant", "content": previous_answer},
+                {"role": "user", "content": "Исправь JSON: оставь только прямые варианты ответа, включай целевой бренд в ordered_mentions только если он самостоятельный вариант, а competitors не должен содержать целевой бренд. Все названия должны дословно быть в исходном ответе."},
+            ])
+        response = _post_with_retry({
+            "model": ANALYSIS_MODEL_NAME,
+            "input": request_messages,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "brand_visibility_analysis", "schema": ANALYSIS_RESPONSE_SCHEMA},
+            },
+            "max_output_tokens": 4000,
+            "store": False,
+        })
+        response.raise_for_status()
+        previous_answer = _response_text(response.json())
+        try:
+            analysis = parse_analysis_response(previous_answer, raw_answer, target_brand=analysis_brand)
+            canonical = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True)
+            if bool(analysis["mentioned"]) != bool(canonical["mentioned"]):
+                raise ValueError("целевая компания не согласована со списком вариантов")
+            if _normalized_names(analysis["competitors"]) != _normalized_names(canonical["competitors"]):
+                raise ValueError("конкуренты должны дословно встречаться в ответе")
+            canonical["analysis_provider"] = "perplexity"
+            canonical["analysis_version"] = ANALYSIS_VERSION
+            canonical["source_analysis"] = []
+            canonical["sources_count"] = 0
+            canonical["total_sources"] = 0
+            canonical["quotes"] = []
+            return canonical
+        except ValueError:
+            if attempt:
+                raise
+    raise ValueError("Perplexity не вернул корректный анализ")
+
+
+def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str, canonical_name: str, aliases: list[str] | None, domains: list[str] | None) -> dict:
+    return analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
 
 
 def generate_prompt_payload(messages: list[dict], require_web_search: bool = False) -> dict:
@@ -185,8 +236,9 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         return {"error": "Perplexity не настроен"}
     logger.info("[Perplexity] Проверка бренда %r по запросу %r", brand[:80], query[:120])
     try:
-        raw_answer, sources, search_queries = _call_with_web_search(query)
-        analysis = _analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+        generated = generate_answer(query)
+        raw_answer = generated["raw_answer"]
+        analysis = analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         logger.error("[Perplexity] HTTP ошибка: %s", status)
@@ -209,8 +261,8 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         "query": query,
         **analysis,
         "raw_answer": raw_answer,
-        "sources": sources,
-        "search_queries": search_queries,
-        "web_search_used": True,
+        "sources": generated["sources"],
+        "search_queries": generated["search_queries"],
+        "web_search_used": generated["web_search_used"],
         "rag": True,
     }

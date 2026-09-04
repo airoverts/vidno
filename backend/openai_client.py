@@ -145,13 +145,12 @@ def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str, 
     return canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains)
 
 
-def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+def generate_answer(query: str) -> dict:
     if not is_configured():
         return {"error": "ChatGPT не настроен"}
-    logger.info("[OpenAI] Проверка бренда %r по запросу %r", brand[:80], query[:120])
+    logger.info("[OpenAI] Генерация ответа по запросу %r", query[:120])
     try:
         raw_answer, sources = _call_with_web_search(query)
-        analysis = _analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         logger.error("[OpenAI] HTTP ошибка: %s", status)
@@ -169,12 +168,17 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
     except Exception as error:
         logger.error("[OpenAI] Ошибка обработки: %s", type(error).__name__, exc_info=True)
         return {"error": "Ошибка обработки ответа ChatGPT"}
+    return {"raw_answer": raw_answer, "sources": sources}
+
+
+def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+    generated = generate_answer(query)
+    if "error" in generated:
+        return generated
     return {
         "brand": brand,
         "query": query,
-        **analysis,
-        "raw_answer": raw_answer,
-        "sources": sources,
+        **generated,
         "market_scope": "ru",
         "web_search_used": True,
         "rag": True,

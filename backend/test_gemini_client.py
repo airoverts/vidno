@@ -76,7 +76,7 @@ class GeminiClientTests(unittest.TestCase):
             result = gemini_client._analyze_answer("Vidno", "запрос", "Ответ без бренда", "vidno", "Vidno", [], [])
         config = client.models.generate_content.call_args.kwargs["config"]
         self.assertIsInstance(client.models.generate_content.call_args.kwargs["contents"], str)
-        self.assertIn("извлекаешь измеримые данные", config.system_instruction)
+        self.assertIn("прямых конкурентов", config.system_instruction)
         self.assertFalse(config.tools)
         self.assertEqual(config.response_mime_type, "application/json")
         self.assertFalse(result["mentioned"])

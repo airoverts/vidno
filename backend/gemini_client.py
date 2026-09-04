@@ -123,13 +123,12 @@ def _api_error_message(error: errors.APIError) -> str:
     return f"Ошибка API Gemini: {code or 'unknown'}"
 
 
-def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+def generate_answer(query: str) -> dict:
     if not is_configured():
         return {"error": "Gemini не настроен"}
-    logger.info("[Gemini] Проверка бренда %r по запросу %r", brand[:80], query[:120])
+    logger.info("[Gemini] Генерация ответа по запросу %r", query[:120])
     try:
-        raw_answer, sources, search_queries = _call_with_google_search(query)
-        analysis = _analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+        raw_answer, sources, _ = _call_with_google_search(query)
     except errors.APIError as error:
         logger.error("[Gemini] Ошибка API: %s", getattr(error, "code", "unknown"))
         return {"error": _api_error_message(error)}
@@ -142,13 +141,17 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
     except Exception as error:
         logger.error("[Gemini] Ошибка обработки: %s", type(error).__name__, exc_info=True)
         return {"error": "Ошибка обработки ответа Gemini"}
+    return {"raw_answer": raw_answer, "sources": sources}
+
+
+def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+    generated = generate_answer(query)
+    if "error" in generated:
+        return generated
     return {
         "brand": brand,
         "query": query,
-        **analysis,
-        "raw_answer": raw_answer,
-        "sources": sources,
-        "search_queries": search_queries,
+        **generated,
         "google_search_used": True,
         "rag": True,
     }

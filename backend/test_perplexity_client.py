@@ -51,12 +51,35 @@ class PerplexityClientTests(unittest.TestCase):
 
     def test_structured_analysis_does_not_enable_tools(self):
         analysis = """{"mentioned":false,"position":null,"weighted_position":null,"role":"не упомянут","reasoning":"Бренд отсутствует.","quotes":[],"mentioned_brands":[],"ordered_mentions":[],"source_analysis":[],"sources_count":0,"total_sources":0}"""
-        with patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(analysis, with_search=False))) as post:
+        with patch.object(perplexity_client, "API_KEY", "test-key"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(analysis, with_search=False))) as post:
             result = perplexity_client._analyze_answer("Vidno", "запрос", "Ответ без бренда", "vidno", "Vidno", [], [])
         self.assertFalse(result["mentioned"])
         payload = post.call_args.args[0]
         self.assertNotIn("tools", payload)
         self.assertEqual(payload["response_format"]["type"], "json_schema")
+
+    def test_direct_competitor_analysis_excludes_hardware_brands(self):
+        raw_answer = """1. Timeweb Cloud — аренда серверов; оборудование Supermicro, Intel, Gigabyte и ASRock.
+2. Hostkey — выделенные серверы на AMD и Intel.
+3. Рег.облако — выделенные серверы."""
+        analysis = """{"mentioned":false,"position":null,"weighted_position":null,"role":"не упомянут","reasoning":"Целевой бренд не предложен.","quotes":[],"mentioned_brands":["Timeweb Cloud","Hostkey","Рег.облако"],"competitors":["Timeweb Cloud","Hostkey","Рег.облако"],"ordered_mentions":[{"name":"Timeweb Cloud","position":1,"role":"рекомендация"},{"name":"Hostkey","position":2,"role":"рекомендация"},{"name":"Рег.облако","position":3,"role":"рекомендация"}],"source_analysis":[],"sources_count":0,"total_sources":0}"""
+        with patch.object(perplexity_client, "API_KEY", "test-key"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(analysis, with_search=False))) as post:
+            result = perplexity_client.analyze_answer("Selectel", "Где арендовать серверы?", raw_answer, "selectel", "Selectel", [], [])
+        self.assertEqual(result["competitors"], ["Timeweb Cloud", "Hostkey", "Рег.облако"])
+        self.assertEqual(result["mentioned_brands"], ["Timeweb Cloud", "Hostkey", "Рег.облако"])
+        self.assertNotIn("Intel", result["competitors"])
+        self.assertNotIn("tools", post.call_args.args[0])
+
+    def test_direct_position_uses_only_answer_options(self):
+        raw_answer = """Timeweb Cloud предлагает серверы на Intel.
+Selectel подходит для высоконагруженных проектов.
+Hostkey предлагает выделенные серверы на AMD."""
+        analysis = """{"mentioned":true,"position":2,"weighted_position":null,"role":"рекомендация","reasoning":"Selectel предложен как самостоятельный вариант.","quotes":[],"mentioned_brands":["Timeweb Cloud","Hostkey"],"competitors":["Timeweb Cloud","Hostkey"],"ordered_mentions":[{"name":"Timeweb Cloud","position":1,"role":"рекомендация"},{"name":"Selectel","position":2,"role":"рекомендация"},{"name":"Hostkey","position":3,"role":"рекомендация"}],"source_analysis":[],"sources_count":0,"total_sources":0}"""
+        with patch.object(perplexity_client, "API_KEY", "test-key"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(analysis, with_search=False))):
+            result = perplexity_client.analyze_answer("Selectel", "Где арендовать серверы?", raw_answer, "selectel", "Selectel", [], [])
+        self.assertTrue(result["mentioned"])
+        self.assertEqual(result["position"], 2)
+        self.assertEqual(result["competitors"], ["Timeweb Cloud", "Hostkey"])
 
     def test_generates_structured_prompt_payload(self):
         data = response_payload('{"prompts":["Какой бренд выбрать?"]}', with_search=False)

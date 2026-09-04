@@ -13,6 +13,7 @@ const DISMISSED_KEY = 'vidno-growth-dismissed';
 const TASKS_MIGRATION_KEY = 'vidno-growth-tasks-migrated-v1';
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
 const BRAND_IDENTITIES_KEY = 'vidno-dashboard-brand-identities-v1';
+const ANALYSIS_VERSION = 'perplexity-direct-v1';
 let history = loadHistory();
 let brandIdentities = loadBrandIdentities();
 bootstrapBrandIdentities();
@@ -128,13 +129,24 @@ function selectedResults(item) {
     const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
     return results.filter(result => selectedProviders.has(result.provider)).map(result => canonicalizeProviderResult(result, identity));
 }
+function analysisVersion(item) { return item?.analysisVersion || item?.analysis_version || ''; }
+function hasCurrentAnalysis(item) { return analysisVersion(item) === ANALYSIS_VERSION; }
+function hasListedCompetitors(item) { return Array.isArray(item?.competitors) || Array.isArray(item?.mentioned_brands) || Array.isArray(item?.mentionedBrands); }
+function listedCompetitors(item) {
+    const values = Array.isArray(item?.competitors) ? item.competitors : Array.isArray(item?.mentioned_brands) ? item.mentioned_brands : Array.isArray(item?.mentionedBrands) ? item.mentionedBrands : [];
+    const seen = new Set();
+    return values.map(value => plausibleBrandName(typeof value === 'string' ? value : value?.name || value?.company || value?.brand)).filter(name => {
+        const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true;
+    });
+}
+function historyForActiveBrand() { return history.filter(item => brandKey(item.brand) === activeBrandKey); }
 function enrichCompetitors(item) {
     const ownKey = brandKey(item.brand);
-    const competitors = orderedMentionsFor(item).map(mention => mention.name).filter(name => brandKey(name) !== ownKey);
+    const competitors = listedCompetitors(item).filter(name => brandKey(name) !== ownKey);
     return { ...item, competitors };
 }
 function activeHistory() {
-    return history.filter(item => brandKey(item.brand) === activeBrandKey).map(item => {
+    return historyForActiveBrand().filter(hasCurrentAnalysis).map(item => {
         const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
         if (item.provider !== 'all') return selectedProviders.has(item.provider) ? enrichCompetitors({ ...item, ...canonicalizeProviderResult(item, identity), brand: canonical.name }) : null;
         const results = selectedResults(item);
@@ -146,11 +158,11 @@ function activeHistory() {
         if (results.length === 1) {
             const result = results[0];
             const position = resultPosition(result);
-            return enrichCompetitors({ ...item, ...result, id: item.id, createdAt: item.createdAt, brand: item.brand, brandKey: item.brandKey, query: item.query, providerResults: results, orderedMentions: result.ordered_mentions || [], position: position.value, positionKind: position.kind, competitors: (result.mentioned_brands || []).filter(name => name && brandKey(name) !== brandKey(item.brand)), cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())) });
+            return enrichCompetitors({ ...item, ...result, id: item.id, createdAt: item.createdAt, brand: item.brand, brandKey: item.brandKey, query: item.query, providerResults: results, orderedMentions: result.ordered_mentions || [], position: position.value, positionKind: position.kind, competitors: listedCompetitors(result), cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())) });
         }
         const mentionedResults = results.filter(result => result.mentioned);
         const ordered = canonicalizeMentionList(results.flatMap(result => result.ordered_mentions || []));
-        return enrichCompetitors({ ...item, brand: canonical.name, providerResults: results, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, orderedMentions: ordered, competitors: ordered.filter(mention => mention.canonical_id !== canonical.id).map(mention => mention.canonical_name) });
+        return enrichCompetitors({ ...item, brand: canonical.name, providerResults: results, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, orderedMentions: ordered, competitors: results.flatMap(listedCompetitors) });
     }).filter(Boolean);
 }
 function currentBrand() {
@@ -314,7 +326,7 @@ function renderResult(data) {
     const showModelDetails = data.provider !== 'all';
     $('#wsMeta').innerHTML = [showModelDetails && data.provider && ['Провайдер', PROVIDERS[data.provider] || data.provider, data.provider], showModelDetails && data.model && ['Модель', data.model], position.value && [position.kind === 'weighted' ? 'Средняя позиция' : 'Позиция', position.kind === 'weighted' ? positionText(position.value, position.kind).replace('Средняя позиция ', '') : `№${Number(Number(position.value).toFixed(2))}`], data.role && data.role !== 'не упомянут' && ['Роль', data.role]].filter(Boolean).map(([label, value, provider]) => `<div class="ws-meta-item"><span class="ws-meta-label">${escapeHtml(label)}</span><span class="ws-meta-value${provider ? ' ws-meta-provider' : ''}">${provider ? modelAvatarMarkup(provider, value) : ''}${escapeHtml(value)}</span></div>`).join('');
     bindAvatarFallbacks();
-    const brands = Array.isArray(data.mentioned_brands) ? data.mentioned_brands : [];
+    const brands = listedCompetitors(data);
     $('#wsBrands').innerHTML = brands.map(item => `<li>${escapeHtml(item)}</li>`).join(''); $('#wsBrandsWrap').hidden = !brands.length;
     const sources = Array.isArray(data.sources) ? data.sources : [];
     $('#wsSources').innerHTML = sources.map(source => `<div class="ws-source-card"><a class="ws-source-link" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a><span class="ws-source-auth">${escapeHtml(source.authority_label || 'не определена')}</span></div>`).join(''); $('#wsSourcesWrap').hidden = !sources.length;
@@ -333,21 +345,27 @@ function canonicalizeProviderResult(result, targetIdentity) {
     const supplied = result?.ordered_mentions || result?.orderedMentions || [];
     let ordered = canonicalizeMentionList(supplied);
     const rawAnswer = result?.raw_answer || result?.rawAnswer || '';
+    const competitors = listedCompetitors(result).filter(name => brandKey(name) !== targetIdentity.canonicalId);
     const targetPresent = ordered.some(mention => mention.canonical_id === targetIdentity.canonicalId);
     const foundInAnswer = answerContainsIdentity(rawAnswer, targetIdentity);
-    if (foundInAnswer && !targetPresent) ordered.push({ name: targetIdentity.canonicalName, observed_name: targetIdentity.canonicalName, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, position: ordered.length + 1, role: result?.role && result.role !== 'не упомянут' ? result.role : 'упоминание' });
+    if (!hasCurrentAnalysis(result) && foundInAnswer && !targetPresent) ordered.push({ name: targetIdentity.canonicalName, observed_name: targetIdentity.canonicalName, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, position: ordered.length + 1, role: result?.role && result.role !== 'не упомянут' ? result.role : 'упоминание' });
     ordered = canonicalizeMentionList(ordered);
+    if (hasListedCompetitors(result)) {
+        const allowed = new Set([targetIdentity.canonicalId, ...competitors.map(brandKey)]);
+        ordered = ordered.filter(mention => allowed.has(mention.canonical_id)).map((mention, index) => ({ ...mention, position: index + 1 }));
+    }
     const own = ordered.find(mention => mention.canonical_id === targetIdentity.canonicalId);
-    const mentioned = Boolean(own || (!rawAnswer && result?.mentioned));
-    return { ...result, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, observed_name: result?.observed_name || targetIdentity.canonicalName, mentioned, position: own?.position || null, ordered_mentions: ordered, mentioned_brands: ordered.filter(mention => mention.canonical_id !== targetIdentity.canonicalId).map(mention => mention.canonical_name) };
+    const mentioned = hasCurrentAnalysis(result) ? Boolean(result?.mentioned) : Boolean(own || (!rawAnswer && result?.mentioned));
+    return { ...result, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, observed_name: result?.observed_name || targetIdentity.canonicalName, mentioned, position: own?.position || null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
 function canonicalizeCheckResult(data, identity) {
     if (!data || typeof data !== 'object') return data;
-    const providerResults = (data.provider_results || []).map(result => canonicalizeProviderResult(result, identity));
+    const providerResults = (data.provider_results || []).map(result => canonicalizeProviderResult({ ...result, analysis_version: analysisVersion(result) || analysisVersion(data) }, identity));
     if (!providerResults.length) return canonicalizeProviderResult(data, identity);
     const ordered = canonicalizeMentionList(providerResults.flatMap(result => result.ordered_mentions || []));
     const mentionedResults = providerResults.filter(result => result.mentioned);
-    return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, mentioned_brands: ordered.filter(mention => mention.canonical_id !== identity.canonicalId).map(mention => mention.canonical_name) };
+    const competitors = hasListedCompetitors(data) ? listedCompetitors(data) : providerResults.flatMap(listedCompetitors);
+    return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
 function saveCheck(data, brand, query, provider) {
     const sources = (data.sources || []).map(source => ({ title: source.title, url: source.url }));
@@ -355,7 +373,7 @@ function saveCheck(data, brand, query, provider) {
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const identity = ensureBrandIdentity(data.canonical_name || brand); const normalizedBrand = identity.canonicalName;
     const position = resultPosition(data);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', competitors: (data.mentioned_brands || []).filter(name => name && brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
     history.push(saved);
     history = history.slice(-100);
     saveHistory();
@@ -363,7 +381,7 @@ function saveCheck(data, brand, query, provider) {
     return saved;
 }
 function renderHistory() {
-    const rows = activeHistory();
+    const rows = historyForActiveBrand();
     $('#historyCount').textContent = `${rows.length} ${rows.length === 1 ? 'проверка' : 'проверок'}`;
     $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
 }
@@ -501,13 +519,69 @@ async function openOpportunity(id) {
 function renderTaskDialog(opportunity, task, creating) {
     const source = task || opportunity;
     const evidence = task?.evidence || { count: opportunity.count, competitors: opportunity.competitors, reasoning: opportunity.evidenceRows.at(-1)?.reasoning || '', quotes: opportunity.evidenceRows.flatMap(row => row.quotes || []).slice(-3) };
-    $('#briefContent').innerHTML = `<p class="app-eyebrow">${creating ? 'Новая задача' : task.status === 'measured' ? 'Измеренный результат' : 'Задача роста'}</p><h2>${creating ? 'Превратить возможность в работу' : escapeHtml(task.title)}</h2><div class="growth-dialog-evidence"><strong>Почему появилась задача</strong><p>${escapeHtml(opportunity?.description || `${evidence.count || 0} подтверждённых проверок`)}</p><dl><div><dt>Промпт</dt><dd>${escapeHtml(source.query || 'Нет связанного промпта')}</dd></div><div><dt>Модель</dt><dd>${escapeHtml(PROVIDERS[source.provider] || source.model || source.provider || 'Не указана')}</dd></div><div><dt>Конкуренты</dt><dd>${escapeHtml((evidence.competitors || []).join(', ') || 'Не обнаружены')}</dd></div></dl>${evidence.reasoning ? `<blockquote>${escapeHtml(evidence.reasoning)}</blockquote>` : ''}</div><form id="growthTaskForm" class="growth-task-form"><label>Название задачи *<input id="growthTitle" required maxlength="200" value="${escapeHtml(task?.title || opportunity?.title || '')}"></label><div class="growth-form-grid"><label>Тип работы<select id="growthWorkType"><option value="content">Контент</option><option value="seo">SEO</option><option value="pr">PR</option><option value="technical">Техническая</option></select></label>${creating ? '' : `<label>Статус<select id="growthStatus"><option value="planned">Запланировано</option><option value="in_progress">В работе</option><option value="ready_for_check">Готово к проверке</option>${task.status === 'measured' ? '<option value="measured">Измерено</option>' : ''}</select></label>`}<label>Ответственный<input id="growthOwner" maxlength="120" value="${escapeHtml(task?.owner || '')}" placeholder="Имя или роль"></label><label>Дедлайн<input id="growthDeadline" type="date" value="${escapeHtml(task?.deadline || '')}"></label></div><label>Цель<textarea id="growthGoal" rows="2" maxlength="2000">${escapeHtml(task?.goal || '')}</textarea></label><label>Что сделать *<textarea id="growthAction" required rows="5" maxlength="6000">${escapeHtml(task?.action || opportunity?.suggestedAction || '')}</textarea></label><label>Как проверить эффект<textarea id="growthVerification" rows="3" maxlength="2000">${escapeHtml(task?.verification || (source.query ? `Повторить тот же промпт в ${PROVIDERS[source.provider] || source.provider}.` : ''))}</textarea></label><div class="growth-form-grid"><label>Целевой URL<input id="growthTargetUrl" type="url" value="${escapeHtml(task?.targetUrl || '')}" placeholder="https://example.com/page"></label><label>Заметки<textarea id="growthNotes" rows="2" maxlength="3000">${escapeHtml(task?.notes || '')}</textarea></label></div><p id="growthBriefStatus" class="growth-form-status">${creating ? 'Готовим AI-бриф на основе доказательств…' : ''}</p><div class="growth-dialog-actions"><button class="btn btn-primary" type="submit">${creating ? 'Создать задачу' : 'Сохранить изменения'}</button>${!creating && task.status === 'ready_for_check' ? '<button class="btn btn-ghost" type="button" id="dialogMeasureTask">Проверить эффект</button>' : ''}${!creating ? '<button class="btn btn-ghost growth-delete" type="button" id="deleteGrowthTask">Удалить задачу</button>' : ''}</div></form>`;
+    $('#briefContent').innerHTML = `
+        <div class="brief-header">
+            <div>
+                <p class="app-eyebrow">${creating ? 'Новая задача' : task.status === 'measured' ? 'Измеренный результат' : 'Задача роста'}</p>
+                <h2>${creating ? 'Превратить возможность в работу' : escapeHtml(task.title)}</h2>
+            </div>
+            <button class="brief-close" type="button" data-brief-close aria-label="Закрыть">×</button>
+        </div>
+        <div class="brief-body">
+            <div class="brief-body-inner">
+                <div class="growth-dialog-evidence">
+                    <strong>Почему появилась задача</strong>
+                    <p>${escapeHtml(opportunity?.description || `${evidence.count || 0} подтверждённых проверок`)}</p>
+                    <dl>
+                        <div><dt>Промпт</dt><dd>${escapeHtml(source.query || 'Нет связанного промпта')}</dd></div>
+                        <div><dt>Модель</dt><dd>${escapeHtml(PROVIDERS[source.provider] || source.model || source.provider || 'Не указана')}</dd></div>
+                        <div><dt>Конкуренты</dt><dd>${escapeHtml((evidence.competitors || []).join(', ') || 'Не обнаружены')}</dd></div>
+                    </dl>
+                    ${evidence.reasoning ? `<blockquote>${escapeHtml(evidence.reasoning)}</blockquote>` : ''}
+                </div>
+                <form id="growthTaskForm" class="growth-task-form">
+                    <label>Название задачи *<input id="growthTitle" required maxlength="200" value="${escapeHtml(task?.title || opportunity?.title || '')}"></label>
+                    <div class="growth-form-grid">
+                        <label>Тип работы
+                            <select id="growthWorkType">
+                                <option value="content">Контент</option>
+                                <option value="seo">SEO</option>
+                                <option value="pr">PR</option>
+                                <option value="technical">Техническая</option>
+                            </select>
+                        </label>
+                        ${creating ? '' : `<label>Статус<select id="growthStatus"><option value="planned">Запланировано</option><option value="in_progress">В работе</option><option value="ready_for_check">Готово к проверке</option>${task.status === 'measured' ? '<option value="measured">Измерено</option>' : ''}</select></label>`}
+                        <label>Ответственный<input id="growthOwner" maxlength="120" value="${escapeHtml(task?.owner || '')}" placeholder="Имя или роль"></label>
+                        <label>Дедлайн<input id="growthDeadline" type="date" value="${escapeHtml(task?.deadline || '')}"></label>
+                    </div>
+                    <label>Цель<textarea id="growthGoal" rows="2" maxlength="2000">${escapeHtml(task?.goal || '')}</textarea></label>
+                    <label>Что сделать *<textarea id="growthAction" required rows="5" maxlength="6000">${escapeHtml(task?.action || opportunity?.suggestedAction || '')}</textarea></label>
+                    <label>Как проверить эффект<textarea id="growthVerification" rows="3" maxlength="2000">${escapeHtml(task?.verification || (source.query ? `Повторить тот же промпт в ${PROVIDERS[source.provider] || source.provider}.` : ''))}</textarea></label>
+                    <div class="growth-form-grid">
+                        <label>Целевой URL<input id="growthTargetUrl" type="url" value="${escapeHtml(task?.targetUrl || '')}" placeholder="https://example.com/page"></label>
+                        <label>Заметки<textarea id="growthNotes" rows="2" maxlength="3000">${escapeHtml(task?.notes || '')}</textarea></label>
+                    </div>
+                    <p id="growthBriefStatus" class="growth-form-status">${creating ? 'Готовим AI-бриф на основе доказательств…' : ''}</p>
+                </form>
+            </div>
+        </div>
+        <div class="brief-footer">
+            <div class="brief-footer-inner">
+                <div class="growth-dialog-actions">
+                    <button class="btn btn-ghost" type="button" data-brief-close>Отмена</button>
+                    ${!creating && task.status === 'ready_for_check' ? '<button class="btn btn-ghost" type="button" id="dialogMeasureTask">Проверить эффект</button>' : ''}
+                    ${!creating ? '<button class="btn btn-ghost growth-delete" type="button" id="deleteGrowthTask">Удалить</button>' : ''}
+                    <button class="btn btn-primary" type="submit" form="growthTaskForm">${creating ? 'Создать задачу' : 'Сохранить изменения'}</button>
+                </div>
+            </div>
+        </div>`;
     $('#growthWorkType').value = task?.workType || 'content';
     if (!creating) $('#growthStatus').value = task.status;
     $('#growthTaskForm').addEventListener('submit', event => { event.preventDefault(); creating ? createTaskFromDialog() : updateTaskFromDialog(); });
     $('#deleteGrowthTask')?.addEventListener('click', deleteActiveTask);
     $('#dialogMeasureTask')?.addEventListener('click', event => measureTask(task.id, event.currentTarget));
 }
+
 function dialogValues() { return { title: $('#growthTitle').value.trim(), workType: $('#growthWorkType').value, owner: $('#growthOwner').value.trim(), deadline: $('#growthDeadline').value, goal: $('#growthGoal').value.trim(), action: $('#growthAction').value.trim(), verification: $('#growthVerification').value.trim(), targetUrl: $('#growthTargetUrl').value.trim(), notes: $('#growthNotes').value.trim() }; }
 function createTaskFromDialog() {
     const form = $('#growthTaskForm'); if (!form.reportValidity() || !activeRecommendation) return;
@@ -559,7 +633,7 @@ function updateTaskStatus(id, status) {
     saveGrowthTasks();
     renderGrowth();
 }
-$('#briefClose').addEventListener('click', () => $('#briefDialog').close());
+$('#briefDialog').addEventListener('click', event => { if (event.target.closest('[data-brief-close]')) $('#briefDialog').close(); });
 $$('[data-growth-tab]').forEach(button => button.addEventListener('click', () => showGrowthTab(button.dataset.growthTab)));
 function preferredVariant(variants) { return [...variants.entries()].sort((a, b) => b[1].count - a[1].count || a[1].order - b[1].order)[0]?.[0] || ''; }
 function normalizedCompetitors() {
@@ -670,9 +744,12 @@ function answerRowsFor(item) {
 function orderedMentionsFor(item) {
     const supplied = Array.isArray(item.orderedMentions) ? item.orderedMentions : Array.isArray(item.ordered_mentions) ? item.ordered_mentions : [];
     if (supplied.length) {
-        return canonicalizeMentionList(supplied);
+        const mentions = canonicalizeMentionList(supplied);
+        if (!hasListedCompetitors(item)) return mentions;
+        const allowed = new Set([brandKey(item.brand), ...listedCompetitors(item).map(brandKey)]);
+        return mentions.filter(mention => allowed.has(mention.canonical_id)).map((mention, index) => ({ ...mention, position: index + 1 }));
     }
-    const names = (item.competitors || []).map(plausibleBrandName).filter(Boolean);
+    const names = listedCompetitors(item);
     if (item.mentioned) names.splice(Math.max(0, Math.min(names.length, (Number(item.position) || names.length + 1) - 1)), 0, normalizeBrandName(item.brand));
     const seen = new Set();
     return canonicalizeMentionList(names.filter(name => { const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true; }).map((name, index) => ({ name, observed_name: name, position: index + 1, role: brandKey(name) === brandKey(item.brand) ? item.role || 'упоминание' : 'упоминание' })));

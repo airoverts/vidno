@@ -31,6 +31,7 @@ class BrandAnalysis(BaseModel):
     reasoning: str
     quotes: list[str]
     mentioned_brands: list[str]
+    competitors: list[str] = []
     ordered_mentions: list[OrderedMention]
     source_analysis: list[SourceAnalysis]
     sources_count: NonNegativeInt
@@ -50,6 +51,7 @@ ANALYSIS_RESPONSE_SCHEMA = {
         "reasoning": {"type": "string"},
         "quotes": {"type": "array", "items": {"type": "string"}},
         "mentioned_brands": {"type": "array", "items": {"type": "string"}},
+        "competitors": {"type": "array", "items": {"type": "string"}},
         "ordered_mentions": {
             "type": "array",
             "items": {
@@ -136,7 +138,11 @@ def build_analysis_messages(brand: str, query: str, context: str) -> list[dict]:
 def build_answer_analysis_messages(brand: str, query: str, answer: str, aliases: list[str] | None = None, domains: list[str] | None = None) -> list[dict]:
     request_data = json.dumps({"query": query, "brand": brand, "aliases": aliases or [], "domains": domains or []}, ensure_ascii=False)
     return [
-        {"role": "system", "content": """Ты извлекаешь измеримые данные из уже готового ответа AI-ассистента. Анализируй только текст ответа, не добавляй внешние знания. Определи, упомянут ли целевой бренд, его роль и позицию. В ordered_mentions перечисли все бренды и компании строго в порядке первого появления; в name пиши только дословное название без номера, маркера списка и позиции. Не включай сущности, которых нет в тексте ответа. Позиции должны начинаться с 1 и не повторяться. Прямые цитаты должны дословно встречаться в ответе. Верни только JSON по заданной схеме."""},
+        {"role": "system", "content": """Ты проверяешь готовый ответ AI-ассистента для измерения видимости бренда. Анализируй только текст ответа: не используй внешние знания, веб-поиск и не добавляй компании, которых в нём нет.
+
+Конкурент — это только компания или сервис, который ответ предлагает пользователю как самостоятельный вариант решения его запроса. Не считай конкурентами производителей оборудования и комплектующих, технологии, платформы, партнёров, клиентов, страны, источники, ссылки и бренды, упомянутые лишь внутри описания другого варианта.
+
+Определи, является ли целевой бренд самостоятельным вариантом ответа. В ordered_mentions включай только целевой бренд (если он самостоятельный вариант) и прямых конкурентов в порядке появления как вариантов ответа. В competitors перечисли только прямых конкурентов без целевого бренда. В name пиши дословное название без номера и маркера списка. Позиции начинаются с 1 и не повторяются. Не включай сущности, которых нет в тексте. quotes всегда верни пустым массивом, source_analysis — пустым массивом, sources_count и total_sources — нулём. Верни только JSON по заданной схеме."""},
         {"role": "user", "content": f"Параметры проверки: {request_data}\n\n<assistant_answer>\n{answer}\n</assistant_answer>"},
     ]
 
@@ -246,10 +252,11 @@ def parse_analysis_response(answer: str, context: str, normalize_source_indexes:
         parsed["role"] = "упоминание" if parsed.get("mentioned") else "не упомянут"
     if "reasoning" not in parsed:
         parsed["reasoning"] = str(parsed.get("analysis") or parsed.get("reason") or "Результат извлечён из ответа AI-ассистента.")
-    mentioned_brands = _brand_names(parsed.get("mentioned_brands"))
-    parsed["mentioned_brands"] = mentioned_brands
+    competitors = _brand_names(parsed.get("competitors", parsed.get("mentioned_brands")))
+    parsed["competitors"] = competitors
+    parsed["mentioned_brands"] = competitors
     raw_mentions = parsed.get("ordered_mentions", parsed.get("brands_in_order"))
-    parsed["ordered_mentions"] = _ordered_mentions(raw_mentions, mentioned_brands)
+    parsed["ordered_mentions"] = _ordered_mentions(raw_mentions, competitors)
     parsed.setdefault("sources_count", 0)
     parsed.setdefault("total_sources", 0)
 
@@ -257,7 +264,7 @@ def parse_analysis_response(answer: str, context: str, normalize_source_indexes:
         if isinstance(parsed.get(field), dict):
             parsed[field] = [value for value in parsed[field].values() if isinstance(value, str)] if field != "source_analysis" else []
 
-    for field in ("quotes", "mentioned_brands", "ordered_mentions", "source_analysis"):
+    for field in ("quotes", "mentioned_brands", "competitors", "ordered_mentions", "source_analysis"):
         if parsed.get(field) is None:
             parsed[field] = []
     allowed_sentiments = {"положительный", "нейтральный", "отрицательный"}
@@ -351,6 +358,7 @@ def parse_analysis_response(answer: str, context: str, normalize_source_indexes:
         "reasoning": parsed["reasoning"],
         "quotes": parsed["quotes"],
         "mentioned_brands": parsed["mentioned_brands"],
+        "competitors": parsed["competitors"],
         "ordered_mentions": parsed["ordered_mentions"],
         "source_analysis": parsed["source_analysis"],
         "sources_count": parsed["sources_count"],

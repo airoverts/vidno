@@ -50,7 +50,7 @@ def find_observed_alias(text: str, values: list[str]) -> tuple[str | None, int]:
     return best
 
 
-def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
+def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None, strict_direct_options: bool = False) -> dict:
     display_name = clean_name(canonical_name) or clean_name(brand)
     identity_id = clean_name(canonical_id) or safe_key(display_name)
     values = identity_values(display_name, aliases, domains)
@@ -85,7 +85,7 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
         })
 
     target_key = f"canonical:{identity_id}"
-    if observed_alias and target_key not in mention_keys:
+    if observed_alias and target_key not in mention_keys and not strict_direct_options:
         insert_at = 0
         for item in normalized_mentions:
             _, mention_index = find_observed_alias(raw_answer, [item["observed_name"]])
@@ -112,6 +112,7 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
     analysis["canonical_id"] = identity_id
     analysis["canonical_name"] = display_name
     analysis["mentioned_brands"] = [item["canonical_name"] for item in normalized_mentions if item["canonical_id"] != identity_id]
+    analysis["competitors"] = list(analysis["mentioned_brands"])
     if not matching:
         analysis["role"] = "не упомянут"
     elif analysis.get("role") == "не упомянут":

@@ -4,6 +4,7 @@ import os
 import secrets
 import threading
 import time
+import httpx
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,12 +20,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from gigachat_client import check_brand as check_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured, _call_gigachat
-from deepseek_client import check_brand as check_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured, _call_deepseek
-from yandex_client import check_brand as check_yandex, get_cache_identity as get_yandex_cache_identity, get_model_name as get_yandex_model, is_configured as is_yandex_configured
-from openai_client import check_brand as check_openai, get_cache_identity as get_openai_cache_identity, get_model_name as get_openai_model, is_configured as is_openai_configured
-from gemini_client import check_brand as check_gemini, get_model_name as get_gemini_model, is_configured as is_gemini_configured
-from perplexity_client import check_brand as check_perplexity, generate_prompt_payload as generate_perplexity_prompt_payload, get_cache_identity as get_perplexity_cache_identity, get_model_name as get_perplexity_model, is_configured as is_perplexity_configured
+from gigachat_client import generate_answer as generate_gigachat, get_model_name as get_gigachat_model, is_configured as is_gigachat_configured, _call_gigachat
+from deepseek_client import generate_answer as generate_deepseek, get_model_name as get_deepseek_model, is_configured as is_deepseek_configured, _call_deepseek
+from yandex_client import generate_answer as generate_yandex, get_cache_identity as get_yandex_cache_identity, get_model_name as get_yandex_model, is_configured as is_yandex_configured
+from openai_client import generate_answer as generate_openai, get_cache_identity as get_openai_cache_identity, get_model_name as get_openai_model, is_configured as is_openai_configured
+from gemini_client import generate_answer as generate_gemini, get_model_name as get_gemini_model, is_configured as is_gemini_configured
+from perplexity_client import ANALYSIS_VERSION, analyze_answer as analyze_with_perplexity, generate_answer as generate_perplexity, generate_prompt_payload as generate_perplexity_prompt_payload, get_analysis_cache_identity, get_cache_identity as get_perplexity_cache_identity, get_model_name as get_perplexity_model, is_configured as is_perplexity_configured
 from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
@@ -49,34 +50,34 @@ _check_semaphore = threading.BoundedSemaphore(MAX_CONCURRENT_CHECKS)
 
 PROVIDERS = {
     "gigachat": {
-        "check": check_gigachat,
+        "generate": generate_gigachat,
         "configured": is_gigachat_configured,
         "model": get_gigachat_model,
     },
     "deepseek": {
-        "check": check_deepseek,
+        "generate": generate_deepseek,
         "configured": is_deepseek_configured,
         "model": get_deepseek_model,
     },
     "yandex": {
-        "check": check_yandex,
+        "generate": generate_yandex,
         "configured": is_yandex_configured,
         "model": get_yandex_model,
         "cache_identity": get_yandex_cache_identity,
     },
     "openai": {
-        "check": check_openai,
+        "generate": generate_openai,
         "configured": is_openai_configured,
         "model": get_openai_model,
         "cache_identity": get_openai_cache_identity,
     },
     "gemini": {
-        "check": check_gemini,
+        "generate": generate_gemini,
         "configured": is_gemini_configured,
         "model": get_gemini_model,
     },
     "perplexity": {
-        "check": check_perplexity,
+        "generate": generate_perplexity,
         "configured": is_perplexity_configured,
         "model": get_perplexity_model,
         "cache_identity": get_perplexity_cache_identity,
@@ -112,7 +113,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-Admin-Token"],
+    allow_headers=["Content-Type", "X-Admin-Token", "Authorization"],
     allow_credentials=True,
 )
 
@@ -232,6 +233,8 @@ def health():
         "openai_configured": is_openai_configured(),
         "gemini_configured": is_gemini_configured(),
         "perplexity_configured": is_perplexity_configured(),
+        "analysis_provider": "perplexity" if is_perplexity_configured() else None,
+        "analysis_version": ANALYSIS_VERSION,
     }
 
 
@@ -254,8 +257,11 @@ def check_all(req: CheckAllRequest, request: Request):
     if not _check_semaphore.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Сервис занят, повторите запрос позже")
     try:
+        if not is_perplexity_configured():
+            return JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен"})
         provider_results = []
         errors = []
+        analysis_errors = []
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(_run_check, CheckRequest(**req.model_dump(), provider=provider), False): provider for provider in ("gigachat", "yandex", "openai", "gemini", "perplexity")}
             for future in as_completed(futures):
@@ -269,8 +275,12 @@ def check_all(req: CheckAllRequest, request: Request):
                 if isinstance(result, JSONResponse):
                     payload = json.loads(result.body)
                     errors.append({"provider": provider, "error": payload.get("error", "Ошибка провайдера")})
+                    if payload.get("analysis_error"):
+                        analysis_errors.append(provider)
                 else:
                     provider_results.append(result)
+        if analysis_errors:
+            return JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider_errors": errors})
         if not provider_results:
             return JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors})
         return _aggregate_results(provider_results, errors)
@@ -322,6 +332,7 @@ def _aggregate_results(results, errors):
         "role": "рекомендация" if any("рекомендац" in str(item.get("role", "")).lower() for item in results) else ("упоминание" if mentioned_results else "не упомянут"),
         "reasoning": f"{reasoning} {detailed_reasoning}".strip(),
         "quotes": quotes,
+        "competitors": competitors,
         "mentioned_brands": competitors,
         "ordered_mentions": ordered_mentions,
         "sources": list(sources_by_url.values()),
@@ -331,6 +342,8 @@ def _aggregate_results(results, errors):
         "canonical_id": next((item.get("canonical_id") for item in results if item.get("canonical_id")), None),
         "canonical_name": next((item.get("canonical_name") for item in results if item.get("canonical_name")), None),
         "observed_name": next((item.get("observed_name") for item in results if item.get("observed_name")), None),
+        "analysis_provider": "perplexity",
+        "analysis_version": ANALYSIS_VERSION,
     }
 
 
@@ -377,7 +390,7 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
     identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
-    cache_version = f"canonical-brands-v1:{identity_cache}"
+    cache_version = f"{get_analysis_cache_identity()}|canonical-brands-v1:{identity_cache}"
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
@@ -389,6 +402,8 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     
     if not provider_config["configured"]():
         return JSONResponse(status_code=503, content={"error": f"Провайдер {provider} не настроен"})
+    if not is_perplexity_configured():
+        return JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен", "analysis_error": True})
 
     cached_result = None if req.force_refresh or not use_result_cache else get_result_cache(brand, query, provider, cache_identity)
     if cached_result and not context:
@@ -416,16 +431,45 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     if not context and provider not in {"yandex", "openai", "gemini", "perplexity"}:
         return JSONResponse(status_code=502, content={"error": "Не удалось собрать данные по запросу"})
     
-    if provider in {"gigachat", "yandex", "openai", "gemini", "perplexity"}:
-        result = provider_config["check"](brand, query, context or "", canonical_id, canonical_name, aliases, domains)
-    else:
-        result = provider_config["check"](brand, query, context or "")
+    try:
+        generated = provider_config["generate"](query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](query)
+    except httpx.HTTPStatusError as error:
+        return JSONResponse(status_code=502, content={"error": f"Ошибка API {provider}: {error.response.status_code}"})
+    except httpx.RequestError:
+        return JSONResponse(status_code=502, content={"error": f"Ошибка подключения к {provider}"})
+    except Exception as error:
+        logger.exception("[API] Ошибка генерации provider=%s", provider)
+        return JSONResponse(status_code=502, content={"error": f"Ошибка обработки ответа {provider}: {type(error).__name__}"})
 
-    if result.get("error"):
-        return JSONResponse(status_code=502, content=result)
+    if generated.get("error"):
+        return JSONResponse(status_code=502, content=generated)
 
-    result["provider"] = provider
-    result["model"] = model
+    raw_answer = str(generated.get("raw_answer") or "").strip()
+    if not raw_answer:
+        return JSONResponse(status_code=502, content={"error": f"Провайдер {provider} вернул пустой ответ"})
+    try:
+        analysis = analyze_with_perplexity(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+    except httpx.HTTPStatusError as error:
+        logger.warning("[API] Ошибка анализа Perplexity: %s", error.response.status_code)
+        return JSONResponse(status_code=502, content={"error": f"Ошибка анализа Perplexity: {error.response.status_code}", "analysis_error": True})
+    except httpx.RequestError:
+        return JSONResponse(status_code=502, content={"error": "Ошибка подключения к Perplexity при анализе ответа", "analysis_error": True})
+    except Exception as error:
+        logger.warning("[API] Некорректный анализ Perplexity: %s", error)
+        return JSONResponse(status_code=502, content={"error": "Perplexity не смог сформировать корректный анализ ответа", "analysis_error": True})
+
+    result = {
+        "brand": brand,
+        "query": query,
+        **analysis,
+        "raw_answer": raw_answer,
+        "sources": generated.get("sources") or [],
+        "search_queries": generated.get("search_queries") or [],
+        "web_search_used": bool(generated.get("web_search_used")),
+        "rag": True,
+        "provider": provider,
+        "model": model,
+    }
     
     if sources:
         apply_brand_evidence(sources, brand)
