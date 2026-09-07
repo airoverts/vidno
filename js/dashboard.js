@@ -212,13 +212,13 @@ async function suggestPrompts() {
     const button = $('#wsSuggestPrompts'); const refresh = $('#refreshPromptSuggestions'); const wrap = $('#promptSuggestions');
     $('#wsError').hidden = true; wrap.hidden = false; button.disabled = true; refresh.disabled = true;
     $('#promptSuggestionList').innerHTML = '';
-    $('#promptSuggestionStatus').innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> GigaChat определяет категорию бренда и готовит запросы…';
+    $('#promptSuggestionStatus').innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Perplexity определяет категорию бренда и готовит запросы…';
     try {
         const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
         const identity = identityFor(brand);
         const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, existing_queries: existingQueries, domains: identity?.domains || [] }) });
         const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
-        if (!prompts.length) throw new Error('GigaChat не вернул подходящих промптов');
+        if (!prompts.length) throw new Error('Perplexity не вернул подходящих промптов');
         $('#promptSuggestionList').innerHTML = prompts.map((prompt, index) => `<button class="prompt-suggestion-item" type="button" data-suggested-prompt="${encodeURIComponent(prompt)}"><span>${index + 1}</span><strong>${escapeHtml(prompt)}</strong><i class="fa-solid fa-arrow-right"></i></button>`).join('');
         $('#promptSuggestionStatus').textContent = 'Выберите промпт — он подставится в поле проверки.';
         $$('[data-suggested-prompt]').forEach(item => item.addEventListener('click', () => { $('#wsQuery').value = decodeURIComponent(item.dataset.suggestedPrompt); $('#wsQuery').focus(); item.classList.add('selected'); setTimeout(() => item.classList.remove('selected'), 700); }));
