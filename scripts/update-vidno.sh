@@ -11,6 +11,7 @@ fi
 
 git pull --ff-only origin main
 docker compose up -d --build
+docker compose restart frontend
 
 for _ in {1..20}; do
     if curl --fail --silent --show-error http://127.0.0.1/api/health >/dev/null; then
