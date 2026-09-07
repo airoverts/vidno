@@ -148,7 +148,7 @@ def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str, 
 def generate_answer(query: str) -> dict:
     if not is_configured():
         return {"error": "ChatGPT не настроен"}
-    logger.info("[OpenAI] Генерация ответа по запросу %r", query[:120])
+    logger.info("[OpenAI] Генерация ответа")
     try:
         raw_answer, sources = _call_with_web_search(query)
     except httpx.HTTPStatusError as error:

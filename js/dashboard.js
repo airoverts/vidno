@@ -5,53 +5,28 @@ const API_BASE = IS_LOCAL_FRONTEND ? 'http://localhost:8000/api' : '/api';
 const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity' };
 const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg', perplexity: 'assets/ai/perplexity.svg' };
 const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
-const HISTORY_KEY = 'vidno-dashboard-check-history';
-const LEGACY_HISTORY_KEY = 'vidno-workspace-history';
-const BRIEFS_KEY = 'vidno-growth-briefs';
-const TASKS_KEY = 'vidno-growth-tasks';
-const DISMISSED_KEY = 'vidno-growth-dismissed';
-const TASKS_MIGRATION_KEY = 'vidno-growth-tasks-migrated-v1';
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
-const BRAND_IDENTITIES_KEY = 'vidno-dashboard-brand-identities-v1';
 const ANALYSIS_VERSION = 'perplexity-direct-v1';
-let history = loadHistory();
-let brandIdentities = loadBrandIdentities();
-bootstrapBrandIdentities();
-let growthTasks = loadJson(TASKS_KEY);
-let activeBrandKey = loadActiveBrandKey();
+let history = [];
+let brandIdentities = [];
+let growthTasks = [];
+let dismissedOpportunities = new Set();
+let activeBrandKey = '';
 let activeRecommendation = null;
 let activeGrowthTaskId = null;
 let competitorExpanded = false;
 let sourceExpanded = false;
 let selectedProviders = new Set(CHECK_PROVIDERS);
 
-function loadJson(key) {
-    try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; }
-}
-function loadHistory() {
-    const current = loadJson(HISTORY_KEY);
-    if (current.length) {
-        const migrated = current.map(item => {
-            if (item.provider === 'openai' && item.marketScope !== 'ru') return null;
-            if (item.provider !== 'all' || !Array.isArray(item.providerResults)) return item;
-            const providerResults = item.providerResults.filter(result => result.provider !== 'openai' || result.market_scope === 'ru');
-            return providerResults.length ? { ...item, providerResults } : null;
-        }).filter(Boolean).slice(-100);
-        if (JSON.stringify(migrated) !== JSON.stringify(current.slice(-100))) localStorage.setItem(HISTORY_KEY, JSON.stringify(migrated));
-        return migrated;
+async function apiRequest(path, options = {}) {
+    const response = await fetch(`${API_BASE}${path}`, { credentials: 'include', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } });
+    const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
+    if (response.status === 401) {
+        window.location.replace('index.html?auth=login');
+        throw new Error('Сессия истекла');
     }
-    const legacy = loadJson(LEGACY_HISTORY_KEY).slice(-100);
-    if (legacy.length) localStorage.setItem(HISTORY_KEY, JSON.stringify(legacy));
-    return legacy;
-}
-function saveHistory() {
-    const rows = history.slice(-100);
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(rows)); }
-    catch {
-        const compact = rows.map((item, index) => index >= rows.length - 20 ? item : { ...item, providerResults: (item.providerResults || []).map(result => { const { raw_answer, ...rest } = result; return rest; }) });
-        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(compact)); }
-        catch { localStorage.setItem(HISTORY_KEY, JSON.stringify(compact.slice(-20).map(item => ({ ...item, providerResults: (item.providerResults || []).map(result => { const { raw_answer, sources, source_analysis, ...rest } = result; return rest; }) })))); }
-    }
+    if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+    return data;
 }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } }
@@ -67,41 +42,37 @@ function identityFor(value) {
 }
 function brandKey(value) { const direct = brandIdentities.find(identity => identity.canonicalId === value); return direct?.canonicalId || identityFor(value)?.canonicalId || `auto:${automaticIdentityText(value)}`; }
 function canonicalBrand(value) { const identity = identityFor(value); return identity ? { id: identity.canonicalId, name: identity.canonicalName, aliases: [...identity.aliases], domains: [...identity.domains] } : { id: brandKey(value), name: normalizeBrandName(value), aliases: [], domains: [] }; }
-function loadBrandIdentities() {
-    try { const stored = JSON.parse(localStorage.getItem(BRAND_IDENTITIES_KEY) || '{}'); return Array.isArray(stored.items) ? stored.items.filter(item => item?.canonicalId && item?.canonicalName).map(item => ({ canonicalId: String(item.canonicalId), canonicalName: normalizeBrandName(item.canonicalName), aliases: Array.isArray(item.aliases) ? item.aliases.map(normalizeBrandName).filter(Boolean) : [], domains: Array.isArray(item.domains) ? item.domains.map(domainText).filter(Boolean) : [] })) : []; } catch { return []; }
+function normalizeBrandRecord(item) {
+    return { id: String(item.id || ''), canonicalId: String(item.canonical_id || item.canonicalId || item.id || ''), canonicalName: normalizeBrandName(item.canonical_name || item.canonicalName || item.name), aliases: Array.isArray(item.aliases) ? item.aliases.map(normalizeBrandName).filter(Boolean) : [], domains: Array.isArray(item.domains) ? item.domains.map(domainText).filter(Boolean) : [] };
 }
-function saveBrandIdentities() { localStorage.setItem(BRAND_IDENTITIES_KEY, JSON.stringify({ version: 1, items: brandIdentities })); }
-function ensureBrandIdentity(value) {
+async function ensureBrandIdentity(value) {
     const name = normalizeBrandName(value); if (!name) return null;
     const existing = identityFor(name); if (existing) return existing;
-    const identity = { canonicalId: crypto.randomUUID(), canonicalName: name, aliases: [], domains: [] };
-    brandIdentities.push(identity); saveBrandIdentities(); return identity;
+    const data = await apiRequest('/brands', { method: 'POST', body: JSON.stringify({ canonical_name: name, aliases: [], domains: [] }) });
+    const identity = normalizeBrandRecord(data.brand || data);
+    brandIdentities.push(identity);
+    return identity;
 }
-function bootstrapBrandIdentities() {
-    let changed = false;
-    history.forEach(item => { const name = normalizeBrandName(item.brand); if (!name || identityFor(name)) return; brandIdentities.push({ canonicalId: crypto.randomUUID(), canonicalName: name, aliases: [], domains: [] }); changed = true; });
-    const initialName = normalizeBrandName($('#wsBrand')?.value || 'Vidno');
-    if (!brandIdentities.length && initialName) { brandIdentities.push({ canonicalId: crypto.randomUUID(), canonicalName: initialName, aliases: [], domains: [] }); changed = true; }
-    if (changed) saveBrandIdentities();
+async function persistBrandIdentity(identity) {
+    const data = await apiRequest(`/brands/${encodeURIComponent(identity.id)}`, { method: 'PATCH', body: JSON.stringify({ canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+    Object.assign(identity, normalizeBrandRecord(data.brand || data));
 }
-function addBrandAlias(canonicalId, value, type = 'alias') {
+async function addBrandAlias(canonicalId, value, type = 'alias') {
     const name = normalizeBrandName(value); const target = brandIdentities.find(item => item.canonicalId === canonicalId); if (!target || !name) return false;
     const existing = identityFor(name);
-    if (existing && existing.canonicalId !== target.canonicalId) {
-        target.aliases.push(existing.canonicalName, ...(existing.aliases || [])); target.domains.push(...(existing.domains || []));
-        brandIdentities = brandIdentities.filter(item => item.canonicalId !== existing.canonicalId);
-    }
-    brandIdentities.forEach(item => { item.aliases = (item.aliases || []).filter(alias => identityText(alias) !== identityText(name)); item.domains = (item.domains || []).filter(domain => domainText(domain) !== domainText(name)); });
-    if (type === 'domain') { const domain = domainText(name); if (domain && !(target.domains || []).some(item => domainText(item) === domain)) target.domains.push(domain); }
-    else if (identityText(name) !== identityText(target.canonicalName) && !(target.aliases || []).some(alias => identityText(alias) === identityText(name))) target.aliases.push(name);
-    target.aliases = [...new Map(target.aliases.map(alias => [identityText(alias), alias])).values()].filter(alias => identityText(alias) !== identityText(target.canonicalName));
-    target.domains = [...new Map(target.domains.map(domain => [domainText(domain), domainText(domain)])).values()].filter(Boolean);
-    saveBrandIdentities(); return true;
+    if (existing && existing.canonicalId !== target.canonicalId) throw new Error('Это название уже относится к другому бренду');
+    const next = { ...target, aliases: [...target.aliases], domains: [...target.domains] };
+    if (type === 'domain') { const domain = domainText(name); if (domain && !next.domains.some(item => domainText(item) === domain)) next.domains.push(domain); }
+    else if (identityText(name) !== identityText(next.canonicalName) && !next.aliases.some(alias => identityText(alias) === identityText(name))) next.aliases.push(name);
+    next.aliases = [...new Map(next.aliases.map(alias => [identityText(alias), alias])).values()].filter(alias => identityText(alias) !== identityText(next.canonicalName));
+    next.domains = [...new Map(next.domains.map(domain => [domainText(domain), domainText(domain)])).values()].filter(Boolean);
+    await persistBrandIdentity(next); Object.assign(target, next); return true;
 }
-function removeBrandAlias(canonicalId, value, type = 'alias') {
+async function removeBrandAlias(canonicalId, value, type = 'alias') {
     const target = brandIdentities.find(item => item.canonicalId === canonicalId); if (!target) return;
-    if (type === 'domain') target.domains = target.domains.filter(item => domainText(item) !== domainText(value)); else target.aliases = target.aliases.filter(item => identityText(item) !== identityText(value));
-    saveBrandIdentities();
+    const next = { ...target, aliases: [...target.aliases], domains: [...target.domains] };
+    if (type === 'domain') next.domains = next.domains.filter(item => domainText(item) !== domainText(value)); else next.aliases = next.aliases.filter(item => identityText(item) !== identityText(value));
+    await persistBrandIdentity(next); Object.assign(target, next);
 }
 function brandInitials(value) { const words = normalizeBrandName(value).split(/\s+/).filter(Boolean); return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : words[0]?.slice(0, 2) || '?').toLocaleUpperCase('ru-RU'); }
 function faviconUrl(domain) { return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`; }
@@ -120,9 +91,9 @@ function companyAvatarMarkup(name) { return imageAvatarMarkup(name, brandDomainM
 function bindAvatarFallbacks() { $$('img[data-avatar-name]').forEach(image => { const replace = () => { const wrap = image.closest('.identity-avatar'); if (wrap) wrap.outerHTML = monogramMarkup(image.dataset.avatarName); }; image.addEventListener('error', replace, { once: true }); if (image.complete && !image.naturalWidth) replace(); }); }
 function loadActiveBrandKey() {
     const saved = brandKey(localStorage.getItem(ACTIVE_BRAND_KEY));
-    const available = new Set(history.map(item => brandKey(item.brand)).filter(Boolean));
+    const available = new Set(brandIdentities.map(item => item.canonicalId));
     if (saved && available.has(saved)) return saved;
-    return brandKey(history.at(-1)?.brand || $('#wsBrand')?.value || 'Vidno');
+    return brandIdentities[0]?.canonicalId || '';
 }
 function selectedResults(item) {
     const results = Array.isArray(item.providerResults) ? item.providerResults : Array.isArray(item.provider_results) ? item.provider_results : [];
@@ -166,13 +137,10 @@ function activeHistory() {
     }).filter(Boolean);
 }
 function currentBrand() {
-    return brandIdentities.find(item => item.canonicalId === activeBrandKey)?.canonicalName || [...history].reverse().find(item => brandKey(item.brand) === activeBrandKey)?.brand || normalizeBrandName($('#wsBrand').value) || 'Vidno';
+    return brandIdentities.find(item => item.canonicalId === activeBrandKey)?.canonicalName || [...history].reverse().find(item => brandKey(item.brand) === activeBrandKey)?.brand || '';
 }
 function brandOptions() {
-    const brands = new Map();
-    history.forEach(item => { const identity = canonicalBrand(item.brand); if (identity.id) brands.set(identity.id, identity.name); });
-    if (!brands.has(activeBrandKey)) brands.set(activeBrandKey, normalizeBrandName($('#wsBrand').value) || 'Vidno');
-    return [...brands].map(([key, name]) => ({ key, name }));
+    return brandIdentities.map(identity => ({ key: identity.canonicalId, name: identity.canonicalName }));
 }
 function renderBrandSelector() {
     const select = $('#activeBrandSelect');
@@ -248,9 +216,7 @@ async function suggestPrompts() {
     try {
         const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
         const identity = identityFor(brand);
-        const response = await fetch(`${API_BASE}/prompt-suggestions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand, existing_queries: existingQueries, domains: identity?.domains || [] }) });
-        const data = await response.json();
-        if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+        const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, existing_queries: existingQueries, domains: identity?.domains || [] }) });
         const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
         if (!prompts.length) throw new Error('GigaChat не вернул подходящих промптов');
         $('#promptSuggestionList').innerHTML = prompts.map((prompt, index) => `<button class="prompt-suggestion-item" type="button" data-suggested-prompt="${encodeURIComponent(prompt)}"><span>${index + 1}</span><strong>${escapeHtml(prompt)}</strong><i class="fa-solid fa-arrow-right"></i></button>`).join('');
@@ -268,42 +234,34 @@ function apiErrorMessage(data, status) {
     const value = data?.error ?? data?.detail;
     if (typeof value === 'string' && value.trim()) return value;
     if (Array.isArray(value)) {
-        const messages = value.map(item => typeof item === 'string' ? item : item?.msg).filter(Boolean);
+        const messages = value.map(item => typeof item === 'string' ? item : item?.error || item?.msg).filter(Boolean);
         if (messages.length) return messages.join('; ');
     }
     if (value && typeof value === 'object') {
+        if (typeof value.error === 'string') return value.error;
         if (typeof value.message === 'string') return value.message;
         if (typeof value.msg === 'string') return value.msg;
     }
     return `Ошибка сервера (HTTP ${status})`;
 }
 
-$('#wsClearCache').addEventListener('click', async () => {
-    try {
-        const response = await fetch(`${API_BASE}/cache`, { method: 'DELETE' });
-        if (!response.ok) throw new Error('Не удалось очистить кэш');
-        $('#wsClearCache').innerHTML = '<i class="fa-solid fa-check"></i>';
-        setTimeout(() => { $('#wsClearCache').innerHTML = '<i class="fa-solid fa-trash-can"></i>'; }, 1400);
-    } catch (error) { showError(error.message); }
-});
-
 $('#wsCheck').addEventListener('click', async () => {
     const brand = normalizeBrandName($('#wsBrand').value);
     const query = $('#wsQuery').value.trim();
     if (!brand || !query) return showError('Введите бренд и промпт для проверки.');
-    const identity = ensureBrandIdentity(brand);
     const checkButton = $('#wsCheck');
     if (checkButton.disabled) return;
     $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false; $('#wsLoaderText').textContent = 'Формируем общий результат проверки…'; checkButton.disabled = true;
     try {
-        const response = await fetch(`${API_BASE}/check-all`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: identity.canonicalName, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
-        const data = canonicalizeCheckResult(await response.json(), identity);
-        if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+        const identity = await ensureBrandIdentity(brand);
+        setActiveBrand(identity.canonicalId, false, false);
+        const raw = await apiRequest('/check-all', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, brand_id: identity.id, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const data = canonicalizeCheckResult(raw, identity);
         renderResult(data);
         saveCheck(data, brand, query, 'all');
         const errors = (data.provider_errors || []).map(item => `${PROVIDERS[item.provider] || item.provider}: ${item.error}`);
         if (errors.length) showError(`Часть данных недоступна: ${errors.join('; ')}`);
-    } catch (error) { if ($('#wsError').hidden) showError(`Не удалось выполнить проверку: ${error.message}`); }
+    } catch (error) { await refreshChecks().catch(() => {}); if ($('#wsError').hidden) showError(`Не удалось выполнить проверку: ${error.message}`); }
     finally { $('#wsLoader').hidden = true; checkButton.disabled = false; }
 });
 
@@ -367,23 +325,33 @@ function canonicalizeCheckResult(data, identity) {
     const competitors = hasListedCompetitors(data) ? listedCompetitors(data) : providerResults.flatMap(listedCompetitors);
     return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
-function saveCheck(data, brand, query, provider) {
+function buildHistoryItem(data, brand, query, provider, record = {}) {
     const sources = (data.sources || []).map(source => ({ title: source.title, url: source.url }));
     const cited = sources.some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(brand.toLowerCase()));
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
-    const identity = ensureBrandIdentity(data.canonical_name || brand); const normalizedBrand = identity.canonicalName;
+    const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || identityFor(data.canonical_name || brand);
+    const normalizedBrand = identity?.canonicalName || normalizeBrandName(brand);
     const position = resultPosition(data);
-    const saved = { id: crypto.randomUUID(), createdAt: Date.now(), brand: normalizedBrand, brandKey: identity.canonicalId, canonicalId: identity.canonicalId, canonicalName: identity.canonicalName, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [] };
+    const storedError = record.error; const error = typeof storedError === 'string' ? storedError : Array.isArray(storedError) ? storedError.map(item => item?.error || item?.message || item).join('; ') : storedError?.error || storedError?.message || '';
+    return { id: String(record.id || data.check?.id || crypto.randomUUID()), createdAt: new Date(record.created_at || data.check?.created_at || Date.now()).getTime(), brand: normalizedBrand, brandKey: identity?.canonicalId || String(record.brand_id || ''), canonicalId: identity?.canonicalId || String(record.brand_id || ''), canonicalName: normalizedBrand, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity?.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [], status: record.status || data.check?.status || 'completed', error: String(error) };
+}
+function normalizeStoredCheck(record) {
+    const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || brandIdentities.find(item => item.canonicalId === String(record.canonical_id || '')) || identityFor(record.brand);
+    const result = record.result && typeof record.result === 'object' ? canonicalizeCheckResult(record.result, identity || { canonicalId: String(record.brand_id || ''), canonicalName: record.brand, aliases: [], domains: [] }) : {};
+    return buildHistoryItem(result, record.brand || identity?.canonicalName || '', record.query || '', record.provider || 'all', record);
+}
+function saveCheck(data, brand, query, provider) {
+    const saved = buildHistoryItem(data, brand, query, provider, data.check || {});
+    history = history.filter(item => item.id !== saved.id);
     history.push(saved);
-    history = history.slice(-100);
-    saveHistory();
-    setActiveBrand(normalizedBrand, false, false);
+    setActiveBrand(saved.brand, false, false);
     return saved;
 }
 function renderHistory() {
     const rows = historyForActiveBrand();
     $('#historyCount').textContent = `${rows.length} ${rows.length === 1 ? 'проверка' : 'проверок'}`;
-    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
+    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${item.status === 'failed' ? `ошибка: ${escapeHtml(item.error || 'проверка не выполнена')}` : item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><div class="app-history-actions"><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span><button type="button" data-delete-check="${escapeHtml(item.id)}" aria-label="Удалить проверку" title="Удалить проверку"><i class="fa-regular fa-trash-can"></i></button></div></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
+    $$('[data-delete-check]').forEach(button => button.addEventListener('click', () => deleteCheck(button.dataset.deleteCheck)));
 }
 
 function normalizeQuery(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU'); }
@@ -414,30 +382,6 @@ function recommendations() {
         });
     }).filter(Boolean).sort((a, b) => b.count - a.count);
 }
-function saveGrowthTasks() { localStorage.setItem(TASKS_KEY, JSON.stringify(growthTasks)); }
-function migrateLegacyBriefs() {
-    if (localStorage.getItem(TASKS_MIGRATION_KEY)) return;
-    const existingLegacyIds = new Set(growthTasks.map(task => task.legacyBriefId).filter(Boolean));
-    loadJson(BRIEFS_KEY).forEach(brief => {
-        if (existingLegacyIds.has(brief.id)) return;
-        const legacyParts = String(brief.id || '').split('|');
-        const inferredBrand = brief.brand || legacyParts[0] || 'Vidno';
-        const inferredQuery = brief.query || legacyParts.slice(1).filter(part => part !== 'weak').join('|');
-        const related = history.filter(item => brandKey(item.brand) === brandKey(inferredBrand) && normalizeQuery(item.query) === normalizeQuery(inferredQuery));
-        const baselineRow = related.at(-1) || null;
-        const migratedOpportunity = recommendations().find(item => brandKey(item.brand) === brandKey(inferredBrand) && normalizeQuery(item.query) === normalizeQuery(inferredQuery) && item.provider === (brief.provider || baselineRow?.provider || 'gigachat'));
-        growthTasks.push({
-            version: 1, id: crypto.randomUUID(), legacyBriefId: brief.id, opportunityId: migratedOpportunity?.id || brief.id,
-            brand: inferredBrand, brandKey: brandKey(inferredBrand),
-            query: inferredQuery || baselineRow?.query || '', provider: brief.provider || baselineRow?.provider || 'gigachat', model: baselineRow?.model || PROVIDERS[brief.provider] || '',
-            problemType: 'legacy', workType: 'content', title: brief.title || 'Задача из сохранённого брифа', goal: brief.goal || '', action: brief.action || '', verification: brief.verification || '',
-            owner: '', deadline: '', targetUrl: '', notes: '', status: 'planned', createdAt: brief.createdAt || Date.now(), updatedAt: Date.now(),
-            baseline: baselineRow ? snapshotCheck(baselineRow) : null, evidence: { count: related.length, competitors: baselineRow?.competitors || [], reasoning: baselineRow?.reasoning || '', quotes: baselineRow?.quotes || [] }, postCheck: null, verdict: null
-        });
-    });
-    saveGrowthTasks();
-    localStorage.setItem(TASKS_MIGRATION_KEY, '1');
-}
 function snapshotCheck(item) { return item ? { id: item.id || null, createdAt: item.createdAt || Date.now(), mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || 'weighted', role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] } : null; }
 function growthTaskForBrand(task) { return brandKey(task.brand) === activeBrandKey; }
 function statusLabel(status) { return ({ planned: 'Запланировано', in_progress: 'В работе', ready_for_check: 'Готово к проверке', measured: 'Измерено' })[status] || status; }
@@ -455,10 +399,8 @@ function updateGrowthSummary(opportunities, tasks, results, activeTab = 'opportu
     [$('#growthStageTitle').textContent, $('#growthStageText').textContent] = summaries[activeTab];
 }
 function renderGrowth() {
-    migrateLegacyBriefs();
-    const dismissed = new Set(loadJson(DISMISSED_KEY));
     const accepted = new Set(growthTasks.map(task => task.opportunityId));
-    const opportunities = recommendations().filter(item => !dismissed.has(item.id) && !accepted.has(item.id));
+    const opportunities = recommendations().filter(item => !dismissedOpportunities.has(item.id) && !accepted.has(item.id));
     const tasks = growthTasks.filter(task => growthTaskForBrand(task) && task.status !== 'measured');
     const results = growthTasks.filter(task => growthTaskForBrand(task) && task.status === 'measured');
     $('#opportunityCount').textContent = opportunities.length; $('#taskCount').textContent = tasks.length; $('#resultCount').textContent = results.length;
@@ -487,12 +429,20 @@ function renderResultCard(task) {
 }
 function bindGrowthActions() {
     $$('[data-create-task]').forEach(button => button.addEventListener('click', () => openOpportunity(decodeURIComponent(button.dataset.createTask))));
-    $$('[data-dismiss]').forEach(button => button.addEventListener('click', () => { const rows = new Set(loadJson(DISMISSED_KEY)); rows.add(decodeURIComponent(button.dataset.dismiss)); localStorage.setItem(DISMISSED_KEY, JSON.stringify([...rows])); renderGrowth(); }));
+    $$('[data-dismiss]').forEach(button => button.addEventListener('click', () => dismissOpportunity(decodeURIComponent(button.dataset.dismiss), button)));
     $$('[data-edit-task]').forEach(button => button.addEventListener('click', () => openTask(button.dataset.editTask)));
     $$('[data-quick-status]').forEach(select => select.addEventListener('change', () => updateTaskStatus(select.dataset.quickStatus, select.value)));
     $$('[data-measure-task]').forEach(button => button.addEventListener('click', () => measureTask(button.dataset.measureTask, button)));
     $$('[data-growth-view="prompts"]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
     $$('[data-growth-open-tab]').forEach(button => button.addEventListener('click', () => showGrowthTab(button.dataset.growthOpenTab)));
+}
+function normalizeGrowthTask(task) {
+    return { ...task, id: String(task.id), createdAt: task.created_at ? new Date(task.created_at).getTime() : task.createdAt || Date.now(), updatedAt: task.updated_at ? new Date(task.updated_at).getTime() : task.updatedAt || Date.now() };
+}
+async function dismissOpportunity(id, button) {
+    button.disabled = true;
+    try { await apiRequest('/dismissed-opportunities', { method: 'PUT', body: JSON.stringify({ opportunity_id: id }) }); dismissedOpportunities.add(id); renderGrowth(); }
+    catch (error) { alert(`Не удалось скрыть рекомендацию: ${error.message}`); button.disabled = false; }
 }
 async function openOpportunity(id) {
     activeRecommendation = recommendations().find(item => item.id === id);
@@ -504,9 +454,7 @@ async function openOpportunity(id) {
     try {
         const item = activeRecommendation;
         const evidence = `${item.description} Промпт: «${item.query}». Конкуренты: ${item.competitors.join(', ') || 'не обнаружены'}. Последние выводы: ${item.evidenceRows.slice(-2).map(row => row.reasoning).filter(Boolean).join(' | ')}`;
-        const response = await fetch(`${API_BASE}/brief`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: item.brand, query: item.query, provider: item.provider, competitors: item.competitors, checks_count: item.count, evidence }) });
-        const brief = await response.json();
-        if (!response.ok) throw new Error(apiErrorMessage(brief, response.status));
+        const brief = await apiRequest('/brief', { method: 'POST', body: JSON.stringify({ brand: item.brand, query: item.query, provider: item.provider, competitors: item.competitors, checks_count: item.count, evidence }) });
         if (!$('#briefDialog').open || activeRecommendation?.id !== opportunityId || !$('#growthTitle')) return;
         $('#growthTitle').value = brief.title || item.title; $('#growthGoal').value = brief.goal || ''; $('#growthAction').value = brief.action || item.suggestedAction; $('#growthVerification').value = brief.verification || `Повторить тот же промпт в ${PROVIDERS[item.provider] || item.provider}.`;
         const status = $('#growthBriefStatus');
@@ -583,22 +531,29 @@ function renderTaskDialog(opportunity, task, creating) {
 }
 
 function dialogValues() { return { title: $('#growthTitle').value.trim(), workType: $('#growthWorkType').value, owner: $('#growthOwner').value.trim(), deadline: $('#growthDeadline').value, goal: $('#growthGoal').value.trim(), action: $('#growthAction').value.trim(), verification: $('#growthVerification').value.trim(), targetUrl: $('#growthTargetUrl').value.trim(), notes: $('#growthNotes').value.trim() }; }
-function createTaskFromDialog() {
+async function createTaskFromDialog() {
     const form = $('#growthTaskForm'); if (!form.reportValidity() || !activeRecommendation) return;
     const item = activeRecommendation; const latest = item.evidenceRows.at(-1); const now = Date.now();
-    growthTasks.push({ version: 1, id: crypto.randomUUID(), opportunityId: item.id, brand: item.brand, brandKey: brandKey(item.brand), query: item.query, provider: item.provider, model: item.model, problemType: item.type, ...dialogValues(), status: 'planned', createdAt: now, updatedAt: now, baseline: snapshotCheck(latest), evidence: { count: item.count, checkIds: item.evidenceRows.map(row => row.id), competitors: item.competitors, reasoning: latest.reasoning || '', quotes: item.evidenceRows.flatMap(row => row.quotes || []).slice(-5) }, postCheck: null, verdict: null });
-    saveGrowthTasks(); $('#briefDialog').close(); showGrowthTab('tasks'); renderGrowth();
+    const draft = { version: 1, opportunityId: item.id, brand_id: activeBrandIdentity()?.id || null, brand: item.brand, brandKey: brandKey(item.brand), query: item.query, provider: item.provider, model: item.model, problemType: item.type, ...dialogValues(), status: 'planned', createdAt: now, updatedAt: now, baseline: snapshotCheck(latest), evidence: { count: item.count, checkIds: item.evidenceRows.map(row => row.id), competitors: item.competitors, reasoning: latest.reasoning || '', quotes: item.evidenceRows.flatMap(row => row.quotes || []).slice(-5) }, postCheck: null, verdict: null };
+    const submit = form.querySelector('[type="submit"]') || document.querySelector('[form="growthTaskForm"][type="submit"]'); if (submit) submit.disabled = true;
+    try {
+        const data = await apiRequest('/growth-tasks', { method: 'POST', body: JSON.stringify(draft) });
+        growthTasks.push(normalizeGrowthTask(data.task || data)); $('#briefDialog').close(); showGrowthTab('tasks'); renderGrowth();
+    } catch (error) { const status = $('#growthBriefStatus'); status.textContent = `Не удалось создать задачу: ${error.message}`; status.className = 'growth-form-status error'; }
+    finally { if (submit) submit.disabled = false; }
 }
 function openTask(id) { const task = growthTasks.find(item => item.id === id); if (!task) return; activeRecommendation = null; activeGrowthTaskId = id; renderTaskDialog(null, task, false); $('#briefDialog').showModal(); }
-function updateTaskFromDialog() {
+async function updateTaskFromDialog() {
     const form = $('#growthTaskForm'); if (!form.reportValidity()) return;
     const task = growthTasks.find(item => item.id === activeGrowthTaskId); if (!task) return;
-    Object.assign(task, dialogValues(), { status: task.status === 'measured' ? 'measured' : $('#growthStatus').value, updatedAt: Date.now() });
-    saveGrowthTasks(); $('#briefDialog').close(); renderGrowth();
+    const changes = { ...dialogValues(), status: task.status === 'measured' ? 'measured' : $('#growthStatus').value };
+    try { const data = await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(changes) }); Object.assign(task, normalizeGrowthTask(data.task || data)); $('#briefDialog').close(); renderGrowth(); }
+    catch (error) { const status = $('#growthBriefStatus'); status.textContent = `Не удалось сохранить задачу: ${error.message}`; status.className = 'growth-form-status error'; }
 }
-function deleteActiveTask() {
+async function deleteActiveTask() {
     const task = growthTasks.find(item => item.id === activeGrowthTaskId); if (!task || !confirm(`Удалить задачу «${task.title}» навсегда?`)) return;
-    growthTasks = growthTasks.filter(item => item.id !== task.id); saveGrowthTasks(); $('#briefDialog').close(); renderGrowth();
+    try { await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' }); growthTasks = growthTasks.filter(item => item.id !== task.id); $('#briefDialog').close(); renderGrowth(); }
+    catch (error) { const status = $('#growthBriefStatus'); status.textContent = `Не удалось удалить задачу: ${error.message}`; status.className = 'growth-form-status error'; }
 }
 function resultLevel(item) { if (!item?.mentioned) return 0; return isRecommendationRole(item.role) ? 2 : 1; }
 function compareChecks(before, after) { const beforeLevel = resultLevel(before); const afterLevel = resultLevel(after); if (afterLevel > beforeLevel) return 'improved'; if (afterLevel < beforeLevel) return 'declined'; const beforePosition = Number(before?.position) || null; const afterPosition = Number(after?.position) || null; const beforeKind = before?.positionKind || 'weighted'; const afterKind = after?.positionKind || 'weighted'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition < beforePosition) return 'improved'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition > beforePosition) return 'declined'; return 'unchanged'; }
@@ -607,11 +562,12 @@ async function measureTask(id, button) {
     const original = button.textContent; button.disabled = true; button.textContent = 'Проверяем…';
     const errorTarget = $('#briefDialog').open ? $('#growthBriefStatus') : null;
     try {
-        const identity = ensureBrandIdentity(task.brand);
-        const response = await fetch(`${API_BASE}/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: identity.canonicalName, query: task.query, provider: task.provider, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
-        const data = canonicalizeCheckResult(await response.json(), identity); if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+        const identity = await ensureBrandIdentity(task.brand);
+        const raw = await apiRequest('/check', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, brand_id: identity.id, query: task.query, provider: task.provider, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const data = canonicalizeCheckResult(raw, identity);
         const saved = saveCheck(data, task.brand, task.query, task.provider);
-        task.postCheck = snapshotCheck(saved); task.verdict = compareChecks(task.baseline, task.postCheck); task.status = 'measured'; task.updatedAt = Date.now(); saveGrowthTasks();
+        const changes = { postCheck: snapshotCheck(saved), verdict: compareChecks(task.baseline, snapshotCheck(saved)), status: 'measured' };
+        const taskData = await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(changes) }); Object.assign(task, normalizeGrowthTask(taskData.task || taskData));
         if ($('#briefDialog').open) $('#briefDialog').close(); showGrowthTab('results'); renderGrowth();
     } catch (error) {
         if (errorTarget) { errorTarget.textContent = `Проверка не выполнена: ${error.message}`; errorTarget.className = 'growth-form-status error'; }
@@ -623,15 +579,13 @@ function showGrowthTab(tabName) {
     $('#growthOpportunities').hidden = tabName !== 'opportunities'; $('#growthTasks').hidden = tabName !== 'tasks'; $('#growthResults').hidden = tabName !== 'results';
     updateGrowthSummary(Array(Number($('#opportunityCount').textContent)).fill(null), Array(Number($('#taskCount').textContent)).fill(null), Array(Number($('#resultCount').textContent)).fill(null), tabName);
 }
-function updateTaskStatus(id, status) {
+async function updateTaskStatus(id, status) {
     const editableStatuses = ['planned', 'in_progress', 'ready_for_check'];
     if (!editableStatuses.includes(status)) return;
     const task = growthTasks.find(item => item.id === id);
     if (!task || !editableStatuses.includes(task.status) || task.status === status) return;
-    task.status = status;
-    task.updatedAt = Date.now();
-    saveGrowthTasks();
-    renderGrowth();
+    try { const data = await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }); Object.assign(task, normalizeGrowthTask(data.task || data)); renderGrowth(); }
+    catch (error) { alert(`Не удалось изменить статус: ${error.message}`); renderGrowth(); }
 }
 $('#briefDialog').addEventListener('click', event => { if (event.target.closest('[data-brief-close]')) $('#briefDialog').close(); });
 $$('[data-growth-tab]').forEach(button => button.addEventListener('click', () => showGrowthTab(button.dataset.growthTab)));
@@ -683,35 +637,44 @@ function aliasSuggestion(name) { const own = currentBrand(); const candidate = d
 function rankedRow(name, value, detail, index, total, meta = '', avatar = '', action = '') { const width = percentage(value, total || value); return `<div class="app-data-row app-rank-row"><span class="app-rank-index">${index + 1}</span><div class="app-rank-main">${avatar}<div><strong>${escapeHtml(name)}</strong>${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</div></div><div class="app-rank-result"><strong>${escapeHtml(detail)}</strong><span class="app-rank-track"><i style="width:${width}%"></i></span>${action}</div></div>`; }
 function setRankingToggle(selector, expanded, count) { const button = $(selector); button.hidden = count <= 10; button.textContent = expanded ? 'Свернуть' : `Показать все · ${count}`; button.setAttribute('aria-expanded', expanded); }
 function renderCompetitors() { const rows = normalizedCompetitors(); const total = activeHistory().length; const visible = competitorExpanded ? rows : rows.slice(0, 10); $('#competitorList').innerHTML = visible.length ? visible.map((row, index) => rankedRow(row.name, row.checks, `${row.mentions} упомин. · ${percentage(row.checks, total)}%`, index, total, `В ${row.checks} из ${total} проверок`, companyAvatarMarkup(row.name), `<button class="brand-merge-action${aliasSuggestion(row.name) ? ' suggested' : ''}" type="button" data-merge-alias="${encodeURIComponent(row.name)}">${aliasSuggestion(row.name) ? 'Возможный псевдоним' : 'Объединить с брендом'}</button>`)).join('') : '<div class="app-empty"><strong>Нет данных о конкурентах</strong><span>Они появятся в результатах live-проверок.</span></div>'; setRankingToggle('#competitorToggle', competitorExpanded, rows.length); bindAvatarFallbacks(); $$('[data-merge-alias]').forEach(button => button.addEventListener('click', () => mergeAliasWithActive(decodeURIComponent(button.dataset.mergeAlias)))); }
-function activeBrandIdentity() { return brandIdentities.find(item => item.canonicalId === activeBrandKey) || ensureBrandIdentity(currentBrand()); }
-function mergeAliasWithActive(value) {
+function activeBrandIdentity() { return brandIdentities.find(item => item.canonicalId === activeBrandKey) || null; }
+async function mergeAliasWithActive(value) {
     const identity = activeBrandIdentity(); if (!identity || !window.confirm(`Считать «${value}» вариантом бренда «${identity.canonicalName}»? История и метрики будут пересчитаны.`)) return;
-    addBrandAlias(identity.canonicalId, value, domainText(value) ? 'domain' : 'alias'); renderBrandSelector(); renderAllForActiveBrand(); renderBrandSettings();
+    try { await addBrandAlias(identity.canonicalId, value, domainText(value) ? 'domain' : 'alias'); renderBrandSelector(); renderAllForActiveBrand(); }
+    catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); }
 }
 function renderBrandSettings() {
-    const identity = activeBrandIdentity(); if (!identity || !$('#canonicalBrandName')) return;
+    const identity = activeBrandIdentity(); if (!$('#canonicalBrandName')) return;
+    $('#deleteBrand').disabled = !identity;
+    if (!identity) { $('#canonicalBrandName').value = ''; $('#brandAliasList').innerHTML = '<span class="brand-settings-empty">Сначала создайте бренд через новую проверку</span>'; $('#brandDomainList').innerHTML = '<span class="brand-settings-empty">Домены пока не добавлены</span>'; $('#brandSuggestions').innerHTML = ''; return; }
     $('#canonicalBrandName').value = identity.canonicalName;
     const chip = (value, type) => `<span class="brand-chip">${escapeHtml(value)}<button type="button" aria-label="Удалить ${escapeHtml(value)}" data-remove-brand-value="${encodeURIComponent(value)}" data-brand-value-type="${type}">×</button></span>`;
     $('#brandAliasList').innerHTML = identity.aliases.length ? identity.aliases.map(value => chip(value, 'alias')).join('') : '<span class="brand-settings-empty">Других названий пока нет</span>';
     $('#brandDomainList').innerHTML = identity.domains.length ? identity.domains.map(value => chip(value, 'domain')).join('') : '<span class="brand-settings-empty">Домены пока не добавлены</span>';
     const suggestions = normalizedCompetitors().filter(row => aliasSuggestion(row.name)).slice(0, 5);
     $('#brandSuggestions').innerHTML = suggestions.length ? `<strong>Возможные варианты вашего бренда</strong><p>Подтвердите только те названия, которые действительно относятся к одной компании.</p><div class="brand-chip-list">${suggestions.map(row => `<button class="brand-suggestion-chip" type="button" data-merge-alias="${encodeURIComponent(row.name)}">${escapeHtml(row.name)} <i class="fa-solid fa-plus"></i></button>`).join('')}</div>` : '';
-    $$('[data-remove-brand-value]').forEach(button => button.addEventListener('click', () => { removeBrandAlias(identity.canonicalId, decodeURIComponent(button.dataset.removeBrandValue), button.dataset.brandValueType); renderAllForActiveBrand(); }));
+    $$('[data-remove-brand-value]').forEach(button => button.addEventListener('click', async () => { button.disabled = true; try { await removeBrandAlias(identity.canonicalId, decodeURIComponent(button.dataset.removeBrandValue), button.dataset.brandValueType); renderAllForActiveBrand(); } catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); button.disabled = false; } }));
     $$('#brandSuggestions [data-merge-alias]').forEach(button => button.addEventListener('click', () => mergeAliasWithActive(decodeURIComponent(button.dataset.mergeAlias))));
 }
-function addIdentityValue(inputSelector, type) {
+async function addIdentityValue(inputSelector, type) {
     const input = $(inputSelector); const value = normalizeBrandName(input.value); const identity = activeBrandIdentity(); if (!value || !identity) return;
-    addBrandAlias(identity.canonicalId, value, type); input.value = ''; renderAllForActiveBrand();
+    try { await addBrandAlias(identity.canonicalId, value, type); input.value = ''; renderAllForActiveBrand(); }
+    catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); }
 }
 $('#addBrandAlias').addEventListener('click', () => addIdentityValue('#brandAliasInput', 'alias'));
 $('#addBrandDomain').addEventListener('click', () => addIdentityValue('#brandDomainInput', 'domain'));
 $('#brandAliasInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandAliasInput', 'alias'); } });
 $('#brandDomainInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandDomainInput', 'domain'); } });
-$('#saveCanonicalBrand').addEventListener('click', () => {
+$('#saveCanonicalBrand').addEventListener('click', async () => {
     const identity = activeBrandIdentity(); const name = normalizeBrandName($('#canonicalBrandName').value); if (!identity || !name) return;
     const conflict = identityFor(name); if (conflict && conflict.canonicalId !== identity.canonicalId) return showError('Это название уже относится к другому бренду. Сначала удалите его из той карточки.');
-    if (identityText(identity.canonicalName) !== identityText(name)) identity.aliases.push(identity.canonicalName);
-    identity.canonicalName = name; identity.aliases = identity.aliases.filter(alias => identityText(alias) !== identityText(name)); saveBrandIdentities(); $('#wsBrand').value = name; renderBrandSelector(); renderAllForActiveBrand();
+    const next = { ...identity, aliases: [...identity.aliases], domains: [...identity.domains], canonicalName: name };
+    if (identityText(identity.canonicalName) !== identityText(name)) next.aliases.push(identity.canonicalName);
+    next.aliases = next.aliases.filter(alias => identityText(alias) !== identityText(name));
+    const button = $('#saveCanonicalBrand'); button.disabled = true;
+    try { await persistBrandIdentity(next); Object.assign(identity, next); history.filter(item => item.brandKey === identity.canonicalId).forEach(item => { item.brand = identity.canonicalName; item.canonicalName = identity.canonicalName; }); $('#wsBrand').value = name; renderBrandSelector(); renderAllForActiveBrand(); }
+    catch (error) { showError(`Не удалось переименовать бренд: ${error.message}`); }
+    finally { button.disabled = false; }
 });
 function sourceCategory(domain) { if (/(forbes|rbc|tass|ria|vedomosti|kommersant|lenta|gazeta|news|media)/.test(domain)) return 'СМИ'; if (/(vc\.ru|habr|reddit|forum|otzovik|irecommend)/.test(domain)) return 'Сообщество и отзывы'; if (/(wiki|catalog|yell|2gis|zoon)/.test(domain)) return 'Каталог и справочник'; return 'Профильный сайт'; }
 function renderSources() {
@@ -847,6 +810,53 @@ function renderDashboardCharts() {
         options: { responsive: true, maintainAspectRatio: false, cutout: '76%', rotation: -95, circumference: 360, layout: { padding: 2 }, plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: `место #${ownRank}`, color: theme.text, muted: theme.muted }, legend: { display: false }, tooltip: { displayColors: false, backgroundColor: theme.night, titleColor: theme.surface, bodyColor: theme.surface, caretPadding: 8, cornerRadius: 8, padding: 11, callbacks: { title: contexts => contexts[0]?.label || '', label: context => `${percentage(context.raw, totalWeight)}% доли голоса` } } } }, plugins: [centerLabelPlugin]
     });
 }
-renderBrandSelector();
-$('#wsBrand').value = currentBrand();
-renderAllForActiveBrand();
+async function refreshChecks(render = true) {
+    const data = await apiRequest('/checks');
+    history = (Array.isArray(data.checks) ? data.checks : []).map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
+    if (render) renderAllForActiveBrand();
+}
+async function deleteCheck(id) {
+    const item = history.find(row => row.id === id); if (!item || !confirm(`Удалить проверку «${item.query}» навсегда?`)) return;
+    try { await apiRequest(`/checks/${encodeURIComponent(id)}`, { method: 'DELETE' }); history = history.filter(row => row.id !== id); renderAllForActiveBrand(); }
+    catch (error) { showError(`Не удалось удалить проверку: ${error.message}`); }
+}
+async function deleteActiveBrand() {
+    const identity = activeBrandIdentity(); if (!identity || !confirm(`Удалить бренд «${identity.canonicalName}» вместе со всеми проверками и задачами?`)) return;
+    const button = $('#deleteBrand'); button.disabled = true;
+    try {
+        await apiRequest(`/brands/${encodeURIComponent(identity.id)}`, { method: 'DELETE' });
+        brandIdentities = brandIdentities.filter(item => item.canonicalId !== identity.canonicalId);
+        history = history.filter(item => item.brandKey !== identity.canonicalId);
+        growthTasks = growthTasks.filter(item => brandKey(item.brand) !== identity.canonicalId && item.brandKey !== identity.canonicalId);
+        activeBrandKey = brandIdentities[0]?.canonicalId || '';
+        if (activeBrandKey) localStorage.setItem(ACTIVE_BRAND_KEY, activeBrandKey); else localStorage.removeItem(ACTIVE_BRAND_KEY);
+        $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
+    } catch (error) { showError(`Не удалось удалить бренд: ${error.message}`); button.disabled = false; }
+}
+async function deleteAccount() {
+    if (!confirm('Удалить аккаунт и все данные Vidno навсегда? Это действие нельзя отменить.')) return;
+    const confirmation = prompt('Для подтверждения введите УДАЛИТЬ'); if (confirmation !== 'УДАЛИТЬ') return;
+    const button = $('#deleteAccount'); button.disabled = true;
+    try { await apiRequest('/account', { method: 'DELETE' }); window.location.replace('index.html'); }
+    catch (error) { showError(`Не удалось удалить аккаунт: ${error.message}`); button.disabled = false; }
+}
+async function initializeDashboard() {
+    try {
+        const user = await window.vidnoSessionPromise;
+        const brandData = await apiRequest('/brands');
+        brandIdentities = (Array.isArray(brandData.brands) ? brandData.brands : []).map(normalizeBrandRecord).filter(item => item.canonicalId && item.canonicalName);
+        if (!brandIdentities.length && normalizeBrandName(user?.brand)) await ensureBrandIdentity(user.brand);
+        activeBrandKey = loadActiveBrandKey();
+        const [checkData, taskData, dismissedData] = await Promise.all([apiRequest('/checks'), apiRequest('/growth-tasks'), apiRequest('/dismissed-opportunities')]);
+        history = (Array.isArray(checkData.checks) ? checkData.checks : []).map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
+        growthTasks = (Array.isArray(taskData.tasks) ? taskData.tasks : []).map(normalizeGrowthTask);
+        dismissedOpportunities = new Set(Array.isArray(dismissedData.items) ? dismissedData.items : []);
+        $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
+        document.body.classList.remove('auth-pending');
+    } catch (error) {
+        if (!location.search.includes('auth=login')) { document.body.classList.remove('auth-pending'); showError(`Не удалось загрузить данные кабинета: ${error.message}`); }
+    }
+}
+$('#deleteBrand').addEventListener('click', deleteActiveBrand);
+$('#deleteAccount').addEventListener('click', deleteAccount);
+initializeDashboard();

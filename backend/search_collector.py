@@ -230,7 +230,7 @@ def apply_brand_evidence(sources: list[dict], brand: str) -> list[dict]:
 
 
 def collect_search_results(query: str, max_results: int = 10) -> list[dict]:
-    logger.info(f"[Search] Сбор результатов из DuckDuckGo для запроса: {query[:120]!r}")
+    logger.info("[Search] Сбор результатов из DuckDuckGo")
 
     results = []
     try:

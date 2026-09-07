@@ -144,7 +144,7 @@ def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str =
 def generate_answer(query: str) -> dict:
     if not is_configured():
         return {"error": "YandexGPT не настроен"}
-    logger.info("[YandexGPT] Генерация ответа по запросу %r", query[:120])
+    logger.info("[YandexGPT] Генерация ответа")
     try:
         raw_answer, sources, web_search_used = _call_agent(query)
         if not web_search_used or not sources:

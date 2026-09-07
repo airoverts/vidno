@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vidno}
+      POSTGRES_USER: ${POSTGRES_USER:-vidno}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -6,8 +21,13 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
     expose:
       - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   frontend:
     image: nginx:alpine
@@ -19,3 +39,24 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
+
+  postgres-backup:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-vidno}
+      PGUSER: ${POSTGRES_USER:-vidno}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./ops/postgres-backup.sh:/usr/local/bin/postgres-backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "/usr/local/bin/postgres-backup.sh"]
+
+volumes:
+  postgres_data:
+    name: vidno_postgres_data

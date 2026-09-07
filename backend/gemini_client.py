@@ -126,7 +126,7 @@ def _api_error_message(error: errors.APIError) -> str:
 def generate_answer(query: str) -> dict:
     if not is_configured():
         return {"error": "Gemini не настроен"}
-    logger.info("[Gemini] Генерация ответа по запросу %r", query[:120])
+    logger.info("[Gemini] Генерация ответа")
     try:
         raw_answer, sources, _ = _call_with_google_search(query)
     except errors.APIError as error:

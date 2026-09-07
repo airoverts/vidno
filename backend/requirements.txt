@@ -10,3 +10,4 @@ beautifulsoup4
 sumy
 nltk
 numpy
+psycopg[binary]>=3.2,<4

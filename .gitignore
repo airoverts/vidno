@@ -1,4 +1,5 @@
 backend/.env
+/.env
 backend/authorized_key.json
 backend/cache.db
 __pycache__/
@@ -6,3 +7,4 @@ __pycache__/
 .venv/
 backend/auth.db
 .vidno-*.log
+backups/

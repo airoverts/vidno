@@ -2,50 +2,18 @@ import hashlib
 import hmac
 import os
 import secrets
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+
+from psycopg.errors import UniqueViolation
+
+from database import connection, initialize_database
 
 
-AUTH_DB_PATH = Path(__file__).with_name("auth.db")
 SESSION_DAYS = 30
 
 
-def _connect():
-    connection = sqlite3.connect(AUTH_DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-@contextmanager
-def _database():
-    connection = _connect()
-    try:
-        with connection:
-            yield connection
-    finally:
-        connection.close()
-
-
 def initialize_auth():
-    with _database() as connection:
-        connection.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                brand TEXT NOT NULL DEFAULT '',
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                expires_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-        """)
+    initialize_database()
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -70,22 +38,29 @@ def _public_user(row):
 
 
 def create_user(name: str, email: str, password: str, brand: str):
-    now = datetime.now(timezone.utc).isoformat()
     try:
-        with _database() as connection:
-            cursor = connection.execute(
-                "INSERT INTO users(name, email, brand, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                (name, email, brand, _password_hash(password), now),
-            )
-            row = connection.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
-    except sqlite3.IntegrityError:
+        with connection() as database:
+            row = database.execute(
+                """
+                INSERT INTO users(name, email, brand, password_hash)
+                VALUES (%s, %s, %s, %s)
+                RETURNING *
+                """,
+                (name, email, brand, _password_hash(password)),
+            ).fetchone()
+            if brand:
+                database.execute(
+                    "INSERT INTO brands(user_id, canonical_id, canonical_name) VALUES (%s, %s, %s)",
+                    (row["id"], secrets.token_hex(16), brand),
+                )
+    except UniqueViolation:
         return None
     return _public_user(row)
 
 
 def authenticate(email: str, password: str):
-    with _database() as connection:
-        row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    with connection() as database:
+        row = database.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
     return _public_user(row) if row and _password_matches(password, row["password_hash"]) else None
 
 
@@ -93,9 +68,12 @@ def create_session(user_id: int):
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
-    with _database() as connection:
-        connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (datetime.now(timezone.utc).isoformat(),))
-        connection.execute("INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (?, ?, ?)", (token_hash, user_id, expires_at.isoformat()))
+    with connection() as database:
+        database.execute("DELETE FROM sessions WHERE expires_at <= NOW()")
+        database.execute(
+            "INSERT INTO sessions(token_hash, user_id, expires_at) VALUES (%s, %s, %s)",
+            (token_hash, user_id, expires_at),
+        )
     return token
 
 
@@ -103,10 +81,15 @@ def user_for_session(token: str | None):
     if not token:
         return None
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    with _database() as connection:
-        row = connection.execute(
-            "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires_at > ?",
-            (token_hash, datetime.now(timezone.utc).isoformat()),
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT users.*
+            FROM sessions
+            JOIN users ON users.id = sessions.user_id
+            WHERE sessions.token_hash = %s AND sessions.expires_at > NOW()
+            """,
+            (token_hash,),
         ).fetchone()
     return _public_user(row) if row else None
 
@@ -114,5 +97,14 @@ def user_for_session(token: str | None):
 def delete_session(token: str | None):
     if not token:
         return
-    with _database() as connection:
-        connection.execute("DELETE FROM sessions WHERE token_hash = ?", (hashlib.sha256(token.encode()).hexdigest(),))
+    with connection() as database:
+        database.execute(
+            "DELETE FROM sessions WHERE token_hash = %s",
+            (hashlib.sha256(token.encode()).hexdigest(),),
+        )
+
+
+def delete_user(user_id: int):
+    with connection() as database:
+        row = database.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,)).fetchone()
+    return bool(row)

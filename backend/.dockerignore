@@ -1,0 +1,9 @@
+.env
+auth.db
+auth.db-*
+cache.db
+cache.db-*
+__pycache__/
+.runtime-venv/
+*.pyc
+*.log

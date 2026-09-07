@@ -18,12 +18,12 @@
 const $  = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
+localStorage.removeItem('vidno-session-token');
 
 async function authRequest(path, options = {}) {
     const response = await fetch(`${AUTH_API_BASE}${path}`, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.detail || 'Не удалось выполнить запрос');
-    if (payload.session_token) localStorage.setItem('vidno-session-token', payload.session_token);
     return payload;
 }
 

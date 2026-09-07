@@ -234,7 +234,7 @@ def generate_prompt_payload(messages: list[dict], require_web_search: bool = Fal
 def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
     if not is_configured():
         return {"error": "Perplexity не настроен"}
-    logger.info("[Perplexity] Проверка бренда %r по запросу %r", brand[:80], query[:120])
+    logger.info("[Perplexity] Проверка ответа")
     try:
         generated = generate_answer(query)
         raw_answer = generated["raw_answer"]

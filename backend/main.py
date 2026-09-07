@@ -9,9 +9,9 @@ from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Body, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,7 +29,8 @@ from perplexity_client import ANALYSIS_VERSION, analyze_answer as analyze_with_p
 from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
-from auth import authenticate, create_session, create_user, delete_session, initialize_auth, user_for_session
+from auth import authenticate, create_session, create_user, delete_session, delete_user, initialize_auth, user_for_session
+from storage import create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, restore_opportunity, start_check, update_brand, update_growth_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ cors_origins = [origin.strip() for origin in os.getenv(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-Admin-Token", "Authorization"],
     allow_credentials=True,
 )
@@ -143,12 +144,11 @@ def _set_session_cookie(response: Response, token: str):
     response.set_cookie(SESSION_COOKIE, token, max_age=30 * 24 * 60 * 60, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true", path="/")
 
 
-def _session_token(cookie_token: str | None, authorization: str | None):
-    if cookie_token:
-        return cookie_token
-    if authorization and authorization.lower().startswith("bearer "):
-        return authorization[7:].strip()
-    return None
+def _current_user(vidno_session: str | None = Cookie(default=None)):
+    user = user_for_session(vidno_session)
+    if not user:
+        raise HTTPException(status_code=401, detail="Требуется вход")
+    return user
 
 
 @app.post("/api/auth/register", status_code=201)
@@ -158,7 +158,7 @@ def register(req: RegisterRequest, response: Response):
         raise HTTPException(status_code=409, detail="Аккаунт с таким email уже существует")
     token = create_session(user["id"])
     _set_session_cookie(response, token)
-    return {"user": user, "session_token": token}
+    return {"user": user}
 
 
 @app.post("/api/auth/login")
@@ -168,21 +168,86 @@ def login(req: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
     token = create_session(user["id"])
     _set_session_cookie(response, token)
-    return {"user": user, "session_token": token}
+    return {"user": user}
 
 
 @app.get("/api/auth/me")
-def auth_me(vidno_session: str | None = Cookie(default=None), authorization: str | None = Header(default=None)):
-    user = user_for_session(_session_token(vidno_session, authorization))
-    if not user:
-        raise HTTPException(status_code=401, detail="Требуется вход")
+def auth_me(user: dict = Depends(_current_user)):
     return {"user": user}
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(response: Response, vidno_session: str | None = Cookie(default=None), authorization: str | None = Header(default=None)):
-    delete_session(_session_token(vidno_session, authorization))
+def logout(response: Response, vidno_session: str | None = Cookie(default=None), _user: dict = Depends(_current_user)):
+    delete_session(vidno_session)
     response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@app.delete("/api/account", status_code=204)
+def delete_account(response: Response, user: dict = Depends(_current_user)):
+    delete_user(user["id"])
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+class BrandRequest(BaseModel):
+    canonical_name: str = Field(min_length=1, max_length=200)
+    canonical_id: str = Field(default="", max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
+    domains: list[str] = Field(default_factory=list, max_length=50)
+
+
+class BrandUpdateRequest(BaseModel):
+    canonical_name: str | None = Field(default=None, min_length=1, max_length=200)
+    canonical_id: str | None = Field(default=None, min_length=1, max_length=200)
+    aliases: list[str] | None = Field(default=None, max_length=50)
+    domains: list[str] | None = Field(default=None, max_length=50)
+
+
+class OpportunityRequest(BaseModel):
+    opportunity_id: str = Field(min_length=1, max_length=500)
+
+
+def _clean_values(values: list[str]):
+    cleaned = list(dict.fromkeys(" ".join(value.split()) for value in values if value and value.strip()))
+    if any(len(value) > 200 for value in cleaned):
+        raise HTTPException(status_code=422, detail="Значение слишком длинное")
+    return cleaned
+
+
+@app.get("/api/brands")
+def get_brands(user: dict = Depends(_current_user)):
+    return {"brands": list_brands(user["id"])}
+
+
+@app.post("/api/brands", status_code=201)
+def post_brand(req: BrandRequest, user: dict = Depends(_current_user)):
+    brand = create_brand(user["id"], " ".join(req.canonical_name.split()), req.canonical_id.strip(), _clean_values(req.aliases), _clean_values(req.domains))
+    if not brand:
+        raise HTTPException(status_code=409, detail="Бренд с таким canonical_id уже существует")
+    return {"brand": brand}
+
+
+@app.patch("/api/brands/{brand_id}")
+def patch_brand(brand_id: int, req: BrandUpdateRequest, user: dict = Depends(_current_user)):
+    current = next((item for item in list_brands(user["id"]) if item["id"] == brand_id), None)
+    if not current:
+        raise HTTPException(status_code=404, detail="Бренд не найден")
+    brand = update_brand(
+        user["id"],
+        brand_id,
+        " ".join((req.canonical_name or current["canonical_name"]).split()),
+        (req.canonical_id or current["canonical_id"]).strip(),
+        _clean_values(req.aliases) if req.aliases is not None else current["aliases"],
+        _clean_values(req.domains) if req.domains is not None else current["domains"],
+    )
+    if brand is False:
+        raise HTTPException(status_code=409, detail="Бренд с таким canonical_id уже существует")
+    return {"brand": brand}
+
+
+@app.delete("/api/brands/{brand_id}", status_code=204)
+def remove_brand(brand_id: int, user: dict = Depends(_current_user)):
+    if not delete_brand(user["id"], brand_id):
+        raise HTTPException(status_code=404, detail="Бренд не найден")
 
 
 class CheckRequest(BaseModel):
@@ -223,6 +288,92 @@ class PromptSuggestionsRequest(BaseModel):
     domains: list[str] = Field(default_factory=list, max_length=20)
 
 
+def _check_metadata(record: dict):
+    return {key: record[key] for key in ("id", "brand_id", "status", "created_at", "completed_at")}
+
+
+def _complete_check_response(user_id: int, check_id: int, response):
+    if isinstance(response, JSONResponse):
+        payload = json.loads(response.body)
+        record = finish_check(user_id, check_id, "failed", error=dict(payload))
+        payload["check_id"] = check_id
+        return JSONResponse(status_code=response.status_code, content=payload)
+    status = "partial" if response.get("provider_errors") else "completed"
+    record = finish_check(user_id, check_id, status, result=response, error=response.get("provider_errors") or None)
+    return {**response, "check": _check_metadata(record)}
+
+
+@app.get("/api/checks")
+def get_checks(user: dict = Depends(_current_user)):
+    return {"checks": list_checks(user["id"])}
+
+
+@app.post("/api/checks", status_code=201)
+def post_check(payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
+    source = payload.get("check") if isinstance(payload.get("check"), dict) else payload
+    record = create_saved_check(user["id"], source)
+    if not record:
+        raise HTTPException(status_code=422, detail="Бренд и запрос обязательны")
+    return {"check": record}
+
+
+@app.delete("/api/checks/{check_id}", status_code=204)
+def remove_check(check_id: int, user: dict = Depends(_current_user)):
+    if not delete_check(user["id"], check_id):
+        raise HTTPException(status_code=404, detail="Проверка не найдена")
+
+
+@app.get("/api/growth-tasks")
+def get_growth_tasks(user: dict = Depends(_current_user)):
+    return {"tasks": list_growth_tasks(user["id"])}
+
+
+@app.post("/api/growth-tasks", status_code=201)
+def post_growth_task(payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
+    source = payload.get("task") if isinstance(payload.get("task"), dict) else payload
+    task = create_growth_task(user["id"], source)
+    if not task:
+        raise HTTPException(status_code=422, detail="Бренд задачи не найден")
+    return {"task": task}
+
+
+@app.patch("/api/growth-tasks/{task_id}")
+def patch_growth_task(task_id: int, payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
+    source = payload.get("task") if isinstance(payload.get("task"), dict) else payload
+    task = update_growth_task(user["id"], task_id, source)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task is False:
+        raise HTTPException(status_code=422, detail="Бренд задачи не найден")
+    return {"task": task}
+
+
+@app.delete("/api/growth-tasks/{task_id}", status_code=204)
+def remove_growth_task(task_id: int, user: dict = Depends(_current_user)):
+    if not delete_growth_task(user["id"], task_id):
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+
+
+@app.get("/api/dismissed-opportunities")
+def get_dismissed_opportunities(user: dict = Depends(_current_user)):
+    return {"items": list_dismissed_opportunities(user["id"])}
+
+
+@app.put("/api/dismissed-opportunities")
+def put_dismissed_opportunity(req: OpportunityRequest, user: dict = Depends(_current_user)):
+    return {"opportunity_id": dismiss_opportunity(user["id"], req.opportunity_id.strip())}
+
+
+@app.delete("/api/dismissed-opportunities", status_code=204)
+def delete_dismissed_opportunity(req: OpportunityRequest, user: dict = Depends(_current_user)):
+    restore_opportunity(user["id"], req.opportunity_id.strip())
+
+
+@app.delete("/api/dismissed-opportunities/{opportunity_id:path}", status_code=204)
+def delete_dismissed_opportunity_path(opportunity_id: str, user: dict = Depends(_current_user)):
+    restore_opportunity(user["id"], opportunity_id)
+
+
 @app.get("/api/health")
 def health():
     return {
@@ -239,31 +390,37 @@ def health():
 
 
 @app.post("/api/check")
-def check(req: CheckRequest, request: Request):
-    client_host = request.client.host if request.client else "unknown"
-    _enforce_rate_limit(client_host)
+def check(req: CheckRequest, user: dict = Depends(_current_user)):
+    _enforce_rate_limit(str(user["id"]))
     if not _check_semaphore.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Сервис занят, повторите запрос позже")
+    record = None
     try:
-        return _run_check(req)
+        record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), req.provider, req.aliases, req.domains)
+        return _complete_check_response(user["id"], record["id"], _run_check(req, user["id"]))
+    except Exception as error:
+        if record:
+            finish_check(user["id"], record["id"], "failed", error={"error": type(error).__name__})
+        raise
     finally:
         _check_semaphore.release()
 
 
 @app.post("/api/check-all")
-def check_all(req: CheckAllRequest, request: Request):
-    client_host = request.client.host if request.client else "unknown"
-    _enforce_rate_limit(client_host)
+def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
+    _enforce_rate_limit(str(user["id"]))
     if not _check_semaphore.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="Сервис занят, повторите запрос позже")
+    record = None
     try:
+        record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), "all", req.aliases, req.domains)
         if not is_perplexity_configured():
-            return JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен"})
+            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен"}))
         provider_results = []
         errors = []
         analysis_errors = []
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(_run_check, CheckRequest(**req.model_dump(), provider=provider), False): provider for provider in ("gigachat", "yandex", "openai", "gemini", "perplexity")}
+            futures = {executor.submit(_run_check, CheckRequest(**req.model_dump(), provider=provider), user["id"], False): provider for provider in ("gigachat", "yandex", "openai", "gemini", "perplexity")}
             for future in as_completed(futures):
                 provider = futures[future]
                 try:
@@ -280,10 +437,14 @@ def check_all(req: CheckAllRequest, request: Request):
                 else:
                     provider_results.append(result)
         if analysis_errors:
-            return JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider_errors": errors})
+            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider_errors": errors}))
         if not provider_results:
-            return JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors})
-        return _aggregate_results(provider_results, errors)
+            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors}))
+        return _complete_check_response(user["id"], record["id"], _aggregate_results(provider_results, errors))
+    except Exception as error:
+        if record:
+            finish_check(user["id"], record["id"], "failed", error={"error": type(error).__name__})
+        raise
     finally:
         _check_semaphore.release()
 
@@ -348,9 +509,8 @@ def _aggregate_results(results, errors):
 
 
 @app.post("/api/prompt-suggestions")
-def prompt_suggestions(req: PromptSuggestionsRequest, request: Request):
-    client_host = request.client.host if request.client else "unknown"
-    _enforce_rate_limit(client_host)
+def prompt_suggestions(req: PromptSuggestionsRequest, user: dict = Depends(_current_user)):
+    _enforce_rate_limit(str(user["id"]))
     if not is_perplexity_configured():
         raise HTTPException(status_code=503, detail="Perplexity не настроен")
     brand = " ".join(req.brand.split())
@@ -376,7 +536,7 @@ def prompt_suggestions(req: PromptSuggestionsRequest, request: Request):
         raise HTTPException(status_code=502, detail="Не удалось предложить промпты")
 
 
-def _run_check(req: CheckRequest, use_result_cache: bool = True):
+def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: bool = True):
     brand = " ".join(req.brand.split()) if req.brand else ""
     query = " ".join(req.query.split()) if req.query else ""
     context = req.context.strip() if req.context else None
@@ -394,7 +554,7 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
-    logger.info(f"[API] Запрос: provider={provider}, brand={brand[:80]!r}, query={query[:120]!r}, context_provided={bool(context)}")
+    logger.info("[API] Запрос: provider=%s user_id=%s context_provided=%s", provider, user_id, bool(context))
     
     if not brand or not query:
         logger.warning("[API] Отсутствует бренд или запрос")
@@ -405,7 +565,7 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     if not is_perplexity_configured():
         return JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен", "analysis_error": True})
 
-    cached_result = None if req.force_refresh or not use_result_cache else get_result_cache(brand, query, provider, cache_identity)
+    cached_result = None if req.force_refresh or not use_result_cache or user_id is None else get_result_cache(user_id, brand, query, provider, cache_identity)
     if cached_result and not context:
         if provider == "yandex" or "sources" in cached_result:
             logger.info("[API] Возвращён результат из кэша")
@@ -417,15 +577,15 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
     has_custom_context = bool(context)
     
     if not context and provider not in {"yandex", "openai", "gemini", "perplexity"}:
-        cached_search = None if req.force_refresh else get_search_cache(search_cache_key)
+        cached_search = None if req.force_refresh or user_id is None else get_search_cache(user_id, search_cache_key)
         if cached_search:
             context, sources = cached_search
             logger.info(f"[API] Использован контекст из кэша ({len(sources)} источников)")
         else:
             logger.info("[API] Контекст не найден в кэше, собираем данные из DuckDuckGo")
             context, sources = collect_and_format(query, max_results=10)
-            if context and sources:
-                set_search_cache(search_cache_key, context, sources)
+            if context and sources and user_id is not None:
+                set_search_cache(user_id, search_cache_key, context, sources)
             logger.info(f"[API] Собрано {len(sources)} источников")
 
     if not context and provider not in {"yandex", "openai", "gemini", "perplexity"}:
@@ -504,17 +664,16 @@ def _run_check(req: CheckRequest, use_result_cache: bool = True):
                         analysis["mentions_brand"] = status == "found"
             result["sources_count"] = sum(item.get("mentions_brand") is True for item in result["source_analysis"])
 
-    if not has_custom_context and use_result_cache:
-        set_result_cache(brand, query, result, provider, cache_identity)
+    if not has_custom_context and use_result_cache and user_id is not None:
+        set_result_cache(user_id, brand, query, result, provider, cache_identity)
     
     logger.info(f"[API] Результат: mentioned={result.get('mentioned')}, position={result.get('position')}, sources={len(result.get('sources', []))}")
     return result
 
 
 @app.post("/api/brief")
-def create_brief(req: BriefRequest, request: Request):
-    client_host = request.client.host if request.client else "unknown"
-    _enforce_rate_limit(client_host)
+def create_brief(req: BriefRequest, user: dict = Depends(_current_user)):
+    _enforce_rate_limit(str(user["id"]))
     provider = PROVIDERS[req.provider]
     if not provider["configured"]():
         raise HTTPException(status_code=503, detail=f"Провайдер {req.provider} не настроен")
