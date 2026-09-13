@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" role="img" aria-labelledby="title desc">
+  <title id="title">Vidno — Open O</title>
+  <desc id="desc">Типографический логотип с открытой апертурой</desc>
+  <text x="16" y="65" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="52" font-weight="800" letter-spacing="-3">Vidn</text>
+  <path d="M171 43a20 20 0 1 0 8.5-16.35" fill="none" stroke="#028090" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="184" cy="24" r="5.5" fill="#00A896"/>
+  <path d="M45 15a10 10 0 0 1 13 0" fill="none" stroke="#00A896" stroke-width="3" stroke-linecap="round"/>
+</svg>

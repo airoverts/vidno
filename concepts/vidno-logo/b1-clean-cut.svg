@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" role="img" aria-labelledby="title desc">
+  <title id="title">Vidno B1 — Clean cut</title>
+  <desc id="desc">Монограмма V с круглым вырезом в месте схождения лучей</desc>
+  <defs>
+    <mask id="b1-cut"><rect width="80" height="80" fill="#FFFFFF"/><circle cx="40" cy="49" r="6" fill="#012533"/></mask>
+  </defs>
+  <g transform="translate(8 8)" mask="url(#b1-cut)">
+    <path d="M6 8h18l20 51-9 15L6 8Z" fill="#028090"/>
+    <path d="M74 8H56L36 59l9 15L74 8Z" fill="#028090"/>
+  </g>
+  <text x="104" y="63" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="48" font-weight="800" letter-spacing="-2.5">Vidno</text>
+</svg>

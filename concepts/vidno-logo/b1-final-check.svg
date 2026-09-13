@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Проверка финального логотипа Vidno</title>
+  <desc id="desc">Финальный логотип Vidno на светлом и тёмном фоне и в малых размерах</desc>
+  <defs>
+    <mask id="cut-large">
+      <rect width="104" height="104" fill="#FFFFFF"/>
+      <circle cx="52" cy="68" r="7" fill="#012533"/>
+    </mask>
+    <mask id="cut-white">
+      <rect width="104" height="104" fill="#FFFFFF"/>
+      <circle cx="52" cy="68" r="7" fill="#012533"/>
+    </mask>
+    <g id="mark">
+      <path d="M7 8H31L52 57L70 8H95L52 98Z" fill="#028090"/>
+    </g>
+  </defs>
+  <rect width="1200" height="760" fill="#EAF6F5"/>
+  <text x="64" y="68" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="800">Vidno · финальная доработка B1</text>
+  <text x="64" y="100" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="16">Один нижний пик, плоский цвет, круглый сигнал внутри V</text>
+  <rect x="64" y="142" width="1072" height="246" rx="24" fill="#FFFFFF"/>
+  <g transform="translate(112 186) scale(1.5)" mask="url(#cut-large)">
+    <use href="#mark"/>
+  </g>
+  <text x="292" y="310" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="88" font-weight="800" letter-spacing="-4">Vidno</text>
+  <rect x="64" y="420" width="518" height="264" rx="24" fill="#012533"/>
+  <g transform="translate(108 466) scale(1.25)" mask="url(#cut-white)">
+    <path d="M7 8H31L52 57L70 8H95L52 98Z" fill="#FFFFFF"/>
+  </g>
+  <text x="258" y="574" fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="800" letter-spacing="-3">Vidno</text>
+  <rect x="614" y="420" width="522" height="264" rx="24" fill="#FFFFFF"/>
+  <text x="650" y="462" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">МАСШТАБ</text>
+  <g transform="translate(662 510) scale(.62)" mask="url(#cut-large)">
+    <use href="#mark"/>
+  </g>
+  <g transform="translate(798 526) scale(.42)" mask="url(#cut-large)">
+    <use href="#mark"/>
+  </g>
+  <g transform="translate(914 541) scale(.28)" mask="url(#cut-large)">
+    <use href="#mark"/>
+  </g>
+  <text x="673" y="622" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="13">64 px</text>
+  <text x="803" y="622" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="13">44 px</text>
+  <text x="916" y="622" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="13">28 px</text>
+</svg>

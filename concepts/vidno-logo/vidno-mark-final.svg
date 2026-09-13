@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">Знак Vidno</title>
+  <desc id="desc">Минималистичная асимметричная лигатура Vi с точкой-сигналом</desc>
+  <g transform="translate(16 0) scale(1.1)">
+    <path d="M7 10H32L51 71L66 34L80 38L54 98Z" fill="#028090"/>
+    <circle cx="76" cy="18" r="8" fill="#028090"/>
+  </g>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">Упрощённый знак Vidno</title>
+  <desc id="desc">Равномерная буква V с точкой над правой стороной</desc>
+  <path d="M18 32L60 102L102 32" fill="none" stroke="#028090" stroke-width="18" stroke-linecap="square" stroke-linejoin="miter"/>
+  <circle cx="102" cy="9" r="7.5" fill="#028090"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="480" viewBox="0 0 400 120" role="img" aria-labelledby="title desc">
+  <title id="title">Vidno Vi Signal</title>
+  <desc id="desc">Минималистичная лигатура Vi из асимметричных лучей и точки-сигнала</desc>
+  <g transform="translate(8 8)">
+    <path d="M7 10H32L51 71L66 34L80 38L54 98Z" fill="#028090"/>
+    <circle cx="76" cy="18" r="8" fill="#028090"/>
+  </g>
+  <text x="126" y="83" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="800" letter-spacing="-3">Vidno</text>
+</svg>

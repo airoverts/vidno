@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Доработка направления B для логотипа Vidno</title>
+  <desc id="desc">Сравнение вариантов Clean cut, Captured signal и Pulse</desc>
+  <rect width="1200" height="680" fill="#EAF6F5"/>
+  <text x="60" y="68" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="800">Vidno · развитие V-концепции</text>
+  <text x="60" y="100" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="16">Три способа встроить найденный сигнал внутрь знака</text>
+
+  <g transform="translate(60 140)">
+    <rect width="340" height="460" rx="22" fill="#FFFFFF"/>
+    <text x="26" y="42" fill="#028090" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.3">B1 · CLEAN CUT</text>
+    <text x="314" y="42" text-anchor="end" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">минимальный</text>
+    <defs>
+      <mask id="board-b1-cut"><rect width="128" height="128" fill="#FFFFFF"/><circle cx="64" cy="78" r="9" fill="#012533"/></mask>
+    </defs>
+    <g transform="translate(106 78)" mask="url(#board-b1-cut)">
+      <path d="M10 12h29l32 81-14 24L10 12Z" fill="#028090"/>
+      <path d="M118 12H89L57 93l14 24 47-105Z" fill="#028090"/>
+    </g>
+    <text x="170" y="273" text-anchor="middle" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="43" font-weight="800" letter-spacing="-2">Vidno</text>
+    <g transform="translate(26 310)">
+      <rect width="58" height="58" rx="14" fill="#012533"/>
+      <g transform="translate(9 9) scale(.5)" mask="url(#board-b1-cut)">
+        <path d="M6 8h18l20 51-9 15L6 8Z" fill="#FFFFFF"/>
+        <path d="M74 8H56L36 59l9 15L74 8Z" fill="#FFFFFF"/>
+      </g>
+      <text x="74" y="24" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">Чистый круглый вырез</text>
+      <text x="74" y="45" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">Надёжен в одном цвете</text>
+    </g>
+    <line x1="26" y1="392" x2="314" y2="392" stroke="#E2E8E8"/>
+    <text x="26" y="421" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">+ самый масштабируемый</text>
+    <text x="26" y="444" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">− сигнал считывается не сразу</text>
+  </g>
+
+  <g transform="translate(430 140)">
+    <rect width="340" height="460" rx="22" fill="#FFFFFF" stroke="#028090" stroke-width="2"/>
+    <rect x="221" y="20" width="93" height="30" rx="15" fill="#CFF3EF"/>
+    <text x="267.5" y="40" text-anchor="middle" fill="#028090" font-family="Inter, Arial, sans-serif" font-size="11" font-weight="800">РЕКОМЕНДУЮ</text>
+    <text x="26" y="42" fill="#028090" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.3">B2 · CAPTURE</text>
+    <g transform="translate(106 78) scale(1.6)">
+      <path d="M5 8h20l17 44-9 21L5 8Z" fill="#028090"/>
+      <path d="M75 8H57L40 52l8 19L75 8Z" fill="#00A896"/>
+      <circle cx="41" cy="43" r="6.5" fill="#012533" stroke="#FFFFFF" stroke-width="3"/>
+    </g>
+    <text x="170" y="273" text-anchor="middle" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="43" font-weight="800" letter-spacing="-2">Vidno</text>
+    <g transform="translate(26 310)">
+      <rect width="58" height="58" rx="14" fill="#012533"/>
+      <g transform="translate(9 9) scale(.5)">
+        <path d="M5 8h20l17 44-9 21L5 8Z" fill="#FFFFFF"/>
+        <path d="M75 8H57L40 52l8 19L75 8Z" fill="#CFF3EF"/>
+        <circle cx="41" cy="43" r="6.5" fill="#012533" stroke="#FFFFFF" stroke-width="3"/>
+      </g>
+      <text x="74" y="24" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">Луч захватывает точку</text>
+      <text x="74" y="45" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">Лучший баланс смысла и формы</text>
+    </g>
+    <line x1="26" y1="392" x2="314" y2="392" stroke="#E2E8E8"/>
+    <text x="26" y="421" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">+ характерный фирменный жест</text>
+    <text x="26" y="444" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">− нужен аккуратный баланс сторон</text>
+  </g>
+
+  <g transform="translate(800 140)">
+    <rect width="340" height="460" rx="22" fill="#FFFFFF"/>
+    <text x="26" y="42" fill="#028090" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="800" letter-spacing="1.3">B3 · PULSE</text>
+    <text x="314" y="42" text-anchor="end" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">динамический</text>
+    <g transform="translate(106 78) scale(1.6)">
+      <path d="M6 8h19l17 44-8 20L6 8Z" fill="#028090"/>
+      <path d="M74 8H56L40 52l7.5 18L74 8Z" fill="#012533"/>
+      <circle cx="41" cy="45" r="5.5" fill="#00A896"/>
+      <path d="M32.5 34.5Q41 26.5 49.5 34.5" fill="none" stroke="#00A896" stroke-width="3.5" stroke-linecap="round"/>
+    </g>
+    <text x="170" y="273" text-anchor="middle" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="43" font-weight="800" letter-spacing="-2">Vidno</text>
+    <g transform="translate(26 310)">
+      <rect width="58" height="58" rx="14" fill="#012533"/>
+      <g transform="translate(9 9) scale(.5)">
+        <path d="M6 8h19l17 44-8 20L6 8Z" fill="#FFFFFF"/>
+        <path d="M74 8H56L40 52l7.5 18L74 8Z" fill="#CFF3EF"/>
+        <circle cx="41" cy="45" r="5.5" fill="#00A896"/>
+        <path d="M32.5 34.5Q41 26.5 49.5 34.5" fill="none" stroke="#00A896" stroke-width="3.5" stroke-linecap="round"/>
+      </g>
+      <text x="74" y="24" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">Точка с коротким импульсом</text>
+      <text x="74" y="45" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">Лучше всего работает в анимации</text>
+    </g>
+    <line x1="26" y1="392" x2="314" y2="392" stroke="#E2E8E8"/>
+    <text x="26" y="421" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700">+ явно передаёт мониторинг</text>
+    <text x="26" y="444" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="12">− дуга пропадает в малом размере</text>
+  </g>
+
+  <text x="60" y="642" fill="#5B6B6D" font-family="Inter, Arial, sans-serif" font-size="13">Все варианты плоские, используют текущую палитру Vidno и пока не подключены к продукту</text>
+</svg>

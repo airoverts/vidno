@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">Знак Vidno на графитовом фоне</title>
+  <desc id="desc">Бирюзовая пропорциональная буква V с укороченным правым штрихом и точкой на нейтральном сером фоне</desc>
+  <defs>
+    <clipPath id="short-right">
+      <rect width="60" height="120"/>
+      <rect x="60" y="56" width="60" height="64"/>
+    </clipPath>
+  </defs>
+  <rect width="120" height="120" fill="rgb(33 33 33)"/>
+  <text x="60" y="113" text-anchor="middle" fill="#028090" font-family="Arial, sans-serif" font-size="112" font-weight="700" clip-path="url(#short-right)">V</text>
+  <circle cx="82" cy="37.3" r="9" fill="#028090"/>
+</svg>

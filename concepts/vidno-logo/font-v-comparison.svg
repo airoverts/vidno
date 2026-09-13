@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="340" viewBox="0 0 900 340" role="img" aria-labelledby="title desc">
+  <title id="title">Сравнение пропорций V для знака Vidno</title>
+  <desc id="desc">Arial Bold, Segoe UI Bold и Arial Black с оптически выровненной точкой</desc>
+  <rect width="900" height="340" fill="#EAF6F5"/>
+  <text x="40" y="45" fill="#012533" font-family="Arial, sans-serif" font-size="22" font-weight="700">Выбор пропорциональной V</text>
+  <g transform="translate(40 72)">
+    <rect width="250" height="230" rx="18" fill="#FFFFFF"/>
+    <text x="125" y="177" text-anchor="middle" fill="#028090" font-family="Arial" font-size="150" font-weight="700">V</text>
+    <circle cx="178" cy="51" r="10" fill="#028090"/>
+    <text x="125" y="211" text-anchor="middle" fill="#5B6B6D" font-family="Arial" font-size="13">Arial Bold</text>
+  </g>
+  <g transform="translate(325 72)">
+    <rect width="250" height="230" rx="18" fill="#FFFFFF"/>
+    <text x="125" y="177" text-anchor="middle" fill="#028090" font-family="Segoe UI" font-size="150" font-weight="700">V</text>
+    <circle cx="176" cy="51" r="10" fill="#028090"/>
+    <text x="125" y="211" text-anchor="middle" fill="#5B6B6D" font-family="Arial" font-size="13">Segoe UI Bold</text>
+  </g>
+  <g transform="translate(610 72)">
+    <rect width="250" height="230" rx="18" fill="#FFFFFF"/>
+    <text x="125" y="177" text-anchor="middle" fill="#028090" font-family="Arial Black" font-size="142">V</text>
+    <circle cx="179" cy="51" r="10" fill="#028090"/>
+    <text x="125" y="211" text-anchor="middle" fill="#5B6B6D" font-family="Arial" font-size="13">Arial Black</text>
+  </g>
+</svg>

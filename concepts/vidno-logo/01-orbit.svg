@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" role="img" aria-labelledby="title desc">
+  <title id="title">Vidno — Orbit</title>
+  <desc id="desc">Круговой мониторинг и найденный сигнал</desc>
+  <g transform="translate(8 8)">
+    <path d="M42 7A33 33 0 1 1 12.5 25" fill="none" stroke="#028090" stroke-width="8" stroke-linecap="round"/>
+    <path d="M42 20A20 20 0 1 1 23.5 32" fill="none" stroke="#00A896" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="42" cy="40" r="7" fill="#012533"/>
+    <circle cx="63" cy="17" r="5" fill="#00A896"/>
+  </g>
+  <text x="100" y="62" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="46" font-weight="800" letter-spacing="-2.5">Vid<tspan fill="#028090">no</tspan></text>
+</svg>

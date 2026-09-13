@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" role="img" aria-labelledby="title desc">
+  <title id="title">Vidno B2 — Captured signal</title>
+  <desc id="desc">Асимметричная V захватывает точку сигнала в негативном пространстве</desc>
+  <g transform="translate(8 8)">
+    <path d="M5 8h20l17 44-9 21L5 8Z" fill="#028090"/>
+    <path d="M75 8H57L40 52l8 19L75 8Z" fill="#00A896"/>
+    <circle cx="41" cy="43" r="6.5" fill="#012533" stroke="#FFFFFF" stroke-width="3"/>
+  </g>
+  <text x="104" y="63" fill="#012533" font-family="Inter, Arial, sans-serif" font-size="48" font-weight="800" letter-spacing="-2.5">Vidno</text>
+</svg>
