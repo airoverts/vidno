@@ -8,3 +8,6 @@ __pycache__/
 backend/auth.db
 .vidno-*.log
 backups/
+backend/.runtime-venv/
+backend/*.log
+tmp_design_report/
