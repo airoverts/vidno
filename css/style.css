@@ -1234,9 +1234,37 @@ img { max-width: 100%; display: block; }
 .app-topbar a { color: var(--text-soft); text-decoration: none; }
 .app-topbar a:hover { color: var(--text); }
 .app-topbar-actions { display: flex; align-items: center; gap: 18px; }
-.app-user { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; }
-.app-user button { color: var(--text-soft); padding: 4px; }
-.app-user button:hover { color: var(--accent); }
+.app-project-control { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.app-icon-button { display: grid; flex: 0 0 auto; width: 36px; height: 36px; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--text-soft); background: var(--surface); }
+.app-icon-button:hover { color: var(--accent); border-color: var(--accent); background: var(--bg-soft); }
+.app-account-menu { position: relative; z-index: 30; }
+.app-account-trigger { display: grid; min-width: 0; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 4px 7px 4px 4px; border: 1px solid transparent; border-radius: 9px; color: var(--text); background: transparent; text-align: left; }
+.app-account-trigger:hover, .app-account-trigger[aria-expanded="true"] { border-color: var(--border); background: var(--surface); }
+.app-user-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 9px; color: var(--accent); background: var(--bg-soft-2); font-size: .68rem; font-weight: 800; }
+.app-user-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.app-user-copy strong, .app-user-copy small { max-width: 125px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-user-copy strong { font-size: .7rem; }
+.app-user-copy small { color: var(--text-soft); font-size: .58rem; font-weight: 500; }
+.app-account-trigger > i { color: var(--text-soft); font-size: .58rem; transition: transform .2s ease; }
+.app-account-trigger[aria-expanded="true"] > i { transform: rotate(180deg); }
+.app-account-popover { position: absolute; top: calc(100% + 9px); right: 0; width: min(320px, calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.app-account-popover[hidden] { display: none; }
+.app-account-summary { display: flex; min-width: 0; align-items: flex-start; gap: 11px; padding: 15px; border-bottom: 1px solid var(--border); }
+.app-account-summary > span:last-child { display: flex; min-width: 0; flex: 1; flex-direction: column; align-items: flex-start; gap: 3px; }
+.app-account-summary strong, .app-account-summary small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-account-summary strong { color: var(--text); font-size: .78rem; }
+.app-account-summary small { color: var(--text-soft); font-size: .65rem; }
+.app-account-summary .access-status-badge { margin-top: 5px; }
+.app-account-links { display: grid; gap: 2px; padding: 7px; }
+.app-account-links button { display: grid; width: 100%; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px; border-radius: 7px; color: var(--text); background: transparent; text-align: left; }
+.app-account-links button:hover, .app-account-links button:focus-visible { background: var(--bg-soft); }
+.app-account-links button > i { color: var(--text-soft); text-align: center; }
+.app-account-links button > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.app-account-links strong { font-size: .72rem; }
+.app-account-links small { color: var(--text-soft); font-size: .6rem; font-weight: 500; }
+.app-account-footer { display: grid; grid-template-columns: 1fr 1fr; padding: 7px; border-top: 1px solid var(--border); }
+.app-account-footer a, .app-account-footer button { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; border-radius: 7px; color: var(--text-soft); background: transparent; font-size: .65rem; font-weight: 600; }
+.app-account-footer a:hover, .app-account-footer button:hover { color: var(--text); background: var(--bg-soft); }
 .auth-pending .app-shell { visibility: hidden; }
 .app-brand-switcher { display: flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: .76rem; font-weight: 700; }
 .app-brand-switcher select { width: min(240px, 32vw); height: 36px; padding: 0 32px 0 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); font: inherit; }
@@ -1451,6 +1479,32 @@ img { max-width: 100%; display: block; }
 .account-danger strong { color: var(--text); font-size: .84rem; }
 .account-danger span { color: var(--text-soft); font-size: .72rem; }
 .account-danger .btn { color: var(--bad); }
+.settings-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.settings-heading > div > span { color: var(--accent); font-size: .65rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.settings-heading h1 { margin: 4px 0 5px; color: var(--text); font-size: 1.55rem; letter-spacing: -.035em; }
+.settings-heading p { margin: 0; color: var(--text-soft); font-size: .78rem; }
+.settings-project-context { display: block; max-width: 280px; overflow: hidden; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); font-size: .68rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.settings-layout { display: grid; grid-template-columns: 205px minmax(0, 1fr); align-items: start; gap: 18px; }
+.settings-nav { position: sticky; top: 74px; display: flex; flex-direction: column; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.settings-nav button { display: grid; width: 100%; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 8px; padding: 10px 9px; border-radius: 7px; color: var(--text-soft); background: transparent; text-align: left; }
+.settings-nav button:hover { color: var(--text); background: var(--bg-soft); }
+.settings-nav button.active { color: var(--accent); background: var(--bg-soft); }
+.settings-nav button > i { text-align: center; }
+.settings-nav button > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.settings-nav strong { color: inherit; font-size: .72rem; }
+.settings-nav small { color: var(--text-soft); font-size: .58rem; font-weight: 500; }
+.settings-content { min-width: 0; max-width: 860px; }
+.settings-panel[hidden] { display: none; }
+.settings-card, .settings-panel .brand-settings { min-width: 0; }
+.settings-card .account-form { max-width: 620px; }
+.settings-readonly-notice { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 16px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-soft); background: var(--status-warn-bg); font-size: .68rem; line-height: 1.45; }
+.settings-readonly-notice[hidden] { display: none; }
+.settings-readonly-notice i { margin-top: 2px; color: var(--warn); }
+.brand-settings-field > small, .account-form label > small { color: var(--text-soft); font-size: .6rem; font-weight: 500; line-height: 1.4; }
+.quota-progress { height: 5px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: var(--border); }
+.quota-progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease; }
+.settings-danger-card { border-color: var(--status-bad-bg); }
+.settings-danger-card .app-card-head h2 { color: var(--bad); }
 .access-banner { display: flex; max-width: 1440px; align-items: center; justify-content: space-between; gap: 16px; margin: 14px auto 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--status-warn-bg); }
 .access-banner[hidden] { display: none; }
 .access-banner > div { display: flex; min-width: 0; align-items: center; gap: 11px; }
@@ -1525,7 +1579,7 @@ img { max-width: 100%; display: block; }
 .admin-error { color: var(--bad); background: var(--status-bad-bg); }
 .app-body button:disabled, .app-body input:disabled, .app-body select:disabled, .app-body textarea:disabled { cursor: not-allowed; opacity: .55; }
 @media (max-width: 768px) { .app-shell { grid-template-columns: 1fr; }.app-sidebar { position: static; min-width: 0; max-width: 100%; overflow: hidden; padding: 12px; }.app-logo { padding: 0 6px 10px; border: 0; }.app-nav { max-width: 100%; flex-direction: row; gap: 4px; overflow-x: auto; padding: 0; }.app-nav-label { display: none; }.app-nav-item { flex: 0 0 auto; width: auto; white-space: nowrap; }.app-setup { display: none; }.app-main { padding: 0 16px 32px; }.app-topbar { align-items: flex-start; flex-direction: column; gap: 10px; }.app-topbar-actions { width: 100%; justify-content: space-between; gap: 10px; }.app-brand-switcher { min-width: 0; flex: 1; }.app-brand-switcher select { min-width: 0; width: 100%; }.app-heading { flex-direction: column; }.app-card-head { align-items: flex-start; }.chart-callout { text-align: left; }.app-kpis, .app-kpis-four, .app-grid-two, .prompt-suggestion-list { grid-template-columns: 1fr; }.app-check-form { flex-direction: column; align-items: stretch; }.app-check-form label { min-width: 0; }.growth-toolbar { align-items: stretch; flex-direction: column; gap: 10px; padding: 13px; }.growth-toolbar-copy strong, .growth-toolbar-copy p { display: block; margin: 4px 0 0; }.growth-toolbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }.growth-compact-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); min-width: 0; white-space: normal; }.growth-compact-stats span { padding: 0 5px; font-size: .58rem; line-height: 1.2; text-align: center; }.growth-compact-stats strong { display: block; margin: 0 0 2px; font-size: .76rem; }.growth-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; padding: 0 4px; }.growth-tabs .app-tab { justify-content: center; min-width: 0; padding: 0 5px; white-space: nowrap; }.growth-tabs .app-tab strong { overflow: hidden; font-size: .66rem; text-overflow: ellipsis; }.growth-tab-count { min-width: 20px; height: 20px; font-size: .62rem; }.growth-card { grid-template-columns: 1fr; gap: 18px; padding: 18px; }.growth-card .btn, .growth-card-actions { width: 100%; }.growth-card-actions { padding: 16px 0 0; border-top: 1px solid var(--border); border-left: 0; }.growth-evidence, .growth-dialog-evidence dl div, .growth-form-grid { grid-template-columns: 1fr; }.growth-result-head { align-items: flex-start; flex-direction: column; }.growth-before-after { grid-template-columns: 1fr; }.growth-before-after > i { transform: rotate(90deg); justify-self: center; }.growth-dialog { width: 100vw; height: 100vh; padding: 24px 16px; }.growth-dialog-actions { flex-direction: column; align-items: stretch; }.growth-dialog-actions .btn { width: 100%; }.growth-delete { margin-left: 0; } }
-@media (max-width: 768px) { .app-shell { grid-template-columns: minmax(0, 1fr); }.app-main { width: 100%; min-width: 0; }.app-topbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; max-width: 100%; }.app-brand-switcher { grid-column: 1 / -1; display: grid; grid-template-columns: 62px minmax(0, 1fr); width: 100%; }.app-topbar-cta { min-width: 0; width: 100%; }.app-topbar-actions > a { display: none; }.app-user { justify-self: end; margin-left: 0; }.app-user span { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+@media (max-width: 768px) { .app-shell { grid-template-columns: minmax(0, 1fr); }.app-main { width: 100%; min-width: 0; }.app-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }.app-topbar-actions { display: contents; }.app-project-control { grid-column: 1; grid-row: 2; width: 100%; }.app-brand-switcher { display: grid; min-width: 0; flex: 1; grid-template-columns: 52px minmax(0, 1fr); width: 100%; }.app-brand-switcher select { min-width: 0; width: 100%; }.app-topbar-cta { grid-column: 2; grid-row: 2; min-width: 0; }.app-account-menu { grid-column: 2; grid-row: 1; justify-self: end; }.app-user-copy strong, .app-user-copy small { max-width: 110px; } }
 
 @media (max-width: 768px) { .ai-answer-head { align-items: flex-start; flex-direction: column; }.ai-answer-copy { width: 100%; }.ai-answer-card { padding: 15px; }.ai-answer-body { font-size: .8rem; } }
 
@@ -1537,6 +1591,13 @@ img { max-width: 100%; display: block; }
     .access-banner { align-items: flex-start; margin-top: 4px; }
     .access-banner > div { align-items: flex-start; }
     .access-banner .btn { flex: 0 0 auto; }
+    .settings-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+    .settings-project-context { max-width: 100%; }
+    .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .settings-nav { position: static; flex-direction: row; max-width: 100%; overflow-x: auto; padding: 4px; }
+    .settings-nav button { flex: 0 0 auto; width: auto; grid-template-columns: 20px auto; padding: 9px 10px; white-space: nowrap; }
+    .settings-nav small { display: none; }
+    .settings-content { width: 100%; max-width: none; }
     .account-layout, .admin-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .account-password-fields, .account-quota-grid, .admin-access-form { grid-template-columns: minmax(0, 1fr); }
     .account-danger-card { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
@@ -1548,6 +1609,16 @@ img { max-width: 100%; display: block; }
     .admin-filters .btn { grid-column: 1 / -1; width: 100%; }
     .admin-client-editor { position: static; }
     .admin-access-form > label:nth-child(3), .admin-access-form .admin-limit, .admin-access-form .admin-reset, .admin-access-form .account-form-status, .admin-access-form > .btn { grid-column: 1; }
+}
+
+@media (max-width: 480px) {
+    .app-user-copy { display: none; }
+    .app-account-trigger { grid-template-columns: 34px auto; }
+    .app-project-control { grid-column: 1 / -1; }
+    .app-topbar-cta { grid-column: 1 / -1; grid-row: 3; width: 100%; }
+    .settings-heading h1 { font-size: 1.35rem; }
+    .settings-nav button { grid-template-columns: auto; }
+    .settings-nav button > i { display: none; }
 }
 
 /* Desktop workspace */

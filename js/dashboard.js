@@ -85,7 +85,7 @@ function identityFor(value) {
 function brandKey(value) { const direct = brandIdentities.find(identity => identity.canonicalId === value); return direct?.canonicalId || identityFor(value)?.canonicalId || `auto:${automaticIdentityText(value)}`; }
 function canonicalBrand(value) { const identity = identityFor(value); return identity ? { id: identity.canonicalId, name: identity.canonicalName, aliases: [...identity.aliases], domains: [...identity.domains] } : { id: brandKey(value), name: normalizeBrandName(value), aliases: [], domains: [] }; }
 function normalizeBrandRecord(item) {
-    return { id: String(item.id || ''), canonicalId: String(item.canonical_id || item.canonicalId || item.id || ''), canonicalName: normalizeBrandName(item.canonical_name || item.canonicalName || item.name), aliases: Array.isArray(item.aliases) ? item.aliases.map(normalizeBrandName).filter(Boolean) : [], domains: Array.isArray(item.domains) ? item.domains.map(domainText).filter(Boolean) : [] };
+    return { id: String(item.id || ''), canonicalId: String(item.canonical_id || item.canonicalId || item.id || ''), canonicalName: normalizeBrandName(item.canonical_name || item.canonicalName || item.name), aliases: Array.isArray(item.aliases) ? item.aliases.map(normalizeBrandName).filter(Boolean) : [], domains: Array.isArray(item.domains) ? item.domains.map(domainText).filter(Boolean) : [], identityChangedAt: item.identity_changed_at || item.identityChangedAt || null };
 }
 async function ensureBrandIdentity(value) {
     const name = normalizeBrandName(value); if (!name) return null;
@@ -189,6 +189,7 @@ function renderBrandSelector() {
     const select = $('#activeBrandSelect');
     select.innerHTML = brandOptions().map(item => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)}</option>`).join('');
     select.value = activeBrandKey;
+    if ($('#settingsProjectName')) $('#settingsProjectName').textContent = currentBrand() || 'Проект не выбран';
 }
 function setActiveBrand(value, syncInput = true, resetResult = true) {
     const key = brandKey(value);
@@ -215,20 +216,71 @@ function renderAllForActiveBrand() {
 
 $('#activeBrandSelect').addEventListener('change', event => setActiveBrand(event.target.value));
 
+function closeAccountMenu(focusTrigger = false) {
+    const menu = $('#accountMenu'); const trigger = $('#accountMenuTrigger');
+    if (!menu || !trigger) return;
+    menu.hidden = true; trigger.setAttribute('aria-expanded', 'false');
+    if (focusTrigger) trigger.focus();
+}
 function selectView(view) {
-    if (view === 'admin' && accountState?.role !== 'admin') view = 'account';
+    if (view === 'admin' && accountState?.role !== 'admin') return selectSettingsTab('profile');
+    closeAccountMenu();
     $$('.app-nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
     $$('.app-view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
-    $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'setup' ? 'Настроить проект' : 'Главная');
+    $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'settings' ? 'Настройки' : 'Главная');
     if (view === 'growth') renderGrowth();
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
     if (view === 'answers') renderAiAnswers();
-    if (view === 'account') { renderAccountProfile(); renderAccountAccess(); }
+    if (view === 'settings') { renderAccountProfile(); renderAccountAccess(); renderBrandSettings(); }
     if (view === 'admin' && !$('#adminClientList').children.length) loadAdminClients();
 }
+const SETTINGS_META = {
+    project: ['Проект', 'Название, варианты написания и домены активного проекта.'],
+    profile: ['Профиль', 'Личные данные вашего аккаунта.'],
+    access: ['Доступ и лимиты', 'Тариф, срок действия и текущее использование.'],
+    security: ['Безопасность', 'Пароль, активные сессии и удаление аккаунта.']
+};
+function selectSettingsTab(tab) {
+    const selected = SETTINGS_META[tab] ? tab : 'profile';
+    selectView('settings');
+    $$('[data-settings-panel]').forEach(panel => { const active = panel.dataset.settingsPanel === selected; panel.hidden = !active; panel.classList.toggle('active', active); });
+    $$('.settings-nav [data-settings-tab]').forEach(button => { const active = button.dataset.settingsTab === selected; button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
+    $('#settingsTitle').textContent = SETTINGS_META[selected][0];
+    $('#settingsDescription').textContent = SETTINGS_META[selected][1];
+    $('#appBreadcrumb').textContent = `Настройки · ${SETTINGS_META[selected][0]}`;
+}
 $$('[data-view]').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
+$$('[data-settings-tab]').forEach(button => button.addEventListener('click', () => selectSettingsTab(button.dataset.settingsTab)));
 $$('[data-empty-chart-action]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
+$('#accountMenuTrigger').addEventListener('click', event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.hidden; menu.hidden = !opening; $('#accountMenuTrigger').setAttribute('aria-expanded', String(opening)); });
+$('#accountMenuTrigger').addEventListener('keydown', event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    const menu = $('#accountMenu'); menu.hidden = false; $('#accountMenuTrigger').setAttribute('aria-expanded', 'true');
+    const items = [...menu.querySelectorAll('[role="menuitem"]')].filter(item => !item.hidden);
+    (event.key === 'ArrowDown' ? items[0] : items.at(-1))?.focus();
+});
+$('#accountMenu').addEventListener('click', event => event.stopPropagation());
+$('#accountMenu').addEventListener('keydown', event => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')].filter(item => !item.hidden);
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1 + items.length) % items.length : (current - 1 + items.length) % items.length;
+    items[next].focus();
+});
+$('.settings-nav').addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
+    const current = tabs.indexOf(document.activeElement); if (current < 0) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+    selectSettingsTab(tabs[next].dataset.settingsTab); tabs[next].focus();
+});
+document.addEventListener('click', () => closeAccountMenu());
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').hidden) closeAccountMenu(true); });
 
 function updateProviderFilter() {
     const total = CHECK_PROVIDERS.length;
@@ -322,6 +374,7 @@ function statusLabelAccess(status) { return ({ pending: 'Ожидает акти
 function planLabel(plan) { return ({ basic: 'Basic', pro: 'Pro', business: 'Business', custom: 'Custom' })[plan] || plan || '—'; }
 function quotaText(quota) { return quota.unlimited ? `${quota.used} использовано · безлимит` : `${quota.used} из ${quota.limit} · осталось ${quota.remaining}`; }
 function quotaPeriodText(quota) { return quota.periodStart || quota.periodEnd ? `${formatDate(quota.periodStart, '—')} — ${formatDate(quota.periodEnd, '—')}` : ''; }
+function quotaProgress(quota) { return quota.unlimited ? 100 : quota.limit > 0 ? Math.min(100, quota.used / quota.limit * 100) : 100; }
 async function refreshAccess(render = true) {
     const data = await apiRequest('/access');
     accessState = normalizeAccess(data.access || data);
@@ -348,8 +401,8 @@ function renderAccessBanner() {
 function renderAccountAccess() {
     if (!accessState || !$('#accountAccessStatus')) return;
     const status = accessState.status;
-    $('#accountAccessStatus').textContent = statusLabelAccess(status);
-    $('#accountAccessStatus').dataset.status = status;
+    ['#accountAccessStatus', '#accountMenuAccess', '#projectAccessStatus'].forEach(selector => { const badge = $(selector); badge.textContent = statusLabelAccess(status); badge.dataset.status = status; });
+    $('#appUserAccessCompact').textContent = status === 'active' ? planLabel(accessState.plan) : statusLabelAccess(status);
     $('#accountPlan').textContent = planLabel(accessState.plan);
     $('#accountAccessExpires').textContent = formatDate(accessState.expiresAt);
     const periodStart = accessState.checks.periodStart || accessState.brands.periodStart;
@@ -357,8 +410,17 @@ function renderAccountAccess() {
     $('#accountAccessPeriod').textContent = periodStart || periodEnd ? `${formatDate(periodStart, '—')} — ${formatDate(periodEnd, '—')}` : '—';
     $('#accountChecksQuota').textContent = quotaText(accessState.checks);
     $('#accountChecksPeriod').textContent = quotaPeriodText(accessState.checks);
+    $('#accountChecksProgress').style.width = `${quotaProgress(accessState.checks)}%`;
     $('#accountBrandsQuota').textContent = quotaText(accessState.brands);
     $('#accountBrandsPeriod').textContent = quotaPeriodText(accessState.brands);
+    $('#accountBrandsProgress').style.width = `${quotaProgress(accessState.brands)}%`;
+}
+function syncEmailPasswordField() {
+    if (!accountState) return;
+    const changed = $('#accountEmail').value.trim().toLocaleLowerCase('ru-RU') !== String(accountState.email || '').toLocaleLowerCase('ru-RU');
+    $('#accountEmailPasswordField').hidden = !changed;
+    $('#accountCurrentPassword').required = changed;
+    if (!changed) $('#accountCurrentPassword').value = '';
 }
 function renderAccountProfile() {
     if (!accountState) return;
@@ -367,17 +429,42 @@ function renderAccountProfile() {
     $('#accountCreatedAt').textContent = formatDate(accountState.created_at || accountState.createdAt, '—');
     $('#accountRole').textContent = accountState.role === 'admin' ? 'Администратор' : 'Клиент';
     $('#appUserName').textContent = accountState.name || accountState.email || '';
-    $('#adminNavItem').hidden = accountState.role !== 'admin';
+    $('#accountMenuName').textContent = accountState.name || 'Пользователь';
+    $('#accountMenuEmail').textContent = accountState.email || '';
+    const initials = brandInitials(accountState.name || accountState.email || 'Пользователь');
+    $('#appUserInitials').textContent = initials;
+    $('#accountMenuInitials').textContent = initials;
+    const isAdmin = accountState.role === 'admin';
+    $('#adminNavItem').hidden = !isAdmin;
+    $('#adminNavLabel').hidden = !isAdmin;
+    $('#adminMenuItem').hidden = !isAdmin;
+    syncEmailPasswordField();
 }
 function setDisabled(selector, disabled) { $$(selector).forEach(element => { element.disabled = disabled; element.setAttribute('aria-disabled', String(disabled)); }); }
+function projectIdentityCooldown(identity) {
+    const changed = parseDate(identity?.identityChangedAt); if (!changed) return null;
+    const next = new Date(changed.getTime() + 14 * 24 * 60 * 60 * 1000);
+    return next.getTime() > Date.now() ? next : null;
+}
+function renderProjectSettingsState() {
+    const identity = activeBrandIdentity(); const canManage = capability('manage_existing_brands'); const notice = $('#projectAccessNotice'); const cooldown = projectIdentityCooldown(identity);
+    if (!identity) { notice.hidden = false; notice.querySelector('span').textContent = 'Проект не выбран. Запустите проверку для нового бренда или выберите существующий проект.'; }
+    else if (!canManage) { notice.hidden = false; notice.querySelector('span').textContent = accessBlockedMessage('workspace_write'); }
+    else notice.hidden = true;
+    $('#brandIdentityCooldown').textContent = cooldown ? `Название и домены можно будет изменить ${formatDateTime(cooldown)}. Псевдонимы доступны сейчас.` : identity ? 'Название и домены можно менять вместе не чаще одного раза в 14 дней.' : '';
+    return { identity, canManage, cooldown };
+}
 function applyAccessGating() {
     const canWrite = capability('workspace_write');
     const canCheck = capability('run_checks');
-    const canManageBrands = capability('manage_existing_brands');
-    const hasBrand = Boolean(activeBrandIdentity());
+    const projectState = renderProjectSettingsState();
+    const projectBlocked = !projectState.canManage || !projectState.identity;
     setDisabled('#wsCheck, .app-topbar-cta, [data-empty-chart-action], [data-view="prompts"]:not(.app-nav-item), [data-measure-task], #dialogMeasureTask', !canCheck);
     setDisabled('#wsBrand, #wsQuery, #wsSuggestPrompts, #refreshPromptSuggestions, [data-create-task], [data-dismiss], [data-quick-status], #growthTaskForm input, #growthTaskForm select, #growthTaskForm textarea, #growthTaskForm [type="submit"], #deleteGrowthTask', !canWrite);
-    setDisabled('#saveCanonicalBrand, #addBrandAlias, #addBrandDomain, #brandAliasInput, #brandDomainInput, #canonicalBrandName, [data-remove-brand-value], #deleteBrand, [data-merge-alias]', !canManageBrands || !hasBrand);
+    setDisabled('#addBrandAlias, #brandAliasInput, [data-merge-alias]', projectBlocked);
+    setDisabled('#saveCanonicalBrand, #addBrandDomain, #brandDomainInput, #canonicalBrandName', projectBlocked || Boolean(projectState.cooldown));
+    setDisabled('#deleteBrand', projectBlocked);
+    $$('[data-remove-brand-value]').forEach(button => { const disabled = projectBlocked || button.dataset.brandValueType === 'domain' && Boolean(projectState.cooldown); button.disabled = disabled; button.setAttribute('aria-disabled', String(disabled)); });
     setDisabled('[data-delete-check]', !canWrite);
     $('.app-topbar-cta')?.classList.toggle('is-access-disabled', !canCheck);
 }
@@ -979,22 +1066,34 @@ function setFormStatus(selector, message, success = false) { const target = $(se
 async function saveAccount(event) {
     event.preventDefault();
     const form = event.currentTarget; if (!form.reportValidity() || !accountState) return;
-    const name = $('#accountName').value.trim(); const email = $('#accountEmail').value.trim(); const currentPassword = $('#accountCurrentPassword').value; const newPassword = $('#accountNewPassword').value;
+    const name = $('#accountName').value.trim(); const email = $('#accountEmail').value.trim(); const currentPassword = $('#accountCurrentPassword').value;
     const body = {};
     if (name !== accountState.name) body.name = name;
-    if (email !== accountState.email) body.email = email;
+    if (email.toLocaleLowerCase('ru-RU') !== String(accountState.email || '').toLocaleLowerCase('ru-RU')) body.email = email;
     if (currentPassword) body.current_password = currentPassword;
-    if (newPassword) body.new_password = newPassword;
     if (!Object.keys(body).length) return setFormStatus('#accountProfileStatus', 'Нет изменений для сохранения.', true);
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountProfileStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify(body) });
         accountState = data.account || data;
         renderAccountProfile();
-        $('#accountCurrentPassword').value = ''; $('#accountNewPassword').value = '';
+        $('#accountCurrentPassword').value = '';
         if (data.reauth_required) { setFormStatus('#accountProfileStatus', 'Данные сохранены. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
         setFormStatus('#accountProfileStatus', 'Профиль сохранён.', true);
     } catch (error) { setFormStatus('#accountProfileStatus', error.message); }
+    finally { button.disabled = false; }
+}
+async function changePassword(event) {
+    event.preventDefault();
+    const form = event.currentTarget; const currentPassword = $('#accountPasswordCurrent').value; const newPassword = $('#accountPasswordNew').value; const confirmation = $('#accountPasswordConfirm').value;
+    $('#accountPasswordConfirm').setCustomValidity(newPassword === confirmation ? '' : 'Пароли не совпадают');
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountPasswordStatus', '');
+    try {
+        const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
+        if (data.reauth_required) { setFormStatus('#accountPasswordStatus', 'Пароль изменён. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
+        form.reset(); setFormStatus('#accountPasswordStatus', 'Пароль изменён.', true);
+    } catch (error) { setFormStatus('#accountPasswordStatus', error.message); }
     finally { button.disabled = false; }
 }
 async function deleteAccount(event) {
@@ -1078,8 +1177,10 @@ async function initializeDashboard() {
 }
 $('#deleteBrand').addEventListener('click', deleteActiveBrand);
 $('#accountProfileForm').addEventListener('submit', saveAccount);
+$('#accountEmail').addEventListener('input', syncEmailPasswordField);
+$('#accountPasswordForm').addEventListener('submit', changePassword);
+$('#accountPasswordConfirm').addEventListener('input', () => $('#accountPasswordConfirm').setCustomValidity(''));
 $('#deleteAccountForm').addEventListener('submit', deleteAccount);
-$('#accountPasswordToggle').addEventListener('click', () => { const wrap = $('#accountPasswordFields'); wrap.hidden = !wrap.hidden; $('#accountPasswordToggle').textContent = wrap.hidden ? 'Изменить пароль' : 'Не менять пароль'; if (wrap.hidden) { $('#accountCurrentPassword').value = ''; $('#accountNewPassword').value = ''; } });
 $('#adminFilters').addEventListener('submit', event => { event.preventDefault(); loadAdminClients(1); });
 $('#adminPrevPage').addEventListener('click', () => loadAdminClients(adminPage - 1));
 $('#adminNextPage').addEventListener('click', () => loadAdminClients(adminPage + 1));

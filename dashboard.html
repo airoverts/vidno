@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=20260914-1">
 </head>
 <body class="app-body auth-pending">
     <div class="app-shell">
@@ -27,15 +27,35 @@
                 <span class="app-nav-label">Рост</span>
                 <button class="app-nav-item" data-view="growth"><i class="fa-solid fa-bolt"></i>План роста</button>
                 <button class="app-nav-item" data-view="reports"><i class="fa-solid fa-file-lines"></i>Отчёты</button>
-                <span class="app-nav-label">Профиль</span>
-                <button class="app-nav-item" data-view="account"><i class="fa-solid fa-user"></i>Аккаунт</button>
+                <span class="app-nav-label" id="adminNavLabel" hidden>Управление</span>
                 <button class="app-nav-item" data-view="admin" id="adminNavItem" hidden><i class="fa-solid fa-user-shield"></i>Администрирование</button>
             </nav>
-            <button class="app-setup" data-view="setup"><i class="fa-solid fa-sliders"></i>Настроить проект</button>
         </aside>
         <main class="app-main">
-            <div class="app-topbar"><span id="appBreadcrumb">Главная</span><div class="app-topbar-actions"><label class="app-brand-switcher">Активный бренд<select id="activeBrandSelect" aria-label="Активный бренд"></select></label><button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button><span class="app-user"><span id="appUserName"></span><button id="appLogout" type="button" aria-label="Выйти" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></span><a href="index.html">На лендинг <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div></div>
-            <div class="access-banner" id="accessBanner" hidden><div><i class="fa-solid fa-circle-info"></i><span><strong id="accessBannerTitle"></strong><small id="accessBannerText"></small></span></div><button class="btn btn-ghost btn-sm" type="button" data-view="account">Подробнее</button></div>
+            <div class="app-topbar">
+                <span id="appBreadcrumb">Главная</span>
+                <div class="app-topbar-actions">
+                    <div class="app-project-control">
+                        <label class="app-brand-switcher"><span>Проект</span><select id="activeBrandSelect" aria-label="Активный проект"></select></label>
+                        <button class="app-icon-button" id="projectSettingsButton" type="button" data-settings-tab="project" aria-label="Настройки проекта" title="Настройки проекта"><i class="fa-solid fa-gear"></i></button>
+                    </div>
+                    <button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button>
+                    <div class="app-account-menu" id="accountMenuRoot">
+                        <button class="app-account-trigger" id="accountMenuTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="app-user-avatar" id="appUserInitials">—</span><span class="app-user-copy"><strong id="appUserName"></strong><small id="appUserAccessCompact">Аккаунт</small></span><i class="fa-solid fa-chevron-down"></i></button>
+                        <div class="app-account-popover" id="accountMenu" role="menu" hidden>
+                            <div class="app-account-summary"><span class="app-user-avatar" id="accountMenuInitials">—</span><span><strong id="accountMenuName"></strong><small id="accountMenuEmail"></small><i class="access-status-badge" id="accountMenuAccess">—</i></span></div>
+                            <div class="app-account-links">
+                                <button type="button" role="menuitem" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Имя и email</small></span></button>
+                                <button type="button" role="menuitem" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ и лимиты</strong><small>Статус и использование</small></span></button>
+                                <button type="button" role="menuitem" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Пароль и удаление аккаунта</small></span></button>
+                                <button type="button" role="menuitem" data-view="admin" id="adminMenuItem" hidden><i class="fa-solid fa-user-shield"></i><span><strong>Администрирование</strong><small>Клиенты и доступ</small></span></button>
+                            </div>
+                            <div class="app-account-footer"><a href="index.html" role="menuitem"><i class="fa-solid fa-arrow-up-right-from-square"></i>На лендинг</a><button id="appLogout" type="button" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i>Выйти</button></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="access-banner" id="accessBanner" hidden><div><i class="fa-solid fa-circle-info"></i><span><strong id="accessBannerTitle"></strong><small id="accessBannerText"></small></span></div><button class="btn btn-ghost btn-sm" type="button" data-settings-tab="access">Подробнее</button></div>
             <section class="app-view active" id="view-home">
                 <div class="app-home-toolbar">
                     <div class="provider-filter" id="providerFilter">
@@ -93,33 +113,66 @@
                 <div id="growthOpportunities" class="growth-list" role="tabpanel"></div><div id="growthTasks" class="growth-list" role="tabpanel" hidden></div><div id="growthResults" class="growth-list" role="tabpanel" hidden></div>
             </section>
             <section class="app-view" id="view-reports"><div class="app-empty app-view-first-card"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span>Используйте историю проверок, чтобы собрать первый срез.</span></div></section>
-            <section class="app-view" id="view-account">
-                <div class="account-layout app-view-first-card">
-                    <div class="app-card account-profile-card">
-                        <div class="app-card-head"><div><h2>Профиль</h2><span>Личные данные и безопасность аккаунта</span></div><span class="account-role" id="accountRole"></span></div>
-                        <form class="account-form" id="accountProfileForm">
-                            <label>Имя<input id="accountName" name="name" minlength="2" maxlength="100" required autocomplete="name"></label>
-                            <label>Email<input id="accountEmail" name="email" type="email" maxlength="254" required autocomplete="email"></label>
-                            <div class="account-meta"><span>Дата регистрации</span><strong id="accountCreatedAt">—</strong></div>
-                            <div class="account-password-fields" id="accountPasswordFields" hidden>
-                                <label>Текущий пароль<input id="accountCurrentPassword" name="current_password" type="password" maxlength="128" autocomplete="current-password"></label>
-                                <label>Новый пароль<input id="accountNewPassword" name="new_password" type="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+            <section class="app-view" id="view-settings">
+                <div class="settings-heading app-view-first-card"><div><span>Настройки</span><h1 id="settingsTitle">Проект</h1><p id="settingsDescription">Название, варианты написания и домены активного проекта.</p></div><span class="settings-project-context" id="settingsProjectName">—</span></div>
+                <div class="settings-layout">
+                    <nav class="settings-nav" aria-label="Разделы настроек" role="tablist">
+                        <button class="active" id="settingsTabProject" type="button" role="tab" aria-selected="true" aria-controls="settings-project" data-settings-tab="project"><i class="fa-solid fa-sliders"></i><span><strong>Проект</strong><small>Бренд и домены</small></span></button>
+                        <button id="settingsTabProfile" type="button" role="tab" aria-selected="false" aria-controls="settings-profile" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Личные данные</small></span></button>
+                        <button id="settingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="settings-access" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ</strong><small>Тариф и лимиты</small></span></button>
+                        <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Пароль и аккаунт</small></span></button>
+                    </nav>
+                    <div class="settings-content">
+                        <section class="settings-panel active" id="settings-project" role="tabpanel" aria-labelledby="settingsTabProject" data-settings-panel="project">
+                            <div class="app-card brand-settings">
+                                <div class="app-card-head"><div><h2>Настройки проекта</h2><span>Все варианты будут учитываться как одна компания</span></div><span class="access-status-badge" id="projectAccessStatus">—</span></div>
+                                <div class="settings-readonly-notice" id="projectAccessNotice" hidden><i class="fa-solid fa-lock"></i><span></span></div>
+                                <label class="brand-settings-field">Основное название<div><input id="canonicalBrandName" maxlength="200"><button class="btn btn-primary btn-sm" id="saveCanonicalBrand" type="button">Сохранить</button></div><small id="brandIdentityCooldown"></small></label>
+                                <div class="brand-settings-grid">
+                                    <div><h3>Другие названия</h3><p>Например: Тинькофф, Tinkoff</p><div class="brand-settings-add"><input id="brandAliasInput" maxlength="200" placeholder="Введите вариант названия"><button class="btn btn-ghost btn-sm" id="addBrandAlias" type="button">Добавить</button></div><div class="brand-chip-list" id="brandAliasList"></div></div>
+                                    <div><h3>Домены</h3><p>Например: tbank.ru</p><div class="brand-settings-add"><input id="brandDomainInput" maxlength="200" placeholder="company.ru"><button class="btn btn-ghost btn-sm" id="addBrandDomain" type="button">Добавить</button></div><div class="brand-chip-list" id="brandDomainList"></div></div>
+                                </div>
+                                <div class="brand-suggestions" id="brandSuggestions"></div>
+                                <div class="account-danger"><div><strong>Удалить проект</strong><span>Бренд удалится вместе с его проверками и задачами.</span></div><div><button class="btn btn-ghost btn-sm" id="deleteBrand" type="button">Удалить проект</button></div></div>
                             </div>
-                            <button class="account-password-toggle" id="accountPasswordToggle" type="button">Изменить пароль</button>
-                            <p class="account-form-status" id="accountProfileStatus" role="status"></p>
-                            <button class="btn btn-primary" type="submit">Сохранить профиль</button>
-                        </form>
+                        </section>
+                        <section class="settings-panel" id="settings-profile" role="tabpanel" aria-labelledby="settingsTabProfile" data-settings-panel="profile" hidden>
+                            <div class="app-card settings-card">
+                                <div class="app-card-head"><div><h2>Профиль</h2><span>Ваши личные данные</span></div><span class="account-role" id="accountRole"></span></div>
+                                <form class="account-form" id="accountProfileForm">
+                                    <label>Имя<input id="accountName" name="name" minlength="2" maxlength="100" required autocomplete="name"></label>
+                                    <label>Email<input id="accountEmail" name="email" type="email" maxlength="254" required autocomplete="email"><small>После смены email потребуется войти снова.</small></label>
+                                    <label id="accountEmailPasswordField" hidden>Текущий пароль<input id="accountCurrentPassword" name="current_password" type="password" maxlength="128" autocomplete="current-password"><small>Нужен только для подтверждения смены email.</small></label>
+                                    <div class="account-meta"><span>Дата регистрации</span><strong id="accountCreatedAt">—</strong></div>
+                                    <p class="account-form-status" id="accountProfileStatus" role="status"></p>
+                                    <button class="btn btn-primary" type="submit">Сохранить профиль</button>
+                                </form>
+                            </div>
+                        </section>
+                        <section class="settings-panel" id="settings-access" role="tabpanel" aria-labelledby="settingsTabAccess" data-settings-panel="access" hidden>
+                            <div class="app-card settings-card account-access-card">
+                                <div class="app-card-head"><div><h2>Доступ и лимиты</h2><span>Тариф, срок и использование возможностей</span></div><span class="access-status-badge" id="accountAccessStatus">—</span></div>
+                                <dl class="account-access-meta"><div><dt>Тариф</dt><dd id="accountPlan">—</dd></div><div><dt>Действует до</dt><dd id="accountAccessExpires">—</dd></div><div><dt>Расчётный период</dt><dd id="accountAccessPeriod">—</dd></div></dl>
+                                <div class="account-quota-grid"><article><span>Проверки</span><strong id="accountChecksQuota">—</strong><div class="quota-progress"><span id="accountChecksProgress"></span></div><small id="accountChecksPeriod"></small></article><article><span>Проекты</span><strong id="accountBrandsQuota">—</strong><div class="quota-progress"><span id="accountBrandsProgress"></span></div><small id="accountBrandsPeriod"></small></article></div>
+                            </div>
+                        </section>
+                        <section class="settings-panel" id="settings-security" role="tabpanel" aria-labelledby="settingsTabSecurity" data-settings-panel="security" hidden>
+                            <div class="app-card settings-card">
+                                <div class="app-card-head"><div><h2>Смена пароля</h2><span>После изменения все активные сессии будут завершены</span></div></div>
+                                <form class="account-form" id="accountPasswordForm">
+                                    <label>Текущий пароль<input id="accountPasswordCurrent" type="password" maxlength="128" required autocomplete="current-password"></label>
+                                    <div class="account-password-fields"><label>Новый пароль<input id="accountPasswordNew" type="password" minlength="8" maxlength="128" required autocomplete="new-password"></label><label>Повторите новый пароль<input id="accountPasswordConfirm" type="password" minlength="8" maxlength="128" required autocomplete="new-password"></label></div>
+                                    <p class="account-form-status" id="accountPasswordStatus" role="status"></p>
+                                    <button class="btn btn-primary" type="submit">Изменить пароль</button>
+                                </form>
+                            </div>
+                            <div class="app-card settings-danger-card">
+                                <div class="app-card-head"><div><h2>Удаление аккаунта</h2><span>Все проекты, проверки и задачи будут удалены без возможности восстановления</span></div></div>
+                                <form id="deleteAccountForm" class="account-delete-form"><label>Текущий пароль<input id="deleteAccountPassword" type="password" maxlength="128" autocomplete="current-password" required></label><label>Подтверждение<input id="deleteAccountConfirmation" maxlength="20" placeholder="УДАЛИТЬ" required></label><button class="btn btn-ghost btn-sm" type="submit" id="deleteAccount">Удалить аккаунт</button></form>
+                                <p class="account-form-status" id="deleteAccountStatus" role="status"></p>
+                            </div>
+                        </section>
                     </div>
-                    <div class="app-card account-access-card">
-                        <div class="app-card-head"><div><h2>Доступ</h2><span>Тариф и текущие ограничения</span></div><span class="access-status-badge" id="accountAccessStatus">—</span></div>
-                        <dl class="account-access-meta"><div><dt>Тариф</dt><dd id="accountPlan">—</dd></div><div><dt>Действует до</dt><dd id="accountAccessExpires">—</dd></div><div><dt>Период</dt><dd id="accountAccessPeriod">—</dd></div></dl>
-                        <div class="account-quota-grid"><article><span>Проверки</span><strong id="accountChecksQuota">—</strong><small id="accountChecksPeriod"></small></article><article><span>Бренды</span><strong id="accountBrandsQuota">—</strong><small id="accountBrandsPeriod"></small></article></div>
-                    </div>
-                </div>
-                <div class="app-card account-danger-card">
-                    <div><strong>Удалить аккаунт</strong><span>Все бренды, проверки и задачи будут удалены без возможности восстановления.</span></div>
-                    <form id="deleteAccountForm" class="account-delete-form"><label>Текущий пароль<input id="deleteAccountPassword" type="password" maxlength="128" autocomplete="current-password" required></label><label>Подтверждение<input id="deleteAccountConfirmation" maxlength="20" placeholder="УДАЛИТЬ" required></label><button class="btn btn-ghost btn-sm" type="submit" id="deleteAccount">Удалить аккаунт</button></form>
-                    <p class="account-form-status" id="deleteAccountStatus" role="status"></p>
                 </div>
             </section>
             <section class="app-view" id="view-admin">
@@ -132,23 +185,11 @@
                     <div class="app-card admin-client-editor" id="adminClientEditor"><div class="app-empty"><i class="fa-solid fa-user-gear"></i><strong>Выберите клиента</strong><span>Профиль и настройки доступа откроются здесь.</span></div></div>
                 </div>
             </section>
-            <section class="app-view" id="view-setup">
-                <div class="app-card app-view-first-card brand-settings">
-                    <div class="app-card-head"><div><h2>Название бренда</h2><span>Все подтверждённые варианты будут считаться одной компанией</span></div></div>
-                    <label class="brand-settings-field">Основное название<div><input id="canonicalBrandName" maxlength="200"><button class="btn btn-primary btn-sm" id="saveCanonicalBrand" type="button">Сохранить</button></div></label>
-                    <div class="brand-settings-grid">
-                        <div><h3>Другие названия</h3><p>Например: Тинькофф, Tinkoff</p><div class="brand-settings-add"><input id="brandAliasInput" maxlength="200" placeholder="Введите вариант названия"><button class="btn btn-ghost btn-sm" id="addBrandAlias" type="button">Добавить</button></div><div class="brand-chip-list" id="brandAliasList"></div></div>
-                        <div><h3>Домены</h3><p>Например: tbank.ru</p><div class="brand-settings-add"><input id="brandDomainInput" maxlength="200" placeholder="company.ru"><button class="btn btn-ghost btn-sm" id="addBrandDomain" type="button">Добавить</button></div><div class="brand-chip-list" id="brandDomainList"></div></div>
-                    </div>
-                    <div class="brand-suggestions" id="brandSuggestions"></div>
-                    <div class="account-danger"><div><strong>Удаление данных бренда</strong><span>Бренд удаляется вместе с его проверками и задачами.</span></div><div><button class="btn btn-ghost btn-sm" id="deleteBrand" type="button">Удалить бренд</button></div></div>
-                </div>
-            </section>
         </main>
     </div>
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
     <script src="js/auth.js?v=20260827-2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20260828-2"></script>
+    <script src="js/dashboard.js?v=20260914-1"></script>
 </body>
 </html>
