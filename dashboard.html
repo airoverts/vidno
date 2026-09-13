@@ -26,11 +26,15 @@
                 <span class="app-nav-label">Рост</span>
                 <button class="app-nav-item" data-view="growth"><i class="fa-solid fa-bolt"></i>План роста</button>
                 <button class="app-nav-item" data-view="reports"><i class="fa-solid fa-file-lines"></i>Отчёты</button>
+                <span class="app-nav-label">Профиль</span>
+                <button class="app-nav-item" data-view="account"><i class="fa-solid fa-user"></i>Аккаунт</button>
+                <button class="app-nav-item" data-view="admin" id="adminNavItem" hidden><i class="fa-solid fa-user-shield"></i>Администрирование</button>
             </nav>
             <button class="app-setup" data-view="setup"><i class="fa-solid fa-sliders"></i>Настроить проект</button>
         </aside>
         <main class="app-main">
             <div class="app-topbar"><span id="appBreadcrumb">Главная</span><div class="app-topbar-actions"><label class="app-brand-switcher">Активный бренд<select id="activeBrandSelect" aria-label="Активный бренд"></select></label><button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button><span class="app-user"><span id="appUserName"></span><button id="appLogout" type="button" aria-label="Выйти" title="Выйти"><i class="fa-solid fa-right-from-bracket"></i></button></span><a href="index.html">На лендинг <i class="fa-solid fa-arrow-up-right-from-square"></i></a></div></div>
+            <div class="access-banner" id="accessBanner" hidden><div><i class="fa-solid fa-circle-info"></i><span><strong id="accessBannerTitle"></strong><small id="accessBannerText"></small></span></div><button class="btn btn-ghost btn-sm" type="button" data-view="account">Подробнее</button></div>
             <section class="app-view active" id="view-home">
                 <div class="app-home-toolbar">
                     <div class="provider-filter" id="providerFilter">
@@ -88,6 +92,45 @@
                 <div id="growthOpportunities" class="growth-list" role="tabpanel"></div><div id="growthTasks" class="growth-list" role="tabpanel" hidden></div><div id="growthResults" class="growth-list" role="tabpanel" hidden></div>
             </section>
             <section class="app-view" id="view-reports"><div class="app-empty app-view-first-card"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span>Используйте историю проверок, чтобы собрать первый срез.</span></div></section>
+            <section class="app-view" id="view-account">
+                <div class="account-layout app-view-first-card">
+                    <div class="app-card account-profile-card">
+                        <div class="app-card-head"><div><h2>Профиль</h2><span>Личные данные и безопасность аккаунта</span></div><span class="account-role" id="accountRole"></span></div>
+                        <form class="account-form" id="accountProfileForm">
+                            <label>Имя<input id="accountName" name="name" minlength="2" maxlength="100" required autocomplete="name"></label>
+                            <label>Email<input id="accountEmail" name="email" type="email" maxlength="254" required autocomplete="email"></label>
+                            <div class="account-meta"><span>Дата регистрации</span><strong id="accountCreatedAt">—</strong></div>
+                            <div class="account-password-fields" id="accountPasswordFields" hidden>
+                                <label>Текущий пароль<input id="accountCurrentPassword" name="current_password" type="password" maxlength="128" autocomplete="current-password"></label>
+                                <label>Новый пароль<input id="accountNewPassword" name="new_password" type="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+                            </div>
+                            <button class="account-password-toggle" id="accountPasswordToggle" type="button">Изменить пароль</button>
+                            <p class="account-form-status" id="accountProfileStatus" role="status"></p>
+                            <button class="btn btn-primary" type="submit">Сохранить профиль</button>
+                        </form>
+                    </div>
+                    <div class="app-card account-access-card">
+                        <div class="app-card-head"><div><h2>Доступ</h2><span>Тариф и текущие ограничения</span></div><span class="access-status-badge" id="accountAccessStatus">—</span></div>
+                        <dl class="account-access-meta"><div><dt>Тариф</dt><dd id="accountPlan">—</dd></div><div><dt>Действует до</dt><dd id="accountAccessExpires">—</dd></div><div><dt>Период</dt><dd id="accountAccessPeriod">—</dd></div></dl>
+                        <div class="account-quota-grid"><article><span>Проверки</span><strong id="accountChecksQuota">—</strong><small id="accountChecksPeriod"></small></article><article><span>Бренды</span><strong id="accountBrandsQuota">—</strong><small id="accountBrandsPeriod"></small></article></div>
+                    </div>
+                </div>
+                <div class="app-card account-danger-card">
+                    <div><strong>Удалить аккаунт</strong><span>Все бренды, проверки и задачи будут удалены без возможности восстановления.</span></div>
+                    <form id="deleteAccountForm" class="account-delete-form"><label>Текущий пароль<input id="deleteAccountPassword" type="password" maxlength="128" autocomplete="current-password" required></label><label>Подтверждение<input id="deleteAccountConfirmation" maxlength="20" placeholder="УДАЛИТЬ" required></label><button class="btn btn-ghost btn-sm" type="submit" id="deleteAccount">Удалить аккаунт</button></form>
+                    <p class="account-form-status" id="deleteAccountStatus" role="status"></p>
+                </div>
+            </section>
+            <section class="app-view" id="view-admin">
+                <div class="app-card app-view-first-card admin-toolbar-card">
+                    <div class="app-card-head"><div><h2>Клиенты</h2><span>Управление статусами, сроками и квотами</span></div><span id="adminClientCount"></span></div>
+                    <form class="admin-filters" id="adminFilters"><label class="admin-search">Поиск<input id="adminSearch" placeholder="Имя, email или бренд"></label><label>Статус<select id="adminStatusFilter"><option value="">Все</option><option value="pending">Ожидает</option><option value="active">Активен</option><option value="expired">Истёк</option><option value="suspended">Приостановлен</option></select></label><label>Тариф<select id="adminPlanFilter"><option value="">Все</option><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option></select></label><button class="btn btn-primary btn-sm" type="submit">Найти</button></form>
+                </div>
+                <div class="admin-layout">
+                    <div class="app-card admin-client-list-card"><div class="admin-client-list" id="adminClientList"></div><div class="admin-pagination"><button class="btn btn-ghost btn-sm" id="adminPrevPage" type="button">Назад</button><span id="adminPageLabel"></span><button class="btn btn-ghost btn-sm" id="adminNextPage" type="button">Вперёд</button></div></div>
+                    <div class="app-card admin-client-editor" id="adminClientEditor"><div class="app-empty"><i class="fa-solid fa-user-gear"></i><strong>Выберите клиента</strong><span>Профиль и настройки доступа откроются здесь.</span></div></div>
+                </div>
+            </section>
             <section class="app-view" id="view-setup">
                 <div class="app-card app-view-first-card brand-settings">
                     <div class="app-card-head"><div><h2>Название бренда</h2><span>Все подтверждённые варианты будут считаться одной компанией</span></div></div>
@@ -97,7 +140,7 @@
                         <div><h3>Домены</h3><p>Например: tbank.ru</p><div class="brand-settings-add"><input id="brandDomainInput" maxlength="200" placeholder="company.ru"><button class="btn btn-ghost btn-sm" id="addBrandDomain" type="button">Добавить</button></div><div class="brand-chip-list" id="brandDomainList"></div></div>
                     </div>
                     <div class="brand-suggestions" id="brandSuggestions"></div>
-                    <div class="account-danger"><div><strong>Удаление данных</strong><span>Бренд удаляется вместе с проверками и задачами. Удаление аккаунта необратимо.</span></div><div><button class="btn btn-ghost btn-sm" id="deleteBrand" type="button">Удалить бренд</button><button class="btn btn-ghost btn-sm" id="deleteAccount" type="button">Удалить аккаунт</button></div></div>
+                    <div class="account-danger"><div><strong>Удаление данных бренда</strong><span>Бренд удаляется вместе с его проверками и задачами.</span></div><div><button class="btn btn-ghost btn-sm" id="deleteBrand" type="button">Удалить бренд</button></div></div>
                 </div>
             </section>
         </main>

@@ -34,7 +34,16 @@ def _password_matches(password: str, encoded: str) -> bool:
 
 
 def _public_user(row):
-    return {"id": row["id"], "name": row["name"], "email": row["email"], "brand": row["brand"]}
+    user = {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "brand": row["brand"],
+        "role": row.get("role", "client"),
+    }
+    if row.get("created_at"):
+        user["created_at"] = row["created_at"].isoformat()
+    return user
 
 
 def create_user(name: str, email: str, password: str, brand: str):
@@ -48,6 +57,10 @@ def create_user(name: str, email: str, password: str, brand: str):
                 """,
                 (name, email, brand, _password_hash(password)),
             ).fetchone()
+            database.execute(
+                "INSERT INTO user_access(user_id, status, plan) VALUES (%s, 'pending', 'custom')",
+                (row["id"],),
+            )
             if brand:
                 database.execute(
                     "INSERT INTO brands(user_id, canonical_id, canonical_name) VALUES (%s, %s, %s)",
@@ -108,3 +121,61 @@ def delete_user(user_id: int):
     with connection() as database:
         row = database.execute("DELETE FROM users WHERE id = %s RETURNING id", (user_id,)).fetchone()
     return bool(row)
+
+
+def get_account(user_id: int):
+    with connection() as database:
+        row = database.execute(
+            "SELECT id, name, email, brand, role, created_at FROM users WHERE id = %s",
+            (user_id,),
+        ).fetchone()
+    return _public_user(row) if row else None
+
+
+def update_account(user_id: int, name: str | None = None, email: str | None = None, current_password: str | None = None, new_password: str | None = None):
+    try:
+        with connection() as database:
+            row = database.execute("SELECT * FROM users WHERE id = %s FOR UPDATE", (user_id,)).fetchone()
+            if not row:
+                return None, False, "not_found"
+            sensitive = email is not None and email != row["email"] or new_password is not None
+            if sensitive and (not current_password or not _password_matches(current_password, row["password_hash"])):
+                return None, False, "invalid_password"
+            updated = database.execute(
+                """
+                UPDATE users
+                SET name = COALESCE(%s, name),
+                    email = COALESCE(%s, email),
+                    password_hash = COALESCE(%s, password_hash)
+                WHERE id = %s
+                RETURNING id, name, email, brand, role, created_at
+                """,
+                (name, email, _password_hash(new_password) if new_password else None, user_id),
+            ).fetchone()
+            if sensitive:
+                database.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
+    except UniqueViolation:
+        return None, False, "duplicate_email"
+    return _public_user(updated), sensitive, None
+
+
+def delete_user_verified(user_id: int, current_password: str):
+    with connection() as database:
+        row = database.execute("SELECT password_hash FROM users WHERE id = %s FOR UPDATE", (user_id,)).fetchone()
+        if not row:
+            return "not_found"
+        if not _password_matches(current_password, row["password_hash"]):
+            return "invalid_password"
+        database.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    return None
+
+
+def set_user_role(email: str, role: str):
+    if role not in {"client", "admin"}:
+        raise ValueError("invalid role")
+    with connection() as database:
+        row = database.execute(
+            "UPDATE users SET role = %s WHERE LOWER(email) = LOWER(%s) RETURNING id, email, role",
+            (role, email.strip()),
+        ).fetchone()
+    return row

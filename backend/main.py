@@ -8,14 +8,15 @@ import httpx
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Body, Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Body, Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,8 +30,8 @@ from perplexity_client import ANALYSIS_VERSION, analyze_answer as analyze_with_p
 from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
-from auth import authenticate, create_session, create_user, delete_session, delete_user, initialize_auth, user_for_session
-from storage import create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, restore_opportunity, start_check, update_brand, update_growth_task
+from auth import authenticate, create_session, create_user, delete_session, delete_user_verified, get_account, initialize_auth, update_account, user_for_session
+from storage import AccessControlError, create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, get_access, get_admin_client, list_admin_clients, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, require_workspace_access, restore_opportunity, start_check, update_admin_access, update_brand, update_growth_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,6 +105,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(AccessControlError)
+async def access_control_error_handler(_request: Request, error: AccessControlError):
+    return JSONResponse(status_code=error.status_code, content={"detail": error.payload})
 
 cors_origins = [origin.strip() for origin in os.getenv(
     "CORS_ORIGINS",
@@ -182,10 +188,119 @@ def logout(response: Response, vidno_session: str | None = Cookie(default=None),
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 
+class AccountPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    email: str | None = Field(default=None, min_length=5, max_length=254)
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+    new_password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+class AccountDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=128)
+    confirmation: str
+
+
+@app.get("/api/account")
+def account(user: dict = Depends(_current_user)):
+    result = get_account(user["id"])
+    if not result:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    result.pop("brand", None)
+    return result
+
+
+@app.patch("/api/account")
+def patch_account(req: AccountPatchRequest, response: Response, user: dict = Depends(_current_user)):
+    email = _normalized_email(req.email) if req.email is not None else None
+    name = " ".join(req.name.split()) if req.name is not None else None
+    if name is not None and len(name) < 2:
+        raise HTTPException(status_code=422, detail={"code": "invalid_name", "message": "Имя должно содержать не менее двух символов"})
+    if name is None and email is None and req.new_password is None:
+        raise HTTPException(status_code=422, detail={"code": "no_changes", "message": "Не указаны изменения аккаунта"})
+    if req.name is not None and not name:
+        raise HTTPException(status_code=422, detail="Имя обязательно")
+    if (email is not None or req.new_password is not None) and not req.current_password:
+        raise HTTPException(status_code=422, detail={"code": "current_password_required", "message": "Введите текущий пароль"})
+    result, reauth_required, error = update_account(user["id"], name, email, req.current_password, req.new_password)
+    if error == "invalid_password":
+        raise HTTPException(status_code=403, detail={"code": "invalid_current_password", "message": "Неверный текущий пароль"})
+    if error == "duplicate_email":
+        raise HTTPException(status_code=409, detail={"code": "duplicate_email", "message": "Аккаунт с таким email уже существует"})
+    if error or not result:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
+    result.pop("brand", None)
+    if reauth_required:
+        response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"account": result, "reauth_required": reauth_required}
+
+
 @app.delete("/api/account", status_code=204)
-def delete_account(response: Response, user: dict = Depends(_current_user)):
-    delete_user(user["id"])
+def delete_account(req: AccountDeleteRequest, response: Response, user: dict = Depends(_current_user)):
+    if req.confirmation != "УДАЛИТЬ":
+        raise HTTPException(status_code=422, detail={"code": "confirmation_required", "message": "Введите УДАЛИТЬ для подтверждения"})
+    error = delete_user_verified(user["id"], req.current_password)
+    if error == "invalid_password":
+        raise HTTPException(status_code=403, detail={"code": "invalid_current_password", "message": "Неверный текущий пароль"})
+    if error:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден")
     response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@app.get("/api/access")
+def access(user: dict = Depends(_current_user)):
+    return get_access(user["id"])
+
+
+def _admin_user(user: dict = Depends(_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail={"code": "admin_required", "message": "Недостаточно прав"})
+    return user
+
+
+class AdminAccessPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["pending", "active", "suspended"] | None = None
+    plan: Literal["basic", "pro", "business", "custom"] | None = None
+    expires_at: datetime | None = None
+    checks_limit: int | None = Field(default=None, ge=0)
+    brands_limit: int | None = Field(default=None, ge=0)
+    reset_usage: bool = False
+
+
+@app.get("/api/admin/clients")
+def admin_clients(
+    q: str = Query(default="", max_length=200),
+    status: Literal["pending", "active", "expired", "suspended"] | None = None,
+    plan: Literal["basic", "pro", "business", "custom"] | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    _admin: dict = Depends(_admin_user),
+):
+    return list_admin_clients(q.strip(), status, plan, page, page_size)
+
+
+@app.get("/api/admin/clients/{client_id}")
+def admin_client(client_id: int, _admin: dict = Depends(_admin_user)):
+    result = get_admin_client(client_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    return result
+
+
+@app.patch("/api/admin/clients/{client_id}/access")
+def patch_admin_client_access(client_id: int, req: AdminAccessPatchRequest, _admin: dict = Depends(_admin_user)):
+    changes = req.model_dump(exclude_unset=True)
+    if changes.get("status", "valid") is None or changes.get("plan", "valid") is None:
+        raise HTTPException(status_code=422, detail={"code": "invalid_access_update", "message": "Статус и тариф не могут быть пустыми"})
+    result = update_admin_access(client_id, changes)
+    if not result:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    return result
 
 
 class BrandRequest(BaseModel):
@@ -231,6 +346,8 @@ def patch_brand(brand_id: int, req: BrandUpdateRequest, user: dict = Depends(_cu
     current = next((item for item in list_brands(user["id"]) if item["id"] == brand_id), None)
     if not current:
         raise HTTPException(status_code=404, detail="Бренд не найден")
+    if req.canonical_id is not None and req.canonical_id.strip() != current["canonical_id"]:
+        raise HTTPException(status_code=422, detail={"code": "canonical_id_immutable", "message": "canonical_id нельзя изменить"})
     brand = update_brand(
         user["id"],
         brand_id,
@@ -240,7 +357,7 @@ def patch_brand(brand_id: int, req: BrandUpdateRequest, user: dict = Depends(_cu
         _clean_values(req.domains) if req.domains is not None else current["domains"],
     )
     if brand is False:
-        raise HTTPException(status_code=409, detail="Бренд с таким canonical_id уже существует")
+        raise HTTPException(status_code=422, detail={"code": "canonical_id_immutable", "message": "canonical_id нельзя изменить"})
     return {"brand": brand}
 
 
@@ -510,6 +627,7 @@ def _aggregate_results(results, errors):
 
 @app.post("/api/prompt-suggestions")
 def prompt_suggestions(req: PromptSuggestionsRequest, user: dict = Depends(_current_user)):
+    require_workspace_access(user["id"])
     _enforce_rate_limit(str(user["id"]))
     if not is_perplexity_configured():
         raise HTTPException(status_code=503, detail="Perplexity не настроен")
@@ -673,6 +791,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
 
 @app.post("/api/brief")
 def create_brief(req: BriefRequest, user: dict = Depends(_current_user)):
+    require_workspace_access(user["id"])
     _enforce_rate_limit(str(user["id"]))
     provider = PROVIDERS[req.provider]
     if not provider["configured"]():

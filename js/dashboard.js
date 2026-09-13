@@ -17,15 +17,57 @@ let activeGrowthTaskId = null;
 let competitorExpanded = false;
 let sourceExpanded = false;
 let selectedProviders = new Set(CHECK_PROVIDERS);
+let accountState = null;
+let accessState = null;
+let adminPage = 1;
+let adminTotalPages = 1;
+let selectedAdminClientId = null;
+
+class ApiError extends Error {
+    constructor(message, status, code = '', details = {}) { super(message); this.name = 'ApiError'; this.status = status; this.code = code; this.details = details; }
+}
+
+function capability(name, fallback = false) { return accessState ? Boolean(accessState.capabilities?.[name]) : fallback; }
+function requiredCapability(path, method) {
+    if (method === 'GET' || method === 'HEAD') return '';
+    if (/^\/(?:account|admin\/|auth\/)/.test(path)) return '';
+    if (/^\/check(?:-all)?$/.test(path)) return 'run_checks';
+    if (path === '/brands' && method === 'POST') return 'create_brands';
+    if (/^\/brands\//.test(path)) return 'manage_existing_brands';
+    return 'workspace_write';
+}
+function accessBlockedMessage(name) {
+    if (accessState?.status === 'pending') return 'Доступ ещё не активирован. Вы можете просматривать сохранённые данные.';
+    if (accessState?.status === 'expired') return 'Срок доступа истёк. Сохранённые данные доступны только для просмотра.';
+    if (accessState?.status === 'suspended') return 'Доступ приостановлен. Сохранённые данные доступны только для просмотра.';
+    if (name === 'run_checks') return 'Лимит проверок исчерпан. Подробности доступны в разделе «Аккаунт».';
+    if (name === 'create_brands') return 'Лимит брендов исчерпан. Существующие бренды остаются доступны.';
+    return 'Это действие недоступно для текущего уровня доступа.';
+}
+function requireCapability(name) {
+    if (capability(name)) return true;
+    const message = accessBlockedMessage(name);
+    showError(message);
+    renderAccessBanner();
+    return false;
+}
 
 async function apiRequest(path, options = {}) {
+    const method = String(options.method || 'GET').toUpperCase();
+    const required = requiredCapability(path, method);
+    if (required && !capability(required)) throw new ApiError(accessBlockedMessage(required), accessState?.status === 'active' ? 429 : 403, accessState?.status === 'active' ? 'quota_exceeded' : `access_${accessState?.status || 'pending'}`);
     const response = await fetch(`${API_BASE}${path}`, { credentials: 'include', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } });
     const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (response.status === 401) {
         window.location.replace('index.html?auth=login');
         throw new Error('Сессия истекла');
     }
-    if (!response.ok || data.error) throw new Error(apiErrorMessage(data, response.status));
+    if (!response.ok || data.error) {
+        const details = data?.detail && typeof data.detail === 'object' ? data.detail : data?.error && typeof data.error === 'object' ? data.error : data;
+        const code = details?.code || data?.code || (typeof data?.error === 'string' && /^[a-z_]+$/.test(data.error) ? data.error : '');
+        if (response.status === 403 || response.status === 429) setTimeout(() => refreshAccess().catch(() => {}), 0);
+        throw new ApiError(apiErrorMessage(data, response.status), response.status, code, details || {});
+    }
     return data;
 }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
@@ -51,6 +93,7 @@ async function ensureBrandIdentity(value) {
     const data = await apiRequest('/brands', { method: 'POST', body: JSON.stringify({ canonical_name: name, aliases: [], domains: [] }) });
     const identity = normalizeBrandRecord(data.brand || data);
     brandIdentities.push(identity);
+    await refreshAccess().catch(() => {});
     return identity;
 }
 async function persistBrandIdentity(identity) {
@@ -167,11 +210,13 @@ function renderAllForActiveBrand() {
     renderGrowth();
     renderBrandSettings();
     bindAvatarFallbacks();
+    applyAccessGating();
 }
 
 $('#activeBrandSelect').addEventListener('change', event => setActiveBrand(event.target.value));
 
 function selectView(view) {
+    if (view === 'admin' && accountState?.role !== 'admin') view = 'account';
     $$('.app-nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
     $$('.app-view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
     $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'setup' ? 'Настроить проект' : 'Главная');
@@ -179,6 +224,8 @@ function selectView(view) {
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
     if (view === 'answers') renderAiAnswers();
+    if (view === 'account') { renderAccountProfile(); renderAccountAccess(); }
+    if (view === 'admin' && !$('#adminClientList').children.length) loadAdminClients();
 }
 $$('[data-view]').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
 $$('[data-empty-chart-action]').forEach(button => button.addEventListener('click', () => selectView('prompts')));
@@ -225,13 +272,26 @@ async function suggestPrompts() {
     } catch (error) {
         $('#promptSuggestionStatus').textContent = error.message;
         showError(`Не удалось подобрать промпты: ${error.message}`);
-    } finally { button.disabled = false; refresh.disabled = false; }
+    } finally { button.disabled = false; refresh.disabled = false; applyAccessGating(); }
 }
 $('#wsSuggestPrompts').addEventListener('click', suggestPrompts);
 $('#refreshPromptSuggestions').addEventListener('click', suggestPrompts);
 
 function apiErrorMessage(data, status) {
     const value = data?.error ?? data?.detail;
+    const details = value && typeof value === 'object' && !Array.isArray(value) ? value : data;
+    const code = details?.code || data?.code || (typeof value === 'string' && /^[a-z_]+$/.test(value) ? value : '');
+    const messages = {
+        access_pending: 'Доступ ещё не активирован. Сохранённые данные доступны только для просмотра.',
+        access_suspended: 'Доступ приостановлен. Сохранённые данные доступны только для просмотра.',
+        access_expired: 'Срок доступа истёк. Сохранённые данные доступны только для просмотра.',
+        quota_exceeded: 'Лимит исчерпан. Проверьте доступные квоты в разделе «Аккаунт».',
+        brand_identity_cooldown: 'Название и домены бренда можно изменять не чаще одного раза в 14 дней.'
+    };
+    if (messages[code]) {
+        const next = details?.next_allowed_at || details?.nextAllowedAt;
+        return next && code === 'brand_identity_cooldown' ? `${messages[code]} Следующее изменение: ${formatDateTime(next)}.` : messages[code];
+    }
     if (typeof value === 'string' && value.trim()) return value;
     if (Array.isArray(value)) {
         const messages = value.map(item => typeof item === 'string' ? item : item?.error || item?.msg).filter(Boolean);
@@ -243,6 +303,83 @@ function apiErrorMessage(data, status) {
         if (typeof value.msg === 'string') return value.msg;
     }
     return `Ошибка сервера (HTTP ${status})`;
+}
+
+function parseDate(value) { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date : null; }
+function formatDate(value, fallback = 'Бессрочно') { const date = parseDate(value); return date ? date.toLocaleDateString('ru-RU') : fallback; }
+function formatDateTime(value) { const date = parseDate(value); return date ? date.toLocaleString('ru-RU') : 'неизвестно'; }
+function normalizeQuota(value = {}) {
+    const limit = value.limit === null || value.limit === undefined ? null : Number(value.limit);
+    const used = Math.max(0, Number(value.used) || 0);
+    const unlimited = Boolean(value.unlimited || limit === null);
+    const remaining = unlimited ? null : Math.max(0, value.remaining === undefined || value.remaining === null ? limit - used : Number(value.remaining));
+    return { limit, used, remaining, unlimited, periodStart: value.period_start || value.periodStart || null, periodEnd: value.period_end || value.periodEnd || null };
+}
+function normalizeAccess(value = {}) {
+    return { status: value.status || value.effective_status || 'pending', administrativeStatus: value.administrative_status || value.administrativeStatus || value.status || 'pending', plan: value.plan || 'custom', activatedAt: value.activated_at || value.activatedAt || null, expiresAt: value.expires_at || value.expiresAt || null, checks: normalizeQuota(value.checks), brands: normalizeQuota(value.brands), capabilities: { workspace_write: Boolean(value.capabilities?.workspace_write ?? value.capabilities?.workspaceWrite), run_checks: Boolean(value.capabilities?.run_checks ?? value.capabilities?.runChecks), create_brands: Boolean(value.capabilities?.create_brands ?? value.capabilities?.createBrands), manage_existing_brands: Boolean(value.capabilities?.manage_existing_brands ?? value.capabilities?.manageExistingBrands) } };
+}
+function statusLabelAccess(status) { return ({ pending: 'Ожидает активации', active: 'Активен', expired: 'Срок истёк', suspended: 'Приостановлен' })[status] || status || 'Неизвестно'; }
+function planLabel(plan) { return ({ basic: 'Basic', pro: 'Pro', business: 'Business', custom: 'Custom' })[plan] || plan || '—'; }
+function quotaText(quota) { return quota.unlimited ? `${quota.used} использовано · безлимит` : `${quota.used} из ${quota.limit} · осталось ${quota.remaining}`; }
+function quotaPeriodText(quota) { return quota.periodStart || quota.periodEnd ? `${formatDate(quota.periodStart, '—')} — ${formatDate(quota.periodEnd, '—')}` : ''; }
+async function refreshAccess(render = true) {
+    const data = await apiRequest('/access');
+    accessState = normalizeAccess(data.access || data);
+    if (render) { renderAccountAccess(); renderAccessBanner(); applyAccessGating(); }
+    return accessState;
+}
+function renderAccessBanner() {
+    if (!accessState) return;
+    const banner = $('#accessBanner');
+    const status = accessState.status;
+    const checksExhausted = !accessState.checks.unlimited && accessState.checks.remaining <= 0;
+    const brandsExhausted = !accessState.brands.unlimited && accessState.brands.remaining <= 0;
+    if (status === 'active' && !checksExhausted && !brandsExhausted) { banner.hidden = true; return; }
+    banner.hidden = false;
+    banner.dataset.status = status;
+    if (status !== 'active') {
+        $('#accessBannerTitle').textContent = statusLabelAccess(status);
+        $('#accessBannerText').textContent = accessBlockedMessage('workspace_write');
+    } else {
+        $('#accessBannerTitle').textContent = 'Ограничения тарифа';
+        $('#accessBannerText').textContent = checksExhausted && brandsExhausted ? 'Исчерпаны лимиты проверок и брендов.' : checksExhausted ? 'Исчерпан лимит проверок.' : 'Исчерпан лимит новых брендов.';
+    }
+}
+function renderAccountAccess() {
+    if (!accessState || !$('#accountAccessStatus')) return;
+    const status = accessState.status;
+    $('#accountAccessStatus').textContent = statusLabelAccess(status);
+    $('#accountAccessStatus').dataset.status = status;
+    $('#accountPlan').textContent = planLabel(accessState.plan);
+    $('#accountAccessExpires').textContent = formatDate(accessState.expiresAt);
+    const periodStart = accessState.checks.periodStart || accessState.brands.periodStart;
+    const periodEnd = accessState.checks.periodEnd || accessState.brands.periodEnd;
+    $('#accountAccessPeriod').textContent = periodStart || periodEnd ? `${formatDate(periodStart, '—')} — ${formatDate(periodEnd, '—')}` : '—';
+    $('#accountChecksQuota').textContent = quotaText(accessState.checks);
+    $('#accountChecksPeriod').textContent = quotaPeriodText(accessState.checks);
+    $('#accountBrandsQuota').textContent = quotaText(accessState.brands);
+    $('#accountBrandsPeriod').textContent = quotaPeriodText(accessState.brands);
+}
+function renderAccountProfile() {
+    if (!accountState) return;
+    $('#accountName').value = accountState.name || '';
+    $('#accountEmail').value = accountState.email || '';
+    $('#accountCreatedAt').textContent = formatDate(accountState.created_at || accountState.createdAt, '—');
+    $('#accountRole').textContent = accountState.role === 'admin' ? 'Администратор' : 'Клиент';
+    $('#appUserName').textContent = accountState.name || accountState.email || '';
+    $('#adminNavItem').hidden = accountState.role !== 'admin';
+}
+function setDisabled(selector, disabled) { $$(selector).forEach(element => { element.disabled = disabled; element.setAttribute('aria-disabled', String(disabled)); }); }
+function applyAccessGating() {
+    const canWrite = capability('workspace_write');
+    const canCheck = capability('run_checks');
+    const canManageBrands = capability('manage_existing_brands');
+    const hasBrand = Boolean(activeBrandIdentity());
+    setDisabled('#wsCheck, .app-topbar-cta, [data-empty-chart-action], [data-view="prompts"]:not(.app-nav-item), [data-measure-task], #dialogMeasureTask', !canCheck);
+    setDisabled('#wsBrand, #wsQuery, #wsSuggestPrompts, #refreshPromptSuggestions, [data-create-task], [data-dismiss], [data-quick-status], #growthTaskForm input, #growthTaskForm select, #growthTaskForm textarea, #growthTaskForm [type="submit"], #deleteGrowthTask', !canWrite);
+    setDisabled('#saveCanonicalBrand, #addBrandAlias, #addBrandDomain, #brandAliasInput, #brandDomainInput, #canonicalBrandName, [data-remove-brand-value], #deleteBrand, [data-merge-alias]', !canManageBrands || !hasBrand);
+    setDisabled('[data-delete-check]', !canWrite);
+    $('.app-topbar-cta')?.classList.toggle('is-access-disabled', !canCheck);
 }
 
 $('#wsCheck').addEventListener('click', async () => {
@@ -259,10 +396,11 @@ $('#wsCheck').addEventListener('click', async () => {
         const data = canonicalizeCheckResult(raw, identity);
         renderResult(data);
         saveCheck(data, brand, query, 'all');
+        await refreshAccess().catch(() => {});
         const errors = (data.provider_errors || []).map(item => `${PROVIDERS[item.provider] || item.provider}: ${item.error}`);
         if (errors.length) showError(`Часть данных недоступна: ${errors.join('; ')}`);
     } catch (error) { await refreshChecks().catch(() => {}); if ($('#wsError').hidden) showError(`Не удалось выполнить проверку: ${error.message}`); }
-    finally { $('#wsLoader').hidden = true; checkButton.disabled = false; }
+    finally { $('#wsLoader').hidden = true; checkButton.disabled = false; applyAccessGating(); }
 });
 
 function showError(message) { const error = $('#wsError'); error.textContent = message; error.hidden = false; }
@@ -410,6 +548,7 @@ function renderGrowth() {
     $('#growthTasks').innerHTML = tasks.length ? tasks.sort((a, b) => b.updatedAt - a.updatedAt).map(renderTaskCard).join('') : emptyGrowth('Нет задач в работе', 'Выберите подтверждённую возможность и превратите её в конкретную задачу.', '<button class="btn btn-ghost btn-sm" data-growth-open-tab="opportunities">Посмотреть возможности</button>');
     $('#growthResults').innerHTML = results.length ? results.sort((a, b) => b.updatedAt - a.updatedAt).map(renderResultCard).join('') : emptyGrowth('Пока нет измеренных результатов', 'Завершите задачу и выполните свежую проверку эффекта.', '<button class="btn btn-ghost btn-sm" data-growth-open-tab="tasks">Перейти к задачам</button>');
     bindGrowthActions();
+    applyAccessGating();
 }
 function renderOpportunityCard(item) {
     const competitors = item.competitors.length ? item.competitors.slice(0, 4).join(', ') : 'не обнаружены';
@@ -528,6 +667,7 @@ function renderTaskDialog(opportunity, task, creating) {
     $('#growthTaskForm').addEventListener('submit', event => { event.preventDefault(); creating ? createTaskFromDialog() : updateTaskFromDialog(); });
     $('#deleteGrowthTask')?.addEventListener('click', deleteActiveTask);
     $('#dialogMeasureTask')?.addEventListener('click', event => measureTask(task.id, event.currentTarget));
+    applyAccessGating();
 }
 
 function dialogValues() { return { title: $('#growthTitle').value.trim(), workType: $('#growthWorkType').value, owner: $('#growthOwner').value.trim(), deadline: $('#growthDeadline').value, goal: $('#growthGoal').value.trim(), action: $('#growthAction').value.trim(), verification: $('#growthVerification').value.trim(), targetUrl: $('#growthTargetUrl').value.trim(), notes: $('#growthNotes').value.trim() }; }
@@ -566,13 +706,14 @@ async function measureTask(id, button) {
         const raw = await apiRequest('/check', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, brand_id: identity.id, query: task.query, provider: task.provider, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
         const data = canonicalizeCheckResult(raw, identity);
         const saved = saveCheck(data, task.brand, task.query, task.provider);
+        await refreshAccess().catch(() => {});
         const changes = { postCheck: snapshotCheck(saved), verdict: compareChecks(task.baseline, snapshotCheck(saved)), status: 'measured' };
         const taskData = await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(changes) }); Object.assign(task, normalizeGrowthTask(taskData.task || taskData));
         if ($('#briefDialog').open) $('#briefDialog').close(); showGrowthTab('results'); renderGrowth();
     } catch (error) {
         if (errorTarget) { errorTarget.textContent = `Проверка не выполнена: ${error.message}`; errorTarget.className = 'growth-form-status error'; }
         else alert(`Проверка не выполнена: ${error.message}`);
-    } finally { button.disabled = false; button.textContent = original; }
+    } finally { button.disabled = false; button.textContent = original; applyAccessGating(); }
 }
 function showGrowthTab(tabName) {
     $$('[data-growth-tab]').forEach(tab => { const active = tab.dataset.growthTab === tabName; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', active); });
@@ -831,21 +972,99 @@ async function deleteActiveBrand() {
         activeBrandKey = brandIdentities[0]?.canonicalId || '';
         if (activeBrandKey) localStorage.setItem(ACTIVE_BRAND_KEY, activeBrandKey); else localStorage.removeItem(ACTIVE_BRAND_KEY);
         $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
+        await refreshAccess().catch(() => {});
     } catch (error) { showError(`Не удалось удалить бренд: ${error.message}`); button.disabled = false; }
 }
-async function deleteAccount() {
+function setFormStatus(selector, message, success = false) { const target = $(selector); target.textContent = message; target.className = `account-form-status${success ? ' success' : message ? ' error' : ''}`; }
+async function saveAccount(event) {
+    event.preventDefault();
+    const form = event.currentTarget; if (!form.reportValidity() || !accountState) return;
+    const name = $('#accountName').value.trim(); const email = $('#accountEmail').value.trim(); const currentPassword = $('#accountCurrentPassword').value; const newPassword = $('#accountNewPassword').value;
+    const body = {};
+    if (name !== accountState.name) body.name = name;
+    if (email !== accountState.email) body.email = email;
+    if (currentPassword) body.current_password = currentPassword;
+    if (newPassword) body.new_password = newPassword;
+    if (!Object.keys(body).length) return setFormStatus('#accountProfileStatus', 'Нет изменений для сохранения.', true);
+    const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountProfileStatus', '');
+    try {
+        const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify(body) });
+        accountState = data.account || data;
+        renderAccountProfile();
+        $('#accountCurrentPassword').value = ''; $('#accountNewPassword').value = '';
+        if (data.reauth_required) { setFormStatus('#accountProfileStatus', 'Данные сохранены. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
+        setFormStatus('#accountProfileStatus', 'Профиль сохранён.', true);
+    } catch (error) { setFormStatus('#accountProfileStatus', error.message); }
+    finally { button.disabled = false; }
+}
+async function deleteAccount(event) {
+    event.preventDefault();
+    const form = event.currentTarget; if (!form.reportValidity()) return;
+    if ($('#deleteAccountConfirmation').value !== 'УДАЛИТЬ') return setFormStatus('#deleteAccountStatus', 'Введите УДАЛИТЬ без кавычек.');
     if (!confirm('Удалить аккаунт и все данные Vidno навсегда? Это действие нельзя отменить.')) return;
-    const confirmation = prompt('Для подтверждения введите УДАЛИТЬ'); if (confirmation !== 'УДАЛИТЬ') return;
-    const button = $('#deleteAccount'); button.disabled = true;
-    try { await apiRequest('/account', { method: 'DELETE' }); window.location.replace('index.html'); }
-    catch (error) { showError(`Не удалось удалить аккаунт: ${error.message}`); button.disabled = false; }
+    const button = $('#deleteAccount'); button.disabled = true; setFormStatus('#deleteAccountStatus', '');
+    try { await apiRequest('/account', { method: 'DELETE', body: JSON.stringify({ current_password: $('#deleteAccountPassword').value, confirmation: 'УДАЛИТЬ' }) }); localStorage.removeItem(ACTIVE_BRAND_KEY); window.location.replace('index.html'); }
+    catch (error) { setFormStatus('#deleteAccountStatus', error.message); button.disabled = false; }
+}
+function normalizeAdminAccount(value = {}) { return { id: String(value.id || ''), name: value.name || '', email: value.email || '', role: value.role || 'client', createdAt: value.created_at || value.createdAt || null }; }
+function adminClientMarkup(item) {
+    const account = normalizeAdminAccount(item.account || item.client || item);
+    const access = normalizeAccess(item.access || item);
+    const brand = item.brand || item.brand_name || (Array.isArray(item.brands) ? item.brands[0]?.canonical_name || item.brands[0]?.name : '');
+    return `<button class="admin-client-item${selectedAdminClientId === account.id ? ' active' : ''}" type="button" data-admin-client="${escapeHtml(account.id)}"><span><strong>${escapeHtml(account.name || 'Без имени')}</strong><small>${escapeHtml(account.email)}</small>${brand ? `<small>${escapeHtml(brand)}</small>` : ''}</span><span><i class="access-status-badge" data-status="${escapeHtml(access.status)}">${escapeHtml(statusLabelAccess(access.status))}</i><small>${escapeHtml(planLabel(access.plan))}</small></span></button>`;
+}
+async function loadAdminClients(page = adminPage) {
+    if (accountState?.role !== 'admin') return;
+    adminPage = Math.max(1, page);
+    const params = new URLSearchParams({ page: String(adminPage), page_size: '20' });
+    const search = $('#adminSearch').value.trim(); const status = $('#adminStatusFilter').value; const plan = $('#adminPlanFilter').value;
+    if (search) params.set('q', search); if (status) params.set('status', status); if (plan) params.set('plan', plan);
+    const list = $('#adminClientList'); list.innerHTML = '<div class="admin-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Загружаем клиентов…</div>';
+    try {
+        const data = await apiRequest(`/admin/clients?${params}`);
+        const items = Array.isArray(data.items) ? data.items : Array.isArray(data.clients) ? data.clients : [];
+        const total = Math.max(0, Number(data.total) || items.length); const pageSize = Math.max(1, Number(data.page_size || data.pageSize) || 20);
+        adminPage = Math.max(1, Number(data.page) || adminPage); adminTotalPages = Math.max(1, Math.ceil(total / pageSize));
+        $('#adminClientCount').textContent = `${total} клиент${total % 10 === 1 && total % 100 !== 11 ? '' : total % 10 >= 2 && total % 10 <= 4 && (total % 100 < 10 || total % 100 >= 20) ? 'а' : 'ов'}`;
+        $('#adminPageLabel').textContent = `${adminPage} из ${adminTotalPages}`; $('#adminPrevPage').disabled = adminPage <= 1; $('#adminNextPage').disabled = adminPage >= adminTotalPages;
+        list.innerHTML = items.length ? items.map(adminClientMarkup).join('') : '<div class="app-empty"><strong>Клиенты не найдены</strong><span>Измените поиск или фильтры.</span></div>';
+        $$('[data-admin-client]').forEach(button => button.addEventListener('click', () => loadAdminClient(button.dataset.adminClient)));
+    } catch (error) { list.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
+}
+async function loadAdminClient(id) {
+    selectedAdminClientId = String(id); $('#adminClientEditor').innerHTML = '<div class="admin-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Загружаем профиль…</div>';
+    try {
+        const data = await apiRequest(`/admin/clients/${encodeURIComponent(id)}`);
+        renderAdminClient(data.account || data.client || data, data.access || data);
+        $$('[data-admin-client]').forEach(button => button.classList.toggle('active', button.dataset.adminClient === selectedAdminClientId));
+    } catch (error) { $('#adminClientEditor').innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
+}
+function nullableLimitValue(quota) { return quota.limit === null ? '' : String(quota.limit); }
+function renderAdminClient(accountValue, accessValue) {
+    const account = normalizeAdminAccount(accountValue); const access = normalizeAccess(accessValue); const expires = parseDate(access.expiresAt);
+    $('#adminClientEditor').innerHTML = `<div class="app-card-head"><div><h2>${escapeHtml(account.name || 'Без имени')}</h2><span>${escapeHtml(account.email)}</span></div><span class="account-role">${account.role === 'admin' ? 'Администратор' : 'Клиент'}</span></div><dl class="account-access-meta admin-client-meta"><div><dt>ID</dt><dd>${escapeHtml(account.id)}</dd></div><div><dt>Регистрация</dt><dd>${formatDate(account.createdAt, '—')}</dd></div><div><dt>Использование</dt><dd>Проверки: ${escapeHtml(quotaText(access.checks))}<br>Бренды: ${escapeHtml(quotaText(access.brands))}</dd></div></dl><form class="admin-access-form" id="adminAccessForm"><label>Статус<select id="adminAccessStatus"><option value="pending">Ожидает</option><option value="active">Активен</option><option value="suspended">Приостановлен</option></select></label><label>Тариф<select id="adminAccessPlan"><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option></select></label><label>Доступ до<input id="adminAccessExpires" type="date" value="${expires ? expires.toISOString().slice(0, 10) : ''}"><small>Оставьте пустым для бессрочного доступа</small></label><div class="admin-limit"><label>Лимит проверок<input id="adminChecksLimit" type="number" min="0" step="1" value="${nullableLimitValue(access.checks)}"></label><label class="admin-unlimited"><input id="adminChecksUnlimited" type="checkbox"${access.checks.unlimited ? ' checked' : ''}>Безлимит</label></div><div class="admin-limit"><label>Лимит брендов<input id="adminBrandsLimit" type="number" min="0" step="1" value="${nullableLimitValue(access.brands)}"></label><label class="admin-unlimited"><input id="adminBrandsUnlimited" type="checkbox"${access.brands.unlimited ? ' checked' : ''}>Безлимит</label></div><label class="admin-reset"><input id="adminResetUsage" type="checkbox">Сбросить текущее использование квот</label><p class="account-form-status" id="adminAccessStatusMessage" role="status"></p><button class="btn btn-primary" type="submit">Сохранить доступ</button></form>`;
+    $('#adminAccessStatus').value = access.administrativeStatus === 'suspended' ? 'suspended' : access.administrativeStatus === 'active' ? 'active' : 'pending'; $('#adminAccessPlan').value = access.plan;
+    const syncUnlimited = (checkbox, input) => { $(input).disabled = $(checkbox).checked; $(checkbox).addEventListener('change', () => { $(input).disabled = $(checkbox).checked; if (!$(checkbox).checked && !$(input).value) $(input).value = '0'; }); };
+    syncUnlimited('#adminChecksUnlimited', '#adminChecksLimit'); syncUnlimited('#adminBrandsUnlimited', '#adminBrandsLimit');
+    $('#adminAccessForm').addEventListener('submit', saveAdminAccess);
+}
+async function saveAdminAccess(event) {
+    event.preventDefault(); const form = event.currentTarget; if (!form.reportValidity() || !selectedAdminClientId) return;
+    const expiresDate = $('#adminAccessExpires').value;
+    const body = { status: $('#adminAccessStatus').value, plan: $('#adminAccessPlan').value, expires_at: expiresDate ? `${expiresDate}T23:59:59.999Z` : null, checks_limit: $('#adminChecksUnlimited').checked ? null : Number($('#adminChecksLimit').value), brands_limit: $('#adminBrandsUnlimited').checked ? null : Number($('#adminBrandsLimit').value), reset_usage: $('#adminResetUsage').checked };
+    const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#adminAccessStatusMessage', '');
+    try { const data = await apiRequest(`/admin/clients/${encodeURIComponent(selectedAdminClientId)}/access`, { method: 'PATCH', body: JSON.stringify(body) }); renderAdminClient(data.account || data.client || data, data.access || data); setFormStatus('#adminAccessStatusMessage', 'Настройки доступа сохранены.', true); await loadAdminClients(adminPage); }
+    catch (error) { setFormStatus('#adminAccessStatusMessage', error.message); button.disabled = false; }
 }
 async function initializeDashboard() {
     try {
-        const user = await window.vidnoSessionPromise;
+        await window.vidnoSessionPromise;
+        const [accountData, accessData] = await Promise.all([apiRequest('/account'), apiRequest('/access')]);
+        accountState = accountData.account || accountData;
+        accessState = normalizeAccess(accessData.access || accessData);
+        renderAccountProfile(); renderAccountAccess(); renderAccessBanner(); applyAccessGating();
         const brandData = await apiRequest('/brands');
         brandIdentities = (Array.isArray(brandData.brands) ? brandData.brands : []).map(normalizeBrandRecord).filter(item => item.canonicalId && item.canonicalName);
-        if (!brandIdentities.length && normalizeBrandName(user?.brand)) await ensureBrandIdentity(user.brand);
         activeBrandKey = loadActiveBrandKey();
         const [checkData, taskData, dismissedData] = await Promise.all([apiRequest('/checks'), apiRequest('/growth-tasks'), apiRequest('/dismissed-opportunities')]);
         history = (Array.isArray(checkData.checks) ? checkData.checks : []).map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
@@ -858,5 +1077,10 @@ async function initializeDashboard() {
     }
 }
 $('#deleteBrand').addEventListener('click', deleteActiveBrand);
-$('#deleteAccount').addEventListener('click', deleteAccount);
+$('#accountProfileForm').addEventListener('submit', saveAccount);
+$('#deleteAccountForm').addEventListener('submit', deleteAccount);
+$('#accountPasswordToggle').addEventListener('click', () => { const wrap = $('#accountPasswordFields'); wrap.hidden = !wrap.hidden; $('#accountPasswordToggle').textContent = wrap.hidden ? 'Изменить пароль' : 'Не менять пароль'; if (wrap.hidden) { $('#accountCurrentPassword').value = ''; $('#accountNewPassword').value = ''; } });
+$('#adminFilters').addEventListener('submit', event => { event.preventDefault(); loadAdminClients(1); });
+$('#adminPrevPage').addEventListener('click', () => loadAdminClients(adminPage - 1));
+$('#adminNextPage').addEventListener('click', () => loadAdminClients(adminPage + 1));
 initializeDashboard();

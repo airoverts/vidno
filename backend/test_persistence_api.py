@@ -124,7 +124,11 @@ class StorageResolutionTests(unittest.TestCase):
         def fake_connection():
             yield database
 
-        with patch.object(storage, "connection", fake_connection):
+        with patch.object(storage, "connection", fake_connection), patch.object(
+            storage,
+            "_locked_access",
+            return_value={"status": "active", "expires_at": None},
+        ):
             self.assertTrue(storage.delete_brand(7, 12))
         self.assertEqual(database.calls[1][1], (7,))
         self.assertEqual(database.calls[2][1], (7,))

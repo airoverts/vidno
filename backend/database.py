@@ -1,5 +1,6 @@
 import os
 from contextlib import contextmanager
+from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
@@ -114,8 +115,46 @@ def initialize_database():
             database.execute(statement)
         database.execute(
             """
-            UPDATE checks
-            SET status = 'failed', error = '{"error":"interrupted"}'::jsonb, completed_at = NOW()
-            WHERE status = 'running' AND created_at < NOW() - INTERVAL '1 hour'
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        database.execute("SELECT pg_advisory_xact_lock(hashtext('vidno_schema_migrations'))")
+        migrations_path = Path(__file__).resolve().parent / "migrations"
+        applied = {
+            row["version"]
+            for row in database.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        for migration in sorted(migrations_path.glob("*.sql")):
+            if migration.name in applied:
+                continue
+            database.execute(migration.read_text(encoding="utf-8"))
+            database.execute(
+                "INSERT INTO schema_migrations(version) VALUES (%s)",
+                (migration.name,),
+            )
+        database.execute(
+            """
+            WITH interrupted AS (
+                UPDATE checks
+                SET status = 'failed',
+                    error = '{"error":"interrupted"}'::jsonb,
+                    completed_at = NOW(),
+                    quota_state = CASE WHEN quota_state = 'reserved' THEN 'refunded' ELSE quota_state END
+                WHERE status = 'running' AND created_at < NOW() - INTERVAL '1 hour'
+                RETURNING user_id, quota_state, quota_cycle
+            ), refunds AS (
+                SELECT user_id, quota_cycle, COUNT(*) AS amount
+                FROM interrupted
+                WHERE quota_state = 'refunded'
+                GROUP BY user_id, quota_cycle
+            )
+            UPDATE user_access
+            SET checks_used = GREATEST(0, checks_used - refunds.amount), updated_at = NOW()
+            FROM refunds
+            WHERE user_access.user_id = refunds.user_id
+              AND user_access.quota_cycle = refunds.quota_cycle
             """
         )
