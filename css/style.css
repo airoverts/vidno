@@ -172,11 +172,7 @@ img { max-width: 100%; display: block; }
 .header .logo-text .accent { color: var(--accent); }
 .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.3rem; }
 .logo-text .accent { color: var(--accent); }
-.logo-icon {
-    width: 36px; height: 36px; border-radius: 10px;
-    display: grid; place-items: center;
-    background: var(--accent); color: #FFFFFF;
-}
+.logo-mark { width: 36px; height: 36px; flex: 0 0 auto; object-fit: contain; }
 .nav { display: flex; gap: 4px; }
 .nav-link {
     padding: 8px 14px; border-radius: var(--radius-sm);
@@ -1560,7 +1556,7 @@ img { max-width: 100%; display: block; }
     .app-shell { grid-template-columns: 220px minmax(0, 1fr); }
     .app-sidebar { position: sticky; top: 0; height: 100vh; padding: 18px 12px 14px; background: var(--night); }
     .app-logo { min-height: 46px; padding: 0 10px 16px; border-color: var(--surface-1); font-size: 1.18rem; }
-    .app-logo .logo-icon { width: 28px; height: 28px; font-size: .75rem; }
+    .app-logo .logo-mark { width: 28px; height: 28px; }
     .app-nav { gap: 2px; padding-top: 10px; }
     .app-nav-label { margin: 15px 10px 5px; color: var(--neutral); font-size: .6rem; letter-spacing: .12em; }
     .app-nav-item, .app-setup { min-height: 38px; padding: 9px 10px; border-radius: 7px; color: var(--border); font-size: .78rem; font-weight: 500; }
