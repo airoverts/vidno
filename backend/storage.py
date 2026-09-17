@@ -572,7 +572,7 @@ def _account_payload(row):
 
 
 def list_admin_clients(query: str = "", status: str | None = None, plan: str | None = None, page: int = 1, page_size: int = 25):
-    clauses = ["users.role = 'client'"]
+    clauses = ["TRUE"]
     params = []
     if query:
         clauses.append(
@@ -623,7 +623,7 @@ def get_admin_client(user_id: int):
                    user_access.*
             FROM users
             JOIN user_access ON user_access.user_id = users.id
-            WHERE users.id = %s AND users.role = 'client'
+            WHERE users.id = %s
             """,
             (user_id,),
         ).fetchone()
@@ -636,7 +636,7 @@ def get_admin_client(user_id: int):
 def update_admin_access(user_id: int, changes: dict):
     with connection() as database:
         user = database.execute(
-            "SELECT id, name, email, created_at, role FROM users WHERE id = %s AND role = 'client'",
+            "SELECT id, name, email, created_at, role FROM users WHERE id = %s",
             (user_id,),
         ).fetchone()
         if not user:

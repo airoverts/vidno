@@ -183,12 +183,12 @@
             </section>
             <section class="app-view" id="view-admin">
                 <div class="app-card app-view-first-card admin-toolbar-card">
-                    <div class="app-card-head"><div><h2>Клиенты</h2><span>Управление статусами, сроками и квотами</span></div><span id="adminClientCount"></span></div>
+                    <div class="app-card-head"><div><h2>Пользователи</h2><span>Управление статусами, сроками и квотами</span></div><span id="adminClientCount"></span></div>
                     <form class="admin-filters" id="adminFilters"><label class="admin-search">Поиск<input id="adminSearch" placeholder="Имя, email или бренд"></label><label>Статус<select id="adminStatusFilter"><option value="">Все</option><option value="pending">Ожидает</option><option value="active">Активен</option><option value="expired">Истёк</option><option value="suspended">Приостановлен</option></select></label><label>Тариф<select id="adminPlanFilter"><option value="">Все</option><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option></select></label><button class="btn btn-primary btn-sm" type="submit">Найти</button></form>
                 </div>
                 <div class="admin-layout">
                     <div class="app-card admin-client-list-card"><div class="admin-client-list" id="adminClientList"></div><div class="admin-pagination"><button class="btn btn-ghost btn-sm" id="adminPrevPage" type="button">Назад</button><span id="adminPageLabel"></span><button class="btn btn-ghost btn-sm" id="adminNextPage" type="button">Вперёд</button></div></div>
-                    <div class="app-card admin-client-editor" id="adminClientEditor"><div class="app-empty"><i class="fa-solid fa-user-gear"></i><strong>Выберите клиента</strong><span>Профиль и настройки доступа откроются здесь.</span></div></div>
+                    <div class="app-card admin-client-editor" id="adminClientEditor"><div class="app-empty"><i class="fa-solid fa-user-gear"></i><strong>Выберите пользователя</strong><span>Профиль и настройки доступа откроются здесь.</span></div></div>
                 </div>
             </section>
         </main>
@@ -196,6 +196,6 @@
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
     <script src="js/auth.js?v=20260827-2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20260914-1"></script>
+    <script src="js/dashboard.js?v=20260917-1"></script>
 </body>
 </html>

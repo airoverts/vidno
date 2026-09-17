@@ -1127,9 +1127,9 @@ async function loadAdminClients(page = adminPage) {
         const items = Array.isArray(data.items) ? data.items : Array.isArray(data.clients) ? data.clients : [];
         const total = Math.max(0, Number(data.total) || items.length); const pageSize = Math.max(1, Number(data.page_size || data.pageSize) || 20);
         adminPage = Math.max(1, Number(data.page) || adminPage); adminTotalPages = Math.max(1, Math.ceil(total / pageSize));
-        $('#adminClientCount').textContent = `${total} клиент${total % 10 === 1 && total % 100 !== 11 ? '' : total % 10 >= 2 && total % 10 <= 4 && (total % 100 < 10 || total % 100 >= 20) ? 'а' : 'ов'}`;
+        $('#adminClientCount').textContent = `${total} пользовател${total % 10 === 1 && total % 100 !== 11 ? 'ь' : total % 10 >= 2 && total % 10 <= 4 && (total % 100 < 10 || total % 100 >= 20) ? 'я' : 'ей'}`;
         $('#adminPageLabel').textContent = `${adminPage} из ${adminTotalPages}`; $('#adminPrevPage').disabled = adminPage <= 1; $('#adminNextPage').disabled = adminPage >= adminTotalPages;
-        list.innerHTML = items.length ? items.map(adminClientMarkup).join('') : '<div class="app-empty"><strong>Клиенты не найдены</strong><span>Измените поиск или фильтры.</span></div>';
+        list.innerHTML = items.length ? items.map(adminClientMarkup).join('') : '<div class="app-empty"><strong>Пользователи не найдены</strong><span>Измените поиск или фильтры.</span></div>';
         $$('[data-admin-client]').forEach(button => button.addEventListener('click', () => loadAdminClient(button.dataset.adminClient)));
     } catch (error) { list.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
 }
