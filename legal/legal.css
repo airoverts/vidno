@@ -1,0 +1,149 @@
+.legal-page {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+}
+
+.legal-header {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.legal-header-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.legal-brand {
+    color: var(--text);
+    font-size: 1.35rem;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.legal-brand span {
+    color: var(--accent);
+}
+
+.legal-back {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.legal-back:hover,
+.legal-back:focus-visible,
+.legal-footer a:hover,
+.legal-footer a:focus-visible {
+    text-decoration: underline;
+}
+
+.legal-main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+}
+
+.legal-status {
+    display: inline-block;
+    margin: 0 0 24px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-soft);
+    color: var(--text);
+    font-weight: 700;
+}
+
+.legal-document {
+    max-width: 760px;
+}
+
+.legal-document h1 {
+    margin: 0 0 24px;
+    color: var(--text);
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    line-height: 1.2;
+}
+
+.legal-document h2 {
+    margin: 44px 0 18px;
+    color: var(--text);
+    font-size: 1.35rem;
+    line-height: 1.35;
+}
+
+.legal-document h3 {
+    margin: 26px 0 8px;
+    color: var(--text);
+    font-size: 1.05rem;
+    line-height: 1.4;
+}
+
+.legal-document p,
+.legal-document li {
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.7;
+}
+
+.legal-document p {
+    margin: 0 0 16px;
+}
+
+.legal-document ul {
+    margin: 0 0 20px;
+    padding-left: 28px;
+}
+
+.legal-document li {
+    margin-bottom: 7px;
+}
+
+.legal-document .legal-meta,
+.legal-document .legal-pending {
+    color: var(--text-soft);
+}
+
+.legal-footer {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.legal-footer-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 26px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 22px;
+}
+
+.legal-footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+@media (max-width: 768px) {
+    .legal-header-inner {
+        padding: 16px 20px;
+    }
+
+    .legal-main {
+        padding: 32px 20px 56px;
+    }
+
+    .legal-document h2 {
+        margin-top: 36px;
+    }
+
+    .legal-footer-inner {
+        padding: 24px 20px;
+        flex-direction: column;
+    }
+}

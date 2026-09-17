@@ -227,7 +227,7 @@ function selectView(view) {
     closeAccountMenu();
     $$('.app-nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
     $$('.app-view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
-    $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'settings' ? 'Настройки' : 'Главная');
+    $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'settings' ? 'Настройки' : view === 'admin' ? 'Администрирование' : 'Главная');
     if (view === 'growth') renderGrowth();
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
@@ -239,7 +239,7 @@ const SETTINGS_META = {
     project: ['Проект', 'Название, варианты написания и домены активного проекта.'],
     profile: ['Профиль', 'Личные данные вашего аккаунта.'],
     access: ['Доступ и лимиты', 'Тариф, срок действия и текущее использование.'],
-    security: ['Безопасность', 'Пароль, активные сессии и удаление аккаунта.']
+    security: ['Безопасность', 'Смена email, пароля и удаление аккаунта.']
 };
 function selectSettingsTab(tab) {
     const selected = SETTINGS_META[tab] ? tab : 'profile';
@@ -415,13 +415,6 @@ function renderAccountAccess() {
     $('#accountBrandsPeriod').textContent = quotaPeriodText(accessState.brands);
     $('#accountBrandsProgress').style.width = `${quotaProgress(accessState.brands)}%`;
 }
-function syncEmailPasswordField() {
-    if (!accountState) return;
-    const changed = $('#accountEmail').value.trim().toLocaleLowerCase('ru-RU') !== String(accountState.email || '').toLocaleLowerCase('ru-RU');
-    $('#accountEmailPasswordField').hidden = !changed;
-    $('#accountCurrentPassword').required = changed;
-    if (!changed) $('#accountCurrentPassword').value = '';
-}
 function renderAccountProfile() {
     if (!accountState) return;
     $('#accountName').value = accountState.name || '';
@@ -435,10 +428,7 @@ function renderAccountProfile() {
     $('#appUserInitials').textContent = initials;
     $('#accountMenuInitials').textContent = initials;
     const isAdmin = accountState.role === 'admin';
-    $('#adminNavItem').hidden = !isAdmin;
-    $('#adminNavLabel').hidden = !isAdmin;
     $('#adminMenuItem').hidden = !isAdmin;
-    syncEmailPasswordField();
 }
 function setDisabled(selector, disabled) { $$(selector).forEach(element => { element.disabled = disabled; element.setAttribute('aria-disabled', String(disabled)); }); }
 function projectIdentityCooldown(identity) {
@@ -1066,21 +1056,34 @@ function setFormStatus(selector, message, success = false) { const target = $(se
 async function saveAccount(event) {
     event.preventDefault();
     const form = event.currentTarget; if (!form.reportValidity() || !accountState) return;
-    const name = $('#accountName').value.trim(); const email = $('#accountEmail').value.trim(); const currentPassword = $('#accountCurrentPassword').value;
+    const name = $('#accountName').value.trim();
     const body = {};
     if (name !== accountState.name) body.name = name;
-    if (email.toLocaleLowerCase('ru-RU') !== String(accountState.email || '').toLocaleLowerCase('ru-RU')) body.email = email;
-    if (currentPassword) body.current_password = currentPassword;
     if (!Object.keys(body).length) return setFormStatus('#accountProfileStatus', 'Нет изменений для сохранения.', true);
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountProfileStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify(body) });
         accountState = data.account || data;
         renderAccountProfile();
-        $('#accountCurrentPassword').value = '';
-        if (data.reauth_required) { setFormStatus('#accountProfileStatus', 'Данные сохранены. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
         setFormStatus('#accountProfileStatus', 'Профиль сохранён.', true);
     } catch (error) { setFormStatus('#accountProfileStatus', error.message); }
+    finally { button.disabled = false; }
+}
+async function changeEmail(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity() || !accountState) return;
+    const email = $('#accountEmailNew').value.trim();
+    if (email.toLocaleLowerCase('ru-RU') === String(accountState.email || '').toLocaleLowerCase('ru-RU')) return setFormStatus('#accountEmailStatus', 'Укажите новый email.');
+    const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountEmailStatus', '');
+    try {
+        const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify({ email, current_password: $('#accountEmailCurrentPassword').value }) });
+        accountState = data.account || data;
+        renderAccountProfile();
+        form.reset();
+        if (data.reauth_required) { setFormStatus('#accountEmailStatus', 'Email изменён. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
+        setFormStatus('#accountEmailStatus', 'Email изменён.', true);
+    } catch (error) { setFormStatus('#accountEmailStatus', error.message); }
     finally { button.disabled = false; }
 }
 async function changePassword(event) {
@@ -1177,7 +1180,7 @@ async function initializeDashboard() {
 }
 $('#deleteBrand').addEventListener('click', deleteActiveBrand);
 $('#accountProfileForm').addEventListener('submit', saveAccount);
-$('#accountEmail').addEventListener('input', syncEmailPasswordField);
+$('#accountEmailForm').addEventListener('submit', changeEmail);
 $('#accountPasswordForm').addEventListener('submit', changePassword);
 $('#accountPasswordConfirm').addEventListener('input', () => $('#accountPasswordConfirm').setCustomValidity(''));
 $('#deleteAccountForm').addEventListener('submit', deleteAccount);

@@ -27,8 +27,6 @@
                 <span class="app-nav-label">Рост</span>
                 <button class="app-nav-item" data-view="growth"><i class="fa-solid fa-bolt"></i>План роста</button>
                 <button class="app-nav-item" data-view="reports"><i class="fa-solid fa-file-lines"></i>Отчёты</button>
-                <span class="app-nav-label" id="adminNavLabel" hidden>Управление</span>
-                <button class="app-nav-item" data-view="admin" id="adminNavItem" hidden><i class="fa-solid fa-user-shield"></i>Администрирование</button>
             </nav>
         </aside>
         <main class="app-main">
@@ -47,7 +45,7 @@
                             <div class="app-account-links">
                                 <button type="button" role="menuitem" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Имя и email</small></span></button>
                                 <button type="button" role="menuitem" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ и лимиты</strong><small>Статус и использование</small></span></button>
-                                <button type="button" role="menuitem" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Пароль и удаление аккаунта</small></span></button>
+                                <button type="button" role="menuitem" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                                 <button type="button" role="menuitem" data-view="admin" id="adminMenuItem" hidden><i class="fa-solid fa-user-shield"></i><span><strong>Администрирование</strong><small>Клиенты и доступ</small></span></button>
                             </div>
                             <div class="app-account-footer"><a href="index.html" role="menuitem"><i class="fa-solid fa-arrow-up-right-from-square"></i>На лендинг</a><button id="appLogout" type="button" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i>Выйти</button></div>
@@ -120,7 +118,7 @@
                         <button class="active" id="settingsTabProject" type="button" role="tab" aria-selected="true" aria-controls="settings-project" data-settings-tab="project"><i class="fa-solid fa-sliders"></i><span><strong>Проект</strong><small>Бренд и домены</small></span></button>
                         <button id="settingsTabProfile" type="button" role="tab" aria-selected="false" aria-controls="settings-profile" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Личные данные</small></span></button>
                         <button id="settingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="settings-access" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ</strong><small>Тариф и лимиты</small></span></button>
-                        <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Пароль и аккаунт</small></span></button>
+                        <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                     </nav>
                     <div class="settings-content">
                         <section class="settings-panel active" id="settings-project" role="tabpanel" aria-labelledby="settingsTabProject" data-settings-panel="project">
@@ -141,8 +139,7 @@
                                 <div class="app-card-head"><div><h2>Профиль</h2><span>Ваши личные данные</span></div><span class="account-role" id="accountRole"></span></div>
                                 <form class="account-form" id="accountProfileForm">
                                     <label>Имя<input id="accountName" name="name" minlength="2" maxlength="100" required autocomplete="name"></label>
-                                    <label>Email<input id="accountEmail" name="email" type="email" maxlength="254" required autocomplete="email"><small>После смены email потребуется войти снова.</small></label>
-                                    <label id="accountEmailPasswordField" hidden>Текущий пароль<input id="accountCurrentPassword" name="current_password" type="password" maxlength="128" autocomplete="current-password"><small>Нужен только для подтверждения смены email.</small></label>
+                                    <label>Email<input id="accountEmail" name="email" type="email" maxlength="254" readonly autocomplete="email"><small>Изменить email можно в разделе «Безопасность».</small></label>
                                     <div class="account-meta"><span>Дата регистрации</span><strong id="accountCreatedAt">—</strong></div>
                                     <p class="account-form-status" id="accountProfileStatus" role="status"></p>
                                     <button class="btn btn-primary" type="submit">Сохранить профиль</button>
@@ -157,6 +154,15 @@
                             </div>
                         </section>
                         <section class="settings-panel" id="settings-security" role="tabpanel" aria-labelledby="settingsTabSecurity" data-settings-panel="security" hidden>
+                            <div class="app-card settings-card">
+                                <div class="app-card-head"><div><h2>Смена email</h2><span>После изменения потребуется войти снова</span></div></div>
+                                <form class="account-form" id="accountEmailForm">
+                                    <label>Новый email<input id="accountEmailNew" type="email" maxlength="254" required autocomplete="email"></label>
+                                    <label>Текущий пароль<input id="accountEmailCurrentPassword" type="password" maxlength="128" required autocomplete="current-password"></label>
+                                    <p class="account-form-status" id="accountEmailStatus" role="status"></p>
+                                    <button class="btn btn-primary" type="submit">Изменить email</button>
+                                </form>
+                            </div>
                             <div class="app-card settings-card">
                                 <div class="app-card-head"><div><h2>Смена пароля</h2><span>После изменения все активные сессии будут завершены</span></div></div>
                                 <form class="account-form" id="accountPasswordForm">

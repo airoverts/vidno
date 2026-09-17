@@ -6,10 +6,9 @@
     3. Mobile burger
     4. Modal system
     5. Toast
-    6. Pricing: FAQ accordion & plan modal
-    7. Contact form
-    8. Analyze text rotation
-    9. AOS init
+    6. FAQ accordion
+    7. Analyze text rotation
+    8. AOS init
     ============================================================ */
 
 'use strict';
@@ -29,25 +28,19 @@ async function authRequest(path, options = {}) {
 
 const FEATURE_DETAILS = {
     'feat-1': { title: 'Мониторинг видимости', icon: 'fa-solid fa-chart-line',
-        body: 'Модуль собирает ответы 15+ AI-моделей по вашим запросам и показывает: позицию бренда, роль в ответе, динамику за период. Фильтры по моделям, ролям и трендам. Экспорт в CSV/PDF.' },
-    'feat-2': { title: 'Анализ намерений', icon: 'fa-solid fa-brain',
-        body: 'Каждый запрос классифицируется по интенту: информационный, транзакционный, навигационный, сравнительный. Это помогает понять, на каких этапах воронки AI не упоминает ваш бренд.' },
+        body: 'Проверяйте выбранный запрос в GigaChat, Алисе AI, ChatGPT, Gemini и Perplexity. Результаты сохраняются в истории кабинета и используются для показателей видимости.' },
+    'feat-2': { title: 'Анализ ответов', icon: 'fa-solid fa-brain',
+        body: 'В результате проверки доступны ответ AI-системы, упоминание и роль бренда, контекст и выводы анализа.' },
     'feat-3': { title: 'Сравнение с конкурентами', icon: 'fa-solid fa-scale-balanced',
-        body: 'Столбчатая и линейная диаграммы доли голоса. Сравнение по моделям, периодам, ролям. Видно, где вы опережаете, а где — отстаёте от конкретных конкурентов.' },
-    'feat-4': { title: 'Приоритезированный план действий', icon: 'fa-solid fa-clipboard-check',
-        body: 'Алгоритм анализирует инсайты и формирует список задач с приоритетом (высокий/средний/низкий), ожидаемым эффектом и подсказками по реализации. Чекбоксы — для отслеживания выполнения.' },
-    'feat-5': { title: 'Технический аудит страниц', icon: 'fa-solid fa-stethoscope',
-        body: 'Индекс здоровья контента: разметка schema.org, скорость, структура, цитируемость. Система находит страницы, которые мешают попаданию в AI-ответы, и предлагает конкретные правки.' },
-    'feat-6': { title: 'Отчёты и экспорт', icon: 'fa-solid fa-file-export',
-        body: 'Готовые шаблоны отчётов для команд, клиентов и руководства. Экспорт в PDF, XLSX, PNG (для графиков). White-label на тарифе «Бизнес». Расписание автоматической отправки на email.' },
+        body: 'В кабинете можно сопоставить бренд с конкурентами, обнаруженными в сохранённых результатах, и посмотреть долю упоминаний.' },
+    'feat-4': { title: 'План роста', icon: 'fa-solid fa-clipboard-check',
+        body: 'Повторные проверки одного запроса помогают подтвердить возможность для роста. По ней можно создать задачу, а после изменений провести контрольную проверку.' },
+    'feat-5': { title: 'Источники', icon: 'fa-solid fa-link',
+        body: 'В результатах проверки доступны найденные ссылки. Раздел «Источники» показывает, какие из них встречаются в сохранённой истории чаще.' },
+    'feat-6': { title: 'История проверок', icon: 'fa-solid fa-clock-rotate-left',
+        body: 'Завершённые проверки сохраняются в кабинете. Их можно открыть позже и сравнить показатели по брендам и AI-системам.' },
     'about': { title: 'О Vidno', icon: 'fa-solid fa-circle-info',
-        body: 'Vidno — платформа для мониторинга видимости бренда в AI-ассистентах: ChatGPT, Claude, Perplexity и других. Мы помогаем компаниям понимать, как их бренд представлен в ответах генеративных моделей, и даём инструменты для улучшения позиций.' },
-    'terms': { title: 'Условия пользования', icon: 'fa-solid fa-file-lines',
-        body: 'Используя Vidno, вы соглашаетесь с настоящими условиями. Сервис предоставляется «как есть». Мы не несём ответственности за содержание ответов AI-моделей. Все данные обрабатываются в соответствии с политикой конфиденциальности.' },
-    'agreement': { title: 'Пользовательское соглашение', icon: 'fa-solid fa-file-signature',
-        body: 'Настоящее соглашение регулирует отношения между Vidno и пользователем сервиса. Регистрируясь, вы подтверждаете, что ознакомились и согласны с условиями использования платформы.' },
-    'privacy': { title: 'Политика конфиденциальности', icon: 'fa-solid fa-shield-halved',
-        body: 'Vidno собирает минимально необходимые данные для работы сервиса: email, имя, название бренда. Данные не передаются третьим лицам. Вы можете запросить удаление данных в любой момент через поддержку.' }
+        body: 'Vidno помогает проверять, как бренд представлен в ответах пяти AI-систем, изучать историю проверок, источники и конкурентов, а также вести задачи в Плане роста.' }
 };
 
 /* ============ 2. NAVIGATION & ROUTING ============ */
@@ -58,10 +51,8 @@ function navigate(pageId) {
     const sectionMap = {
         features: 'section-features',
         how: 'section-how',
-        pricing: 'section-pricing',
         faq: 'section-faq',
-        contacts: 'section-contacts',
-        resources: 'section-features'
+        contacts: 'section-contacts'
     };
 
     if (sectionMap[pageId] || pageId === 'home') {
@@ -111,11 +102,6 @@ document.addEventListener('click', e => {
         e.preventDefault();
         openCtaModal(ctaEl.dataset.cta);
     }
-    const planEl = e.target.closest('[data-plan]');
-    if (planEl) {
-        e.preventDefault();
-        openPlanModal(planEl.dataset.plan);
-    }
     const featEl = e.target.closest('[data-modal-open]');
     if (featEl) {
         e.preventDefault();
@@ -158,12 +144,11 @@ modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) clo
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 function openCtaModal(type) {
-    const isDemo = type === 'demo';
     const isLogin = type === 'login';
     if (isLogin) {
         openModal(`
             <h2>Вход в Vidno</h2>
-            <p>Войдите в личный кабинет, чтобы открыть дашборд и отчёты.</p>
+            <p>Войдите в личный кабинет, чтобы открыть проверки, историю и План роста.</p>
             <form class="modal-form" id="modalForm">
                 <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
                 <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="••••••••" minlength="6"></div>
@@ -184,25 +169,24 @@ function openCtaModal(type) {
         return;
     }
     openModal(`
-        <h2>${isDemo ? 'Запрос демо-отчёта' : 'Регистрация'}</h2>
-        <p>${isDemo ? 'Оставьте контакты — пришлём отчёт по 10 запросам бесплатно.' : 'Создайте аккаунт за 30 секунд и получите 7 дней тарифа «Про».'}</p>
+        <h2>Регистрация</h2>
+        <p>Создайте аккаунт. Проверки и управление брендами станут доступны после активации доступа.</p>
         <form class="modal-form" id="modalForm">
             <div class="form-row"><label>Имя</label><input type="text" name="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
             <div class="form-row"><label>Бренд</label><input type="text" name="brand" placeholder="Название компании"></div>
-            ${isDemo ? '' : '<div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="Не менее 8 символов" minlength="8" maxlength="128" autocomplete="new-password"></div><p class="form-error" id="authError" role="alert" hidden></p>'}
-            <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> ${isDemo ? 'Получить демо' : 'Создать аккаунт'}</button>
+            <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="Не менее 8 символов" minlength="8" maxlength="128" autocomplete="new-password"></div><p class="form-error" id="authError" role="alert" hidden></p>
+            <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> Создать аккаунт</button>
         </form>
     `);
     $('#modalForm').addEventListener('submit', async e => {
         e.preventDefault();
-        if (isDemo) { closeModal(); showToast('Заявка принята! Демо-отчёт придёт на почту.'); return; }
         const form = e.currentTarget; const button = form.querySelector('button[type="submit"]'); const error = $('#authError');
         button.disabled = true; error.hidden = true;
         try {
             const payload = Object.fromEntries(new FormData(form));
             await authRequest('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
-            closeModal(); showToast('Аккаунт создан! Открываем дашборд…', 'fa-solid fa-circle-check');
+            closeModal(); showToast('Аккаунт создан. Доступ ожидает активации.', 'fa-solid fa-circle-check');
             setTimeout(() => { window.location.href = 'dashboard.html'; }, 400);
         } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false; }
     });
@@ -211,25 +195,6 @@ function openCtaModal(type) {
 if (new URLSearchParams(location.search).get('auth') === 'login') {
     history.replaceState({}, '', location.pathname);
     openCtaModal('login');
-}
-
-function openPlanModal(plan) {
-    openModal(`
-        <h2>Тариф «${plan}»</h2>
-        <p>Заполните форму — менеджер свяжется с вами для оформления и подбора оптимальной конфигурации.</p>
-        <form class="modal-form" id="modalForm">
-            <div class="form-row"><label>Имя</label><input type="text" name="name" required placeholder="Ваше имя"></div>
-            <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
-            <div class="form-row"><label>Компания</label><input type="text" name="company" placeholder="Название компании"></div>
-            <input type="hidden" name="plan" value="${plan}">
-            <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-check"></i> Оформить «${plan}»</button>
-        </form>
-    `);
-    $('#modalForm').addEventListener('submit', e => {
-        e.preventDefault();
-        closeModal();
-        showToast(`Заявка на тариф «${plan}» отправлена!`);
-    });
 }
 
 function openFeatureModal(id) {
@@ -241,7 +206,7 @@ function openFeatureModal(id) {
         </div>
         <h2>${f.title}</h2>
         <p>${f.body}</p>
-        <button class="btn btn-primary btn-block" data-cta="signup"><i class="fa-solid fa-rocket"></i> Попробовать</button>
+        <button class="btn btn-primary btn-block" data-cta="signup"><i class="fa-solid fa-rocket"></i> Создать аккаунт</button>
     `);
 }
 
@@ -257,7 +222,7 @@ function showToast(msg, icon = 'fa-solid fa-circle-check') {
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3500);
 }
 
-/* ============ 6. PRICING — FAQ ============ */
+/* ============ 6. FAQ ============ */
 $$('.acc-head').forEach(head => {
     head.addEventListener('click', () => {
         const item = head.parentElement;
@@ -267,46 +232,13 @@ $$('.acc-head').forEach(head => {
     });
 });
 
-/* ============ 7. PRICING TOGGLE ============ */
-const pricingToggle = $('#pricingToggle');
-if (pricingToggle) {
-    const labels = $$('.pricing-toggle-label');
-    const priceValues = $$('.price-value[data-monthly]');
-    const annualNotes = $$('.price-annual-note');
-
-    pricingToggle.addEventListener('change', () => {
-        const isAnnual = pricingToggle.checked;
-        labels.forEach(l => l.classList.remove('active'));
-        labels[isAnnual ? 1 : 0].classList.add('active');
-
-        priceValues.forEach(el => {
-            const price = isAnnual ? el.dataset.annual : el.dataset.monthly;
-            el.innerHTML = `${price}<span>/мес</span>`;
-        });
-
-        annualNotes.forEach(n => {
-            if (isAnnual) { n.classList.add('visible'); } else { n.classList.remove('visible'); }
-        });
-    });
-}
-
-/* ============ 8. CONTACT FORM ============ */
-$('#contactForm').addEventListener('submit', e => {
-    e.preventDefault();
-    const data = new FormData(e.target);
-    const name = data.get('name');
-    e.target.reset();
-    showToast(`Спасибо, ${name}! Сообщение отправлено.`, 'fa-solid fa-paper-plane');
-});
-
-/* ============ 9. ANALYZE TEXT ROTATION ============ */
+/* ============ 7. ANALYZE TEXT ROTATION ============ */
 const analyzeModels = [
-    { name: 'ChatGPT', percent: 78 },
-    { name: 'Claude', percent: 57 },
-    { name: 'Perplexity', percent: 92 },
-    { name: 'Алиса AI', percent: 64 },
-    { name: 'GigaChat', percent: 45 },
-    { name: 'Gemini', percent: 83 }
+    'ChatGPT',
+    'Perplexity',
+    'Алиса AI',
+    'GigaChat',
+    'Gemini'
 ];
 
 let currentModel = 0;
@@ -314,12 +246,11 @@ setInterval(() => {
     const el = document.getElementById('analyzeText');
     if (el) {
         currentModel = (currentModel + 1) % analyzeModels.length;
-        const model = analyzeModels[currentModel];
-        el.textContent = `Анализируем ${model.name}… ${model.percent}%`;
+        el.textContent = `Проверяем ответ ${analyzeModels[currentModel]}…`;
     }
 }, 5000);
 
-/* ============ 10. INIT ============ */
+/* ============ 8. INIT ============ */
 document.addEventListener('DOMContentLoaded', () => {
     // init AOS
     if (window.AOS) {

@@ -62,7 +62,7 @@
 /* ============ 2. RESET & BASE ============ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 
 body {
     font-family: var(--font);
@@ -822,6 +822,7 @@ img { max-width: 100%; display: block; }
 .contact-info .section-title { text-align: left; }
 .contact-list { margin: 20px 0; display: flex; flex-direction: column; gap: 12px; }
 .contact-list i { color: var(--accent); width: 22px; }
+.contact-list a { overflow-wrap: anywhere; }
 .contact-list a:hover { color: var(--accent); }
 .socials { display: flex; gap: 12px; }
 .social {
@@ -830,11 +831,7 @@ img { max-width: 100%; display: block; }
     display: grid; place-items: center; font-size: 1.1rem;
     color: var(--text-soft); transition: all var(--transition);
 }
-.social:hover { transform: translateY(-3px); color: #fff; }
-.social.linkedin:hover { background: var(--accent); border-color: var(--accent); }
-.social.youtube:hover { background: var(--accent); border-color: var(--accent); }
-.social.telegram:hover { background: var(--accent); border-color: var(--accent); }
-.social.x:hover { background: var(--accent); border-color: var(--accent); }
+.social:hover { transform: translateY(-3px); color: var(--surface); background: var(--accent); border-color: var(--accent); }
 .socials.small .social { width: 38px; height: 38px; font-size: 1rem; }
 
 .contact-form {
@@ -857,9 +854,9 @@ img { max-width: 100%; display: block; }
 .footer-brand p { color: var(--text-soft); margin: 14px 0; font-size: 0.9rem; max-width: 320px; }
 .footer-cols { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px; }
 .footer-col h4 { font-size: 0.9rem; margin-bottom: 14px; color: var(--text); }
-.footer-col button { display: block; color: var(--text-soft); font-size: 0.88rem; padding: 4px 0; text-align: left; transition: color var(--transition); }
-.footer-col:last-child button { display: inline-block; padding: 4px 12px 4px 0; }
-.footer-col button:hover { color: var(--accent); }
+.footer-col button, .footer-col a { display: block; color: var(--text-soft); font-size: 0.88rem; padding: 4px 0; text-align: left; text-decoration: none; overflow-wrap: anywhere; transition: color var(--transition); }
+.footer-col:last-child button, .footer-col:last-child a { display: inline-block; padding: 4px 12px 4px 0; }
+.footer-col button:hover, .footer-col a:hover { color: var(--accent); }
 .footer-bottom { border-top: 1px solid var(--border); padding: 18px 0; }
 .footer-bottom .container { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 0.85rem; color: var(--text-soft); }
 
@@ -1186,6 +1183,7 @@ img { max-width: 100%; display: block; }
     .grow-grid { grid-template-columns: 1fr; }
     .grow-progress-stats { grid-template-columns: 1fr 1fr; }
     .mini-dash { flex-wrap: wrap; }
+    .tooltip-icon::after { left: auto; right: 0; width: min(260px, calc(100vw - 32px)); white-space: normal; }
     .compare-table th, .compare-table td { padding: 12px 14px; font-size: 0.85rem; }
     .pricing-toggle { flex-wrap: wrap; gap: 10px; }
 }
@@ -1257,6 +1255,7 @@ img { max-width: 100%; display: block; }
 .app-account-summary .access-status-badge { margin-top: 5px; }
 .app-account-links { display: grid; gap: 2px; padding: 7px; }
 .app-account-links button { display: grid; width: 100%; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px; border-radius: 7px; color: var(--text); background: transparent; text-align: left; }
+.app-account-links button[hidden] { display: none; }
 .app-account-links button:hover, .app-account-links button:focus-visible { background: var(--bg-soft); }
 .app-account-links button > i { color: var(--text-soft); text-align: center; }
 .app-account-links button > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
@@ -1524,6 +1523,7 @@ img { max-width: 100%; display: block; }
 .account-form, .admin-access-form { display: flex; flex-direction: column; gap: 13px; }
 .account-form label, .account-delete-form label, .admin-filters label, .admin-access-form label, .admin-limit > label:first-child { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--text-soft); font-size: .7rem; font-weight: 700; }
 .account-form input, .account-delete-form input, .admin-filters input, .admin-filters select, .admin-access-form input, .admin-access-form select { width: 100%; min-width: 0; min-height: 40px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); font: inherit; }
+.account-form input[readonly] { background: var(--bg-soft); cursor: default; }
 .account-form input:focus, .account-delete-form input:focus, .admin-filters input:focus, .admin-filters select:focus, .admin-access-form input:focus, .admin-access-form select:focus { outline: 2px solid var(--bg-soft-2); border-color: var(--accent); }
 .account-password-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .account-password-fields[hidden] { display: none; }
