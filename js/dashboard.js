@@ -71,6 +71,13 @@ async function apiRequest(path, options = {}) {
     return data;
 }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
+function normalizeAccount(value = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const name = typeof source.name === 'string' ? normalizeBrandName(source.name) : '';
+    const email = typeof source.email === 'string' ? source.email.trim() : '';
+    const role = source.role === 'admin' || source.role === 'client' ? source.role : '';
+    return { ...source, name, email, role };
+}
 function safeUrl(value) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : '#'; } catch { return '#'; } }
 function normalizeBrandName(value) { return String(value || '').trim().replace(/\s+/g, ' '); }
 function plausibleBrandName(value) { const name = normalizeBrandName(value).replace(/^\d+\s*[.)-]\s*/, ''); return /[a-zа-яё]/i.test(name) ? name : ''; }
@@ -417,10 +424,11 @@ function renderAccountAccess() {
 }
 function renderAccountProfile() {
     if (!accountState) return;
+    accountState = normalizeAccount(accountState);
     $('#accountName').value = accountState.name || '';
     $('#accountEmail').value = accountState.email || '';
     $('#accountCreatedAt').textContent = formatDate(accountState.created_at || accountState.createdAt, '—');
-    $('#accountRole').textContent = accountState.role === 'admin' ? 'Администратор' : 'Клиент';
+    $('#accountRole').textContent = accountState.role === 'admin' ? 'Администратор' : accountState.role === 'client' ? 'Клиент' : '';
     $('#appUserName').textContent = accountState.name || accountState.email || '';
     $('#accountMenuName').textContent = accountState.name || 'Пользователь';
     $('#accountMenuEmail').textContent = accountState.email || '';
@@ -997,6 +1005,7 @@ function renderDashboardCharts() {
     const hasTrend = rowsHistory.length > 1;
     $('#overviewChart').hidden = !hasTrend; $('#overviewEmpty').hidden = hasTrend;
     $('#sovChart').hidden = !hasHistory; $('#sovEmpty').hidden = hasHistory; $('#sovLegend').hidden = !hasHistory;
+    $('#sovLegend').parentElement.classList.toggle('is-empty', !hasHistory);
     if (!hasHistory) {
         $('#overviewInsight').textContent = 'Начните с проверки';
         $('#sovInsight').textContent = 'Данные появятся здесь';
@@ -1063,7 +1072,7 @@ async function saveAccount(event) {
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountProfileStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify(body) });
-        accountState = data.account || data;
+        accountState = normalizeAccount(data.account || data);
         renderAccountProfile();
         setFormStatus('#accountProfileStatus', 'Профиль сохранён.', true);
     } catch (error) { setFormStatus('#accountProfileStatus', error.message); }
@@ -1078,7 +1087,7 @@ async function changeEmail(event) {
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountEmailStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify({ email, current_password: $('#accountEmailCurrentPassword').value }) });
-        accountState = data.account || data;
+        accountState = normalizeAccount(data.account || data);
         renderAccountProfile();
         form.reset();
         if (data.reauth_required) { setFormStatus('#accountEmailStatus', 'Email изменён. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
@@ -1162,7 +1171,7 @@ async function initializeDashboard() {
     try {
         await window.vidnoSessionPromise;
         const [accountData, accessData] = await Promise.all([apiRequest('/account'), apiRequest('/access')]);
-        accountState = accountData.account || accountData;
+        accountState = normalizeAccount(accountData.account || accountData);
         accessState = normalizeAccess(accessData.access || accessData);
         renderAccountProfile(); renderAccountAccess(); renderAccessBanner(); applyAccessGating();
         const brandData = await apiRequest('/brands');
