@@ -27,21 +27,20 @@ Vidno — веб-сервис для мониторинга и развития 
 - Бренды, история проверок, задачи Плана роста и скрытые возможности доступны через пользовательские API и изолированы по пользователю.
 - `DELETE /api/cache` очищает общий кэш и для удалённого вызова защищён административным токеном.
 - Для локальной разработки frontend использует `http://localhost:8000/api`; при едином origin — `/api`.
-- Профиль пользователя, управление доступом, админ-панель и восстановление пароля запланированы, но не являются готовыми функциями. Не описывать и не показывать их как реализованные до появления подтверждённого кода и проверки.
+- Профиль пользователя и изменение пароля доступны в кабинете; админ-панель доступна пользователям с ролью `admin` и управляет статусами, тарифами и квотами клиентов. Полноценное восстановление пароля по email пока не реализовано.
 
-## Сервер
+## Серверы и эксплуатация
 
-- Ubuntu-сервер доступен командой:
+### Домашний сервер
 
-  ```bash
-  ssh -o BatchMode=yes -o StrictHostKeyChecking=yes boss@192.168.0.101
-  ```
+Это старый домашний экземпляр Vidno. Его не изменять во время работ на Timeweb.
 
-- Каталог проекта на сервере: `/home/boss/projects/vidno/vidno`.
-- Проект запущен через Docker Compose.
-- Frontend обслуживается Nginx на порту 80; запросы `/api/` проксируются в FastAPI backend внутри Docker.
-- Перед любыми изменениями на сервере сначала сообщить пользователю текущий известный статус и конкретный план действий.
-- Перед любыми серверными изменениями обязательно выполнить:
+- SSH: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes boss@192.168.0.101`
+- Каталог проекта: `/home/boss/projects/vidno/vidno`
+- Запуск: Docker Compose
+- Frontend: Nginx на порту 80
+- `/api/`: проксируется во внутренний FastAPI backend
+- Базовая проверка:
 
   ```bash
   cd /home/boss/projects/vidno/vidno
@@ -49,9 +48,71 @@ Vidno — веб-сервис для мониторинга и развития 
   curl -i http://127.0.0.1/api/health
   ```
 
-- Обновление проекта из GitHub выполняется из каталога проекта командой `./scripts/update-vidno.sh`.
-- `./scripts/update-vidno.sh` запускать только при явном запросе пользователя на обновление или деплой.
-- После обновления обязательно снова выполнить `docker compose ps` и `curl -i http://127.0.0.1/api/health`, затем сообщить пользователю результат обеих проверок.
+### Timeweb-сервер (production)
+
+Это основной публичный production-сервер Vidno.
+
+- SSH: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes root@72.56.15.118`
+- Каталог проекта: `/root/projects/vidno/vidno`
+- Git-ветка: `main`
+- Домен: `vidno.one`
+- Frontend: Nginx в Docker Compose, порты 80 и 443
+- `/api/`: проксируется во внутренний FastAPI backend
+- TLS-файлы находятся вне репозитория:
+  - `/etc/vidno/tls/fullchain.pem`
+  - `/etc/vidno/tls/privkey.pem`
+- Права на TLS-файлы: `600`; содержимое сертификата и ключа не копировать в чат, Git или логи.
+- Production `.env` находится на сервере и не входит в репозиторий.
+
+Проверка production:
+
+  ```bash
+  cd /root/projects/vidno/vidno
+  docker compose ps
+  curl -i --resolve vidno.one:443:127.0.0.1 https://vidno.one/api/health
+  curl -I --resolve vidno.one:80:127.0.0.1 http://vidno.one/
+  ```
+
+Ожидается `200` для HTTPS `/api/health` и `301` с HTTP на HTTPS.
+
+### Общий порядок серверных работ
+
+- До любых изменений сообщить пользователю известный статус и конкретный план.
+- Сначала выполнить read-only проверку `docker compose ps` и `/api/health` на том сервере, который планируется менять.
+- Не менять домашний сервер при деплое на Timeweb.
+- Не запускать скрипт обновления, не коммитить и не пушить без отдельного разрешения пользователя.
+- Перед обновлением Timeweb проверить рабочее дерево:
+
+  ```bash
+  cd /root/projects/vidno/vidno
+  git status --short --branch
+  git fetch origin main
+  ```
+
+- Если есть локальные изменения, не выполнять `git pull` вслепую. Сначала сохранить их в именованный stash, затем использовать только fast-forward:
+
+  ```bash
+  git stash push -m pre-ff-YYYY-MM-DD-vidno-production -- <изменённые-файлы>
+  git merge --ff-only origin/main
+  ```
+
+- После обновления снова проверить `git status`, `docker compose ps`, HTTPS `/api/health` и HTTP-редирект.
+- Резервный stash не удалять без отдельного разрешения пользователя.
+
+### Обновление сертификата Timeweb
+
+- Подключиться к Timeweb-серверу и выполнить `umask 077`.
+- Обновить CRT в `/etc/vidno/tls/fullchain.pem`, а private key в `/etc/vidno/tls/privkey.pem`.
+- Выполнить `chmod 600 /etc/vidno/tls/*.pem`.
+- Проверить конфигурацию Nginx внутри frontend-контейнера:
+
+  ```bash
+  cd /root/projects/vidno/vidno
+  docker compose exec frontend nginx -t
+  docker compose restart frontend
+  ```
+
+- После этого проверить срок и домены сертификата, HTTPS снаружи и `/api/health`. Private key не выводить.
 
 ## Безопасность
 
