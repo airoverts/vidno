@@ -51,6 +51,10 @@ function navigate(pageId) {
     const sectionMap = {
         features: 'section-features',
         how: 'section-how',
+        insight: 'section-insight',
+        context: 'section-context',
+        journey: 'section-journey',
+        growth: 'section-growth',
         faq: 'section-faq',
         contacts: 'section-contacts'
     };
@@ -229,6 +233,15 @@ $$('.acc-head').forEach(head => {
         const wasOpen = item.classList.contains('open');
         $$('.acc-item').forEach(i => i.classList.remove('open'));
         if (!wasOpen) item.classList.add('open');
+    });
+});
+
+$$('.provider-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        $$('.provider-tab').forEach(item => item.classList.remove('active'));
+        tab.classList.add('active');
+        const answerLabel = $('.answer-card-head span');
+        if (answerLabel) answerLabel.innerHTML = `<i class="fa-solid fa-comment-dots"></i> Ответ ${tab.textContent}`;
     });
 });
 

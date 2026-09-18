@@ -37,6 +37,7 @@
             <nav class="nav" id="navMenu">
                 <button class="nav-link" data-nav="home">Главная</button>
                 <a class="nav-link" href="dashboard.html">Дашборд</a>
+                <button class="nav-link" data-nav="how">Как работает</button>
                 <button class="nav-link" data-nav="features">Возможности</button>
                 <button class="nav-link" data-nav="faq">FAQ</button>
             </nav>
@@ -64,432 +65,83 @@
     <section class="page page--home active" id="page-home" data-page="home">
 
         <!-- HERO -->
-        <div class="hero">
+        <div class="hero landing-hero">
             <div class="hero-bg"></div>
             <div class="container hero-inner">
                 <div class="hero-content" data-aos="fade-up">
-                    <span class="badge"><i class="fa-solid fa-bolt"></i> Мониторинг видимости в AI</span>
-                    <h1 class="hero-title">
-                        AI-ассистенты уже рекомендуют — <span class="accent">вас или конкурентов?</span>
-                    </h1>
-                    <p class="hero-subtitle">
-                        Проверяйте, как GigaChat, Алиса AI, ChatGPT, Gemini и Perplexity отвечают на запросы о вашем бренде.<br>
-                        Сохраняйте историю, изучайте источники и планируйте следующие действия. Проверки доступны после активации аккаунта.
-                    </p>
+                    <span class="badge"><i class="fa-solid fa-eye"></i> Анализ AI-видимости бренда</span>
+                    <h1 class="hero-title">Узнайте, как <span class="accent">AI видит ваш бренд</span></h1>
+                    <p class="hero-subtitle">Проверяйте важные для бизнеса запросы в ChatGPT, Gemini, Perplexity, GigaChat и Алисе AI. Vidno покажет упоминание бренда, его роль в ответе, конкурентов и найденные источники.</p>
                     <div class="hero-actions">
-                        <button class="btn btn-primary btn-lg" data-cta="signup">
-                            <i class="fa-solid fa-rocket"></i> Создать аккаунт
-                        </button>
-                        <button class="btn btn-ghost btn-lg" data-nav="how">
-                            <i class="fa-solid fa-play"></i> Как это работает
-                        </button>
+                        <button class="btn btn-primary btn-lg" data-cta="signup"><i class="fa-solid fa-magnifying-glass"></i> Проверить бренд</button>
+                        <button class="btn btn-ghost btn-lg" data-nav="insight"><i class="fa-solid fa-arrow-down"></i> Посмотреть пример</button>
                     </div>
-                    <div class="hero-stats">
-                        <div><strong>5</strong><span>AI-провайдеров</span></div>
-                        <div><strong>История</strong><span>сохранённых проверок</span></div>
-                        <div><strong>План</strong><span>работы над ростом</span></div>
-                    </div>
+                    <p class="hero-proof"><i class="fa-solid fa-arrow-right"></i> Один запрос <span>→</span> ответы нескольких AI-систем <span>→</span> единая картина по бренду, конкурентам и источникам.</p>
                 </div>
 
                 <div class="hero-visual" data-aos="fade-left">
-                    <div class="dash-mock">
-                        <div class="dash-mock-head">
-                            <span class="dot red"></span>
-                            <span class="dot yellow"></span>
-                            <span class="dot green"></span>
-                            <span class="dash-mock-title">Пример показателей в кабинете</span>
-                        </div>
-                        <div class="dash-mock-body">
-                            <div class="dm-row">
-                                <div class="dm-card">
-                                    <div class="dm-card-label">Visibility Score</div>
-                                    <div class="dm-card-value">85<sup>%</sup></div>
-                                    <div class="dm-bar"><span style="width:85%"></span></div>
-                                </div>
-                                <div class="dm-card">
-                                    <div class="dm-card-label">Share of Voice</div>
-                                    <div class="dm-card-value">34<sup>%</sup></div>
-                                    <div class="dm-bar"><span style="width:34%"></span></div>
-                                </div>
-                            </div>
-                            <div class="dm-chart">
-                                <svg viewBox="0 0 320 120" preserveAspectRatio="none">
-                                    <polyline class="dm-line" points="0,90 40,70 80,80 120,50 160,60 200,30 240,40 280,20 320,10" />
-                                    <polyline class="dm-area" points="0,90 40,70 80,80 120,50 160,60 200,30 240,40 280,20 320,10 320,120 0,120" />
-                                </svg>
-                            </div>
-                            <div class="dm-legend">
-                                <span><i class="fa-solid fa-circle"></i> ChatGPT</span>
-                                <span><i class="fa-solid fa-circle"></i> Алиса AI</span>
-                                <span><i class="fa-solid fa-circle"></i> Perplexity</span>
-                            </div>
+                    <div class="result-window">
+                        <div class="result-window-head"><span class="window-label">Пример проверки</span><span class="window-status"><i class="fa-solid fa-circle-check"></i> Результат сохранён</span></div>
+                        <div class="result-query"><span>Запрос</span><strong>«Как выбрать сервис для видимости бренда в AI?»</strong></div>
+                        <div class="provider-tabs" role="tablist" aria-label="AI-системы"><button class="provider-tab active">ChatGPT</button><button class="provider-tab">Gemini</button><button class="provider-tab">Perplexity</button><button class="provider-tab">GigaChat</button><button class="provider-tab">Алиса AI</button></div>
+                        <div class="answer-card">
+                            <div class="answer-card-head"><span><i class="fa-solid fa-comment-dots"></i> Ответ ChatGPT</span><span class="mention-tag">Бренд упомянут</span></div>
+                            <p>Для задачи можно рассмотреть <mark>Vidno</mark> — сервис, который помогает анализировать ответы AI и увидеть, какие бренды упоминаются рядом.</p>
+                            <div class="answer-insights"><div><small>Роль в ответе</small><strong>Один из рассматриваемых вариантов</strong></div><div><small>Рядом упоминаются</small><strong>Бренд A · Бренд B</strong></div><div><small>Найденные источники</small><strong>3 источника</strong></div></div>
                         </div>
                     </div>
-                    <div class="floating-chip chip-1"><i class="fa-solid fa-chart-line"></i> Сравнение проверок</div>
+                    <div class="floating-chip chip-1"><i class="fa-solid fa-highlighter"></i> Контекст упоминания</div>
                 </div>
             </div>
         </div>
 
-        <!-- AI LOGOS MARQUEE -->
-        <div class="logos-strip">
+        <div class="logos-strip provider-strip">
             <div class="container">
-                <p class="logos-title">Проверки в пяти AI-системах</p>
-                <div class="logos-row">
-                    <div class="logos-track">
-                        <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
-                        <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
-                        <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span>Алиса AI</span>
-                        <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span>GigaChat</span>
-                        <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
-                        <!-- duplicate for seamless loop -->
-                        <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
-                        <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
-                        <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span>Алиса AI</span>
-                        <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span>GigaChat</span>
-                        <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
-                    </div>
-                </div>
+                <p class="logos-title">Один запрос — пять AI-систем</p>
+                <div class="logos-row"><div class="logos-track">
+                    <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span><span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span><span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span><span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span> GigaChat</span><span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span> Алиса AI</span>
+                    <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span><span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span><span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span><span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span> GigaChat</span><span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span> Алиса AI</span>
+                </div></div>
             </div>
         </div>
 
-        <!-- PROBLEM SECTION -->
-        <section class="section section-soft">
+        <section class="section context-section" id="section-context">
             <div class="container">
-                <div class="section-head" data-aos="fade-up">
-                    <span class="eyebrow">Проблема</span>
-                    <h2 class="section-title">Узнайте реальную позицию бренда в ответах AI-ассистентов</h2>
-                    <p class="section-sub">Vidno сохраняет результаты проверок по выбранным AI-системам: упоминание бренда, его роль в ответе, конкурентов и найденные источники.</p>
-                </div>
-                <div class="grid grid-3">
-                    <article class="adv-card" data-aos="fade-up" data-aos-delay="0">
-                        <div class="adv-icon ic-blue"><i class="fa-solid fa-comment-dots"></i></div>
-                        <h3>Поиск в AI — новый канал присутствия</h3>
-                        <p>Люди задают вопросы AI-ассистентам о продуктах и услугах. Проверьте, появляется ли ваш бренд в ответах на важные для вас запросы.</p>
-                    </article>
-                    <article class="adv-card" data-aos="fade-up" data-aos-delay="100">
-                        <div class="adv-icon ic-purple"><i class="fa-solid fa-magnifying-glass-chart"></i></div>
-                        <h3>Проверка упоминаний</h3>
-                        <p>Посмотрите ответы выбранных AI-систем, обнаруженные упоминания бренда и конкурентов, контекст и источники.</p>
-                    </article>
-                    <article class="adv-card" data-aos="fade-up" data-aos-delay="200">
-                        <div class="adv-icon ic-green"><i class="fa-solid fa-chart-column"></i></div>
-                        <h3>История для сравнения</h3>
-                        <p>Сохранённые проверки помогают сравнивать результаты по брендам, запросам и AI-системам после изменений в контенте.</p>
-                    </article>
-                </div>
+                <div class="section-head" data-aos="fade-up"><span class="eyebrow">Новый вопрос для маркетолога</span><h2 class="section-title">Ваш бренд ищут не только в поиске</h2><p class="section-sub">Люди задают AI-ассистентам вопросы, на которые раньше искали ответ через поисковую выдачу. В результате пользователь может получить готовую рекомендацию ещё до перехода на сайт.</p></div>
+                <div class="context-flow" data-aos="fade-up"><div class="context-step"><span class="context-number">01</span><i class="fa-solid fa-magnifying-glass"></i><h3>Поиск</h3><p>Список страниц и ссылок</p></div><div class="flow-arrow"><i class="fa-solid fa-arrow-right"></i></div><div class="context-step"><span class="context-number">02</span><i class="fa-solid fa-message"></i><h3>AI-ассистент</h3><p>Готовый ответ и рекомендация</p></div><div class="flow-arrow"><i class="fa-solid fa-arrow-right"></i></div><div class="context-step context-step-highlight"><span class="context-number">03</span><i class="fa-solid fa-eye"></i><h3>Vidno</h3><p>Как бренд представлен в ответе</p></div></div>
+                <p class="context-note" data-aos="fade-up">Vidno дополняет привычную поисковую аналитику и помогает увидеть отдельный слой представления бренда.</p>
             </div>
         </section>
 
-        <!-- HOW SECTION -->
+        <section class="section section-soft insight-section" id="section-insight">
+            <div class="container">
+                <div class="section-head" data-aos="fade-up"><span class="eyebrow">Внутри одного ответа</span><h2 class="section-title">Не просто «упомянули или нет»</h2><p class="section-sub">Сам факт появления бренда — только начало. Vidno помогает разобрать картину, которую получает пользователь из ответа AI.</p></div>
+                <div class="insight-layout" data-aos="fade-up"><div class="insight-answer"><div class="answer-card-head"><span><i class="fa-solid fa-comment-dots"></i> Фрагмент ответа AI</span><span class="answer-dot"></span></div><p>Если вы выбираете решение для мониторинга, обратите внимание на <mark>Vidno</mark> и другие сервисы, которые анализируют присутствие бренда в ответах AI.</p><div class="source-line"><i class="fa-solid fa-link"></i> Источник: пример публикации о AI-маркетинге</div></div><div class="insight-points"><div class="insight-point"><span class="insight-icon brand"><i class="fa-solid fa-eye"></i></span><div><h3>Упоминание бренда</h3><p>Появился ли ваш бренд в ответе.</p></div></div><div class="insight-point"><span class="insight-icon context"><i class="fa-solid fa-align-left"></i></span><div><h3>Роль и контекст</h3><p>Как AI описывает бренд и какую роль ему отводит.</p></div></div><div class="insight-point"><span class="insight-icon competitors"><i class="fa-solid fa-scale-balanced"></i></span><div><h3>Конкуренты</h3><p>Какие другие бренды оказались рядом.</p></div></div><div class="insight-point"><span class="insight-icon sources"><i class="fa-solid fa-link"></i></span><div><h3>Источники</h3><p>На какие материалы опирается ответ.</p></div></div></div></div>
+            </div>
+        </section>
+
         <section id="section-how">
-        <div class="page-hero">
-            <div class="container">
-                <span class="eyebrow">Как это работает</span>
-                <h1 class="page-title">3 шага до контроля над <span class="accent">AI-видимостью</span></h1>
-                <p class="page-sub">Добавьте бренд, запустите проверку и изучите сохранённый результат в кабинете.</p>
-            </div>
-        </div>
-
-        <section class="section">
-            <div class="container">
-                <div class="timeline">
-                    <div class="timeline-line"></div>
-
-                    <div class="tl-step" data-aos="fade-up">
-                        <div class="tl-num">1</div>
-                        <div class="tl-icon"><i class="fa-solid fa-plus"></i></div>
-                        <div class="tl-content">
-                            <h3>Укажите бренд и запрос</h3>
-                            <p>Добавьте бренд в кабинет и введите вопрос, ответ на который хотите проверить. Конкуренты, найденные в ответе, появятся в результате.</p>
-                            <div class="tl-mock form-mock">
-                                <div class="mock-field"><span>Бренд</span><div class="mock-input">Vidno</div></div>
-                                <div class="mock-field"><span>Запросы</span><div class="mock-input">«лучший сервис видимости AI»</div></div>
-                                <div class="mock-field"><span>AI-системы</span><div class="mock-input">GigaChat, Алиса AI, ChatGPT…</div></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="tl-step" data-aos="fade-up" data-aos-delay="100">
-                        <div class="tl-num">2</div>
-                        <div class="tl-icon"><i class="fa-solid fa-play"></i></div>
-                        <div class="tl-content">
-                            <h3>Запустите анализ</h3>
-                            <p>Выберите AI-системы из пяти доступных и запустите проверку. Время ответа зависит от провайдеров.</p>
-                            <div class="tl-mock run-mock">
-                                <div class="spinner"></div>
-                                <span id="analyzeText">Проверяем ответ ChatGPT…</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="tl-step" data-aos="fade-up" data-aos-delay="200">
-                        <div class="tl-num">3</div>
-                        <div class="tl-icon"><i class="fa-solid fa-chart-pie"></i></div>
-                        <div class="tl-content">
-                            <h3>Изучите результат и План роста</h3>
-                            <p>Кабинет сохраняет проверку, показывает сравнение, источники и подтверждённые возможности для задач Плана роста.</p>
-                            <div class="tl-mock mini-dash">
-                                <div class="mini-kpi-card">
-                                    <div class="mini-kpi-val">85<span>%</span></div>
-                                    <div class="mini-kpi-lbl">видимость</div>
-                                    <div class="mini-bar"><span style="width:85%"></span></div>
-                                </div>
-                                <div class="mini-kpi-card">
-                                    <div class="mini-kpi-val">34<span>%</span></div>
-                                    <div class="mini-kpi-lbl">
-                                        SoV
-                                        <span class="tooltip-icon" data-tooltip="Share of Voice — доля упоминаний бренда в ответах AI-ассистентов относительно конкурентов">
-                                            <i class="fa-solid fa-circle-question"></i>
-                                        </span>
-                                    </div>
-                                    <div class="mini-bar"><span style="width:34%"></span></div>
-                                </div>
-                                <div class="mini-kpi-card">
-                                    <div class="mini-kpi-val">2.7</div>
-                                    <div class="mini-kpi-lbl">позиция</div>
-                                    <div class="mini-bar"><span style="width:54%"></span></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+            <div class="page-hero"><div class="container"><span class="eyebrow">Понятный рабочий сценарий</span><h2 class="page-title">От вопроса до понятной картины — <span class="accent">одна проверка</span></h2><p class="page-sub">Запустите проверку, изучите результат и сохраните его для дальнейшего сравнения.</p></div></div>
+            <section class="section"><div class="container"><div class="process-grid" data-aos="fade-up"><article class="process-card"><span>01</span><i class="fa-solid fa-plus"></i><h3>Добавьте бренд</h3><p>Укажите, чью видимость вы хотите анализировать.</p><div class="process-ui"><small>Бренд</small><strong>Vidno</strong></div></article><article class="process-card"><span>02</span><i class="fa-solid fa-pen"></i><h3>Введите запрос</h3><p>Сформулируйте вопрос, который может задать потенциальный клиент.</p><div class="process-ui"><small>Запрос</small><strong>«Как выбрать сервис для AI?»</strong></div></article><article class="process-card"><span>03</span><i class="fa-solid fa-play"></i><h3>Запустите проверку</h3><p>Выберите доступные AI-системы и отправьте запрос.</p><div class="process-ui process-providers"><b>ChatGPT</b><b>Gemini</b><b>+3</b></div></article><article class="process-card"><span>04</span><i class="fa-solid fa-chart-simple"></i><h3>Изучите результат</h3><p>Разберите упоминание, контекст, конкурентов и источники.</p><div class="process-ui"><small>Результат</small><strong>Ответ сохранён</strong></div></article><article class="process-card"><span>05</span><i class="fa-solid fa-clock-rotate-left"></i><h3>Сохраните проверку</h3><p>Вернитесь к результату позже или сравните его с другой проверкой.</p><div class="process-ui"><small>История</small><strong>Проверка от сегодня</strong></div></article></div></div></section>
         </section>
 
-        <!-- SCENARIOS SECTION -->
-        <section class="section section-hero-bg" id="section-scenarios">
-            <div class="container">
-                <div class="section-head" data-aos="fade-up">
-                    <span class="eyebrow">Для кого Vidno</span>
-                    <h2 class="section-title">Сценарии использования</h2>
-                </div>
-                <div class="scenario-tabs" data-aos="fade-up">
-                    <button class="scenario-tab active" data-tab="seo">SEO-специалисты</button>
-                    <button class="scenario-tab" data-tab="marketing">Маркетологи</button>
-                    <button class="scenario-tab" data-tab="product">Продакт-менеджеры</button>
-                    <button class="scenario-tab" data-tab="pr">PR-специалисты</button>
-                </div>
-                <div class="scenario-content" data-aos="fade-up">
-                    <div class="scenario-panel active" data-panel="seo">
-                        <div class="scenario-icon"><i class="fa-solid fa-magnifying-glass-chart"></i></div>
-                        <h3>Оптимизация под AI-поиск</h3>
-                        <p>Отслеживайте видимость бренда в ответах AI-ассистентов и оптимизируйте контент для новых каналов поиска.</p>
-                        <ul class="scenario-list">
-                            <li>Мониторинг позиций по ключевым запросам</li>
-                            <li>Анализ структуры ответов AI</li>
-                            <li>Выявление точек роста видимости</li>
-                            <li>Сравнение с конкурентами по сохранённым проверкам</li>
-                        </ul>
-                    </div>
-                    <div class="scenario-panel" data-panel="marketing">
-                        <div class="scenario-icon"><i class="fa-solid fa-bullhorn"></i></div>
-                        <h3>Анализ конкурентов и позиционирование</h3>
-                        <p>Понимайте, как AI-ассистенты распределяют упоминания между вами и конкурентами, и корректируйте стратегию.</p>
-                        <ul class="scenario-list">
-                            <li>Доля голоса (Share of Voice) по запросам</li>
-                            <li>Сравнение позиций с конкурентами</li>
-                            <li>Анализ тональности упоминаний</li>
-                            <li>Выявление сильных и слабых сторон</li>
-                        </ul>
-                    </div>
-                    <div class="scenario-panel" data-panel="product">
-                        <div class="scenario-icon"><i class="fa-solid fa-rocket"></i></div>
-                        <h3>Понимание представления продукта в AI</h3>
-                        <p>Узнайте, как AI-ассистенты описывают ваш продукт, и используйте инсайты для улучшений.</p>
-                        <ul class="scenario-list">
-                            <li>Ответы по выбранным AI-системам</li>
-                            <li>Роль бренда в ответах AI</li>
-                            <li>Выявление пробелов в информации</li>
-                            <li>Выявление приоритетных направлений</li>
-                        </ul>
-                    </div>
-                    <div class="scenario-panel" data-panel="pr">
-                        <div class="scenario-icon"><i class="fa-solid fa-shield-halved"></i></div>
-                        <h3>Мониторинг репутации в AI</h3>
-                        <p>Контролируйте нарратив о бренде в AI-ответах и вовремя реагируйте на изменения.</p>
-                        <ul class="scenario-list">
-                            <li>Отслеживание упоминаний бренда</li>
-                            <li>Анализ контекста и тональности</li>
-                            <li>Сравнение с предыдущими проверками</li>
-                            <li>История проверок для обсуждения с командой</li>
-                        </ul>
-                    </div>
-                </div>
-                <div class="center-cta" data-aos="fade-up">
-                    <button class="btn btn-primary btn-lg" data-cta="signup">
-                        <i class="fa-solid fa-rocket"></i> Создать аккаунт
-                    </button>
-                </div>
-            </div>
+        <section class="section section-soft journey-section" id="section-journey">
+            <div class="container"><div class="section-head" data-aos="fade-up"><span class="eyebrow">От наблюдения к работе</span><h2 class="section-title">От запроса до следующего действия</h2><p class="section-sub">Vidno помогает пройти весь путь: от ответа AI до задачи, которую можно проверить повторно.</p></div><div class="journey" data-aos="fade-up"><div class="journey-item"><span>01</span><strong>Бренд и запрос</strong><small>Что хотим проверить</small></div><i class="fa-solid fa-arrow-right journey-arrow"></i><div class="journey-item"><span>02</span><strong>Ответ AI</strong><small>Что получил пользователь</small></div><i class="fa-solid fa-arrow-right journey-arrow"></i><div class="journey-item"><span>03</span><strong>Конкуренты и источники</strong><small>Что формирует картину</small></div><i class="fa-solid fa-arrow-right journey-arrow"></i><div class="journey-item journey-accent"><span>04</span><strong>План роста</strong><small>Подтверждённая задача</small></div></div><div class="journey-loop"><i class="fa-solid fa-rotate-left"></i> после изменений — повторная проверка</div></div>
         </section>
 
-        <!-- FEATURES SECTION -->
-        <section id="section-features">
-        <div class="container">
-            <div class="section-head" data-aos="fade-up">
-                <span class="eyebrow">Возможности</span>
-                <h2 class="section-title">Инструменты для управления <span class="accent">AI-видимостью</span></h2>
-                <p class="section-sub">Проверки, история, сравнение и задачи в одном кабинете.</p>
-            </div>
-            <div class="grid grid-3 features-grid">
-                <article class="feature-card" data-modal-open="feat-1" data-aos="fade-up">
-                    <div class="feature-ic"><i class="fa-solid fa-chart-line"></i></div>
-                    <h3>Мониторинг видимости</h3>
-                    <p>Показатели видимости по сохранённым проверкам и выбранным AI-системам.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
+        <section class="section provider-section"><div class="container split-section"><div data-aos="fade-right"><span class="eyebrow">Один вопрос — разные ответы</span><h2 class="section-title">Пять AI-систем в одном рабочем сценарии</h2><p class="section-sub">Один и тот же вопрос можно проверить в GigaChat, Алисе AI, ChatGPT, Gemini и Perplexity. Результаты остаются в единой картине по бренду.</p></div><div class="provider-orbit" data-aos="fade-left"><div class="orbit-center"><i class="fa-solid fa-magnifying-glass"></i><span>Один<br>запрос</span></div><span class="orbit-pill orbit-1">ChatGPT</span><span class="orbit-pill orbit-2">Gemini</span><span class="orbit-pill orbit-3">Perplexity</span><span class="orbit-pill orbit-4">GigaChat</span><span class="orbit-pill orbit-5">Алиса AI</span></div></div></section>
 
-                <article class="feature-card" data-modal-open="feat-2" data-aos="fade-up" data-aos-delay="100">
-                    <div class="feature-ic"><i class="fa-solid fa-brain"></i></div>
-                    <h3>Анализ ответов</h3>
-                    <p>Роль бренда, контекст упоминания и выводы по каждому результату проверки.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
+        <section class="section section-soft history-section"><div class="container split-section"><div class="history-visual" data-aos="fade-right"><div class="history-card"><div class="history-card-head"><strong>История проверок</strong><span>Сравнение</span></div><div class="history-row"><span>Проверка 1 · 12 мая</span><b>Бренд упомянут</b><i class="fa-solid fa-arrow-right"></i></div><div class="history-row history-row-change"><span>Проверка 2 · 26 мая</span><b>Изменился контекст</b><i class="fa-solid fa-arrow-right"></i></div><div class="history-diff"><i class="fa-solid fa-arrow-trend-up"></i> Сравните сохранённые результаты после изменений</div></div></div><div data-aos="fade-left"><span class="eyebrow">История и сравнение</span><h2 class="section-title">Не теряйте результаты отдельных проверок</h2><p class="section-sub">Сохраняйте проведённые проверки и возвращайтесь к ним позже. Сравнение помогает увидеть, что изменилось после вашей работы.</p><p class="section-note"><i class="fa-solid fa-circle-info"></i> Результаты зависят от самих AI-систем и условий конкретной проверки.</p></div></div></section>
 
-                <article class="feature-card" data-modal-open="feat-3" data-aos="fade-up" data-aos-delay="200">
-                    <div class="feature-ic"><i class="fa-solid fa-scale-balanced"></i></div>
-                    <h3>Сравнение с конкурентами</h3>
-                    <p>Сравнение брендов и доли упоминаний по накопленным проверкам.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
+        <section class="section growth-section" id="section-growth"><div class="container split-section"><div data-aos="fade-right"><span class="eyebrow">План роста</span><h2 class="section-title">Превращайте найденные возможности в задачи</h2><p class="section-sub">Подтверждённую возможность можно использовать для формирования задачи в Плане роста. После изменений запрос проверяется повторно.</p><button class="btn btn-primary" data-cta="signup"><i class="fa-solid fa-rocket"></i> Начать с проверки</button></div><div class="growth-flow" data-aos="fade-left"><div class="growth-state"><span><i class="fa-solid fa-eye"></i></span><div><small>Наблюдение</small><strong>Бренд не представлен в нужном контексте</strong></div></div><i class="fa-solid fa-arrow-down"></i><div class="growth-state growth-state-accent"><span><i class="fa-solid fa-list-check"></i></span><div><small>Задача в Плане роста</small><strong>Сформировать рабочую задачу</strong></div></div><i class="fa-solid fa-arrow-down"></i><div class="growth-state"><span><i class="fa-solid fa-rotate"></i></span><div><small>Повторная проверка</small><strong>Сравнить результат изменений</strong></div></div></div></div></section>
 
-                <article class="feature-card" data-modal-open="feat-4" data-aos="fade-up">
-                    <div class="feature-ic"><i class="fa-solid fa-clipboard-check"></i></div>
-                    <h3>План роста</h3>
-                    <p>Подтверждённые возможности превращаются в задачи, а повторная проверка помогает оценить результат.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
+        <section id="section-features"><div class="container"><div class="section-head" data-aos="fade-up"><span class="eyebrow">Возможности Vidno</span><h2 class="section-title">Всё, что нужно для разбора AI-ответа</h2><p class="section-sub">Конкретные данные проверки вместо абстрактного рейтинга видимости.</p></div><div class="grid grid-3 features-grid"><article class="feature-card" data-modal-open="feat-1" data-aos="fade-up"><div class="feature-ic"><i class="fa-solid fa-comment-dots"></i></div><h3>Ответы AI-систем</h3><p>Проверяйте запросы в пяти доступных AI-системах и изучайте полученный ответ.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article><article class="feature-card" data-modal-open="feat-2" data-aos="fade-up" data-aos-delay="100"><div class="feature-ic"><i class="fa-solid fa-highlighter"></i></div><h3>Упоминание и контекст</h3><p>Смотрите, появился ли бренд и какую роль он занимает в ответе.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article><article class="feature-card" data-modal-open="feat-3" data-aos="fade-up" data-aos-delay="200"><div class="feature-ic"><i class="fa-solid fa-scale-balanced"></i></div><h3>Конкуренты</h3><p>Видите другие бренды, обнаруженные рядом в том же ответе.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article><article class="feature-card" data-modal-open="feat-4" data-aos="fade-up"><div class="feature-ic"><i class="fa-solid fa-clipboard-check"></i></div><h3>План роста</h3><p>Превращайте подтверждённые возможности в задачи и проверяйте результат.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article><article class="feature-card" data-modal-open="feat-5" data-aos="fade-up" data-aos-delay="100"><div class="feature-ic"><i class="fa-solid fa-link"></i></div><h3>Источники</h3><p>Изучайте материалы, связанные с результатом конкретной проверки.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article><article class="feature-card" data-modal-open="feat-6" data-aos="fade-up" data-aos-delay="200"><div class="feature-ic"><i class="fa-solid fa-clock-rotate-left"></i></div><h3>История проверок</h3><p>Сохраняйте ответы и сравнивайте результаты после изменений.</p><span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span></article></div></div></section>
 
-                <article class="feature-card" data-modal-open="feat-5" data-aos="fade-up" data-aos-delay="100">
-                    <div class="feature-ic"><i class="fa-solid fa-link"></i></div>
-                    <h3>Источники</h3>
-                    <p>Ссылки на источники из результатов проверки и частота их появления в истории.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
+        <section class="section trust-section section-soft"><div class="container"><div class="section-head" data-aos="fade-up"><span class="eyebrow">Прозрачность продукта</span><h2 class="section-title">Вы видите не только вывод, но и сам результат проверки</h2><p class="section-sub">Vidno показывает реальные ответы AI и связанные с ними данные, чтобы маркетолог мог самостоятельно оценить картину.</p></div><div class="trust-grid" data-aos="fade-up"><div><i class="fa-solid fa-layer-group"></i><strong>5 AI-систем</strong><span>GigaChat, Алиса AI, ChatGPT, Gemini и Perplexity</span></div><div><i class="fa-solid fa-message"></i><strong>Реальный ответ</strong><span>Работа с конкретным результатом проверки</span></div><div><i class="fa-solid fa-clock-rotate-left"></i><strong>Сохранённая история</strong><span>Можно вернуться и сравнить проверки</span></div><div><i class="fa-solid fa-repeat"></i><strong>Повторная проверка</strong><span>Пользователь сам запускает новый запрос</span></div></div><p class="trust-limit">Vidno не заменяет SEO-инструменты и не гарантирует изменение ответов или позиций в AI-системах.</p></div></section>
 
-                <article class="feature-card" data-modal-open="feat-6" data-aos="fade-up" data-aos-delay="200">
-                    <div class="feature-ic"><i class="fa-solid fa-clock-rotate-left"></i></div>
-                    <h3>История проверок</h3>
-                    <p>Сохранённые ответы доступны в кабинете для просмотра и сравнения.</p>
-                    <span class="feature-link">Подробнее <i class="fa-solid fa-arrow-right"></i></span>
-                </article>
-            </div>
-        </div>
-        </section>
+        <section class="section section-soft" id="section-faq"><div class="container container-narrow"><div class="section-head" data-aos="fade-up"><span class="eyebrow">FAQ</span><h2 class="section-title">Частые вопросы</h2></div><div class="accordion" id="faq"><div class="acc-item"><button class="acc-head">Что такое AI-видимость бренда? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>Это то, как бренд представлен в ответах AI-ассистентов: появляется ли он, в каком контексте упоминается и какие бренды оказываются рядом.</p></div></div><div class="acc-item"><button class="acc-head">Какие AI-системы можно проверять? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>GigaChat, Алису AI, ChatGPT, Gemini и Perplexity.</p></div></div><div class="acc-item"><button class="acc-head">Что показывает результат? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>Ответ AI, упоминание и роль бренда, обнаруженных конкурентов и найденные источники.</p></div></div><div class="acc-item"><button class="acc-head">Можно ли сравнивать результаты? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>Да. Проверки сохраняются в истории, а сохранённые результаты можно сравнивать между собой.</p></div></div><div class="acc-item"><button class="acc-head">Что такое План роста? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>Подтверждённые возможности можно использовать для формирования задач, а после изменений провести повторную проверку.</p></div></div><div class="acc-item"><button class="acc-head">Vidno автоматически следит за брендом? <i class="fa-solid fa-chevron-down"></i></button><div class="acc-body"><p>Основной сценарий Vidno строится вокруг проверок, которые запускает пользователь. Не нужно ждать автоматического постоянного мониторинга.</p></div></div></div></div></section>
 
-        <!-- WHY VIDNO SECTION -->
-        <section class="section section-soft">
-            <div class="container">
-                <div class="section-head" data-aos="fade-up">
-                    <span class="eyebrow">Почему Vidno</span>
-                    <h2 class="section-title">Самостоятельный мониторинг vs Vidno</h2>
-                </div>
-                <div class="compare-table-wrap" data-aos="fade-up">
-                    <table class="compare-table">
-                        <thead>
-                            <tr>
-                                <th>Критерий</th>
-                                <th>Ручной</th>
-                                <th class="compare-accent">Vidno</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>AI-системы</td>
-                                <td>Открывать каждую отдельно</td>
-                                <td class="compare-accent">Пять в одном кабинете</td>
-                            </tr>
-                            <tr>
-                                <td>История ответов</td>
-                                <td>Сохранять вручную</td>
-                                <td class="compare-accent">Сохраняется после проверки</td>
-                            </tr>
-                            <tr>
-                                <td>Сведения о бренде</td>
-                                <td>Сверять ответы вручную</td>
-                                <td class="compare-accent">Упоминание и роль в ответе</td>
-                            </tr>
-                            <tr>
-                                <td>Сравнение с конкурентами</td>
-                                <td>Собирать данные вручную</td>
-                                <td class="compare-accent">По результатам проверок</td>
-                            </tr>
-                            <tr>
-                                <td>Источники</td>
-                                <td>Просматривать в каждом ответе</td>
-                                <td class="compare-accent">Ссылки и рейтинг источников</td>
-                            </tr>
-                            <tr>
-                                <td>План действий</td>
-                                <td>Вести отдельно</td>
-                                <td class="compare-accent">Задачи в Плане роста</td>
-                            </tr>
-                            <tr>
-                                <td>Проверка результата</td>
-                                <td>Повторить запрос вручную</td>
-                                <td class="compare-accent">Сравнить сохранённые проверки</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </section>
-
-        <!-- FAQ -->
-        <section class="section section-soft" id="section-faq">
-            <div class="container container-narrow">
-                <div class="section-head" data-aos="fade-up">
-                    <span class="eyebrow">FAQ</span>
-                    <h2 class="section-title">Частые вопросы</h2>
-                </div>
-                <div class="accordion" id="faq">
-                    <div class="acc-item">
-                        <button class="acc-head">Как начать работу? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>Создайте аккаунт и дождитесь активации доступа. Затем добавьте бренд в кабинете и запустите проверку по интересующему вас запросу.</p></div>
-                    </div>
-                    <div class="acc-item">
-                        <button class="acc-head">Какие AI-системы доступны для проверки? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>В кабинете можно выбрать GigaChat, Алису AI, ChatGPT, Gemini и Perplexity. Доступность отдельной системы зависит от её работы в момент проверки.</p></div>
-                    </div>
-                    <div class="acc-item">
-                        <button class="acc-head">Что показывает результат проверки? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>Ответ AI-системы, упоминание и роль бренда, обнаруженных конкурентов и доступные источники. Сохранённые результаты помогают сравнивать проверки.</p></div>
-                    </div>
-                    <div class="acc-item">
-                        <button class="acc-head">Когда обновляются данные? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>Новая проверка запускается пользователем в кабинете. Её результат сохраняется в истории после завершения.</p></div>
-                    </div>
-                    <div class="acc-item">
-                        <button class="acc-head">Как работает План роста? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>После повторных проверок одного запроса кабинет может показать подтверждённую возможность. Её можно превратить в задачу и затем проверить результат изменений.</p></div>
-                    </div>
-                    <div class="acc-item">
-                        <button class="acc-head">Как связаться с командой Vidno? <i class="fa-solid fa-chevron-down"></i></button>
-                        <div class="acc-body"><p>Напишите на <a href="mailto:vidno-communication@yandex.ru">vidno-communication@yandex.ru</a> или в <a href="https://t.me/vidno_communication" target="_blank" rel="noopener noreferrer">Telegram</a>.</p></div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- CTA -->
-        <section class="section">
-            <div class="container">
-                <div class="cta-box cta-bright" data-aos="fade-up">
-                    <div class="cta-text">
-                        <h2>Перестаньте гадать — узнайте, видят ли вас AI</h2>
-                        <ul class="cta-list">
-                            <li><i class="fa-solid fa-check"></i> Проверки в пяти AI-системах</li>
-                            <li><i class="fa-solid fa-check"></i> История результатов и сравнение брендов</li>
-                            <li><i class="fa-solid fa-check"></i> Источники и План роста</li>
-                        </ul>
-                    </div>
-                    <button class="btn btn-light btn-lg" data-cta="signup">
-                        <i class="fa-solid fa-rocket"></i> Создать аккаунт
-                    </button>
-                </div>
-            </div>
-        </section>
+        <section class="section"><div class="container"><div class="cta-box cta-bright final-cta" data-aos="fade-up"><div class="cta-text"><span class="eyebrow eyebrow-light">Финальный шаг</span><h2>Посмотрите на свой бренд глазами AI</h2><p>Введите важный для бизнеса запрос и разберите, как ваш бренд представлен в ответах AI-ассистентов.</p><small>Проверки доступны после активации аккаунта.</small></div><button class="btn btn-light btn-lg" data-cta="signup"><i class="fa-solid fa-magnifying-glass"></i> Проверить бренд</button></div></div></section>
 
         <!-- CONTACTS SECTION -->
         <section id="section-contacts">
@@ -530,7 +182,7 @@
                 <img class="logo-mark" src="assets/vidno-logo.png" alt="">
                 <span class="logo-text">Vid<span class="accent">no</span></span>
             </a>
-            <p>Мониторинг видимости бренда в AI. Превращаем данные в рост.</p>
+            <p>Помогаем разбирать ответы AI о вашем бренде.</p>
             <div class="socials small">
                 <a href="https://t.me/vidno_communication" class="social telegram" title="Telegram" aria-label="Telegram" target="_blank" rel="noopener noreferrer"><i class="fa-brands fa-telegram"></i></a>
                 <a href="https://habr.com/ru/users/vidno/" class="social" title="Хабр" aria-label="Хабр" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-book-open"></i></a>
@@ -577,6 +229,6 @@
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
-<script src="js/script.js?v=20260917-1"></script>
+<script src="js/script.js?v=20260918-1"></script>
 </body>
 </html>
