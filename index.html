@@ -32,7 +32,7 @@
         <div class="header-left">
             <a href="#" class="logo" data-nav="home">
                 <img class="logo-mark" src="assets/vidno-logo.png" alt="">
-                <span class="logo-text">Vid<span class="accent">no</span></span>
+                <span class="logo-text">Vidno</span>
             </a>
             <nav class="nav" id="navMenu">
                 <button class="nav-link" data-nav="home">Главная</button>
@@ -52,6 +52,7 @@
             <button class="burger" id="burger" aria-label="Меню">
                 <span></span><span></span><span></span>
             </button>
+            <button class="theme-toggle" id="themeToggle" type="button" aria-label="Переключить тему" title="Переключить тему"><i class="fa-solid fa-moon"></i></button>
         </div>
     </div>
 </header>
@@ -136,17 +137,20 @@
                 <p class="logos-title">Проверки в пяти AI-системах</p>
                 <div class="logos-row">
                     <div class="logos-track">
+                        <div class="logos-group">
                         <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
                         <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
                         <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span>Алиса AI</span>
                         <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span>GigaChat</span>
                         <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
-                        <!-- duplicate for seamless loop -->
+                        </div>
+                        <div class="logos-group" aria-hidden="true">
                         <span class="logo-pill"><i class="fa-solid fa-comment-dots"></i> ChatGPT</span>
                         <span class="logo-pill"><i class="fa-solid fa-compass"></i> Perplexity</span>
                         <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/alice-ai.svg" alt=""></span>Алиса AI</span>
                         <span class="logo-pill"><span class="ai-logo"><img src="assets/ai/gigachat.svg" alt=""></span>GigaChat</span>
                         <span class="logo-pill"><i class="fa-solid fa-gem"></i> Gemini</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -379,7 +383,7 @@
         </section>
 
         <!-- WHY VIDNO SECTION -->
-        <section class="section section-soft">
+        <section class="section section-soft compare-section">
             <div class="container">
                 <div class="section-head" data-aos="fade-up">
                     <span class="eyebrow">Почему Vidno</span>
@@ -499,20 +503,18 @@
                     <div class="contact-info" data-aos="fade-right">
                         <h2 class="section-title"><span style="color: var(--text)">Свяжитесь с</span> <span class="accent">нами</span></h2>
                         <ul class="contact-list">
-                            <li><i class="fa-solid fa-envelope"></i> <a href="mailto:vidno-communication@yandex.ru">vidno-communication@yandex.ru</a></li>
+                            <li><i class="fa-solid fa-envelope"></i> <button class="contact-email" type="button" data-copy-email="vidno-communication@yandex.ru">vidno-communication@yandex.ru <i class="fa-regular fa-copy" aria-hidden="true"></i></button></li>
                         </ul>
                         <div class="socials">
                             <a href="https://t.me/vidno_communication" class="social telegram" title="Telegram" aria-label="Telegram" target="_blank" rel="noopener noreferrer"><i class="fa-brands fa-telegram"></i></a>
-                            <a href="https://habr.com/ru/users/vidno/" class="social" title="Хабр" aria-label="Хабр" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-book-open"></i></a>
-                            <a href="https://vc.ru/id6072191" class="social" title="vc.ru" aria-label="vc.ru" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-pen-nib"></i></a>
+                            <a href="https://vc.ru/id6072191" class="social vc-link" title="Блог на vc.ru" aria-label="Блог на vc.ru" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">vc</span></a>
                         </div>
                     </div>
 
                     <div class="contact-form" data-aos="fade-left">
                         <h3>Читайте о Vidno</h3>
                         <p>Новости и материалы о видимости бренда в AI:</p>
-                        <p><a href="https://habr.com/ru/users/vidno/" target="_blank" rel="noopener noreferrer">Блог на Хабре <i class="fa-solid fa-arrow-up-right-from-square"></i></a></p>
-                        <p><a href="https://vc.ru/id6072191" target="_blank" rel="noopener noreferrer">Блог на vc.ru <i class="fa-solid fa-arrow-up-right-from-square"></i></a></p>
+                        <p><a class="vc-blog-link" href="https://vc.ru/id6072191" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">vc</span> Блог на vc.ru <i class="fa-solid fa-arrow-up-right-from-square"></i></a></p>
                     </div>
                 </div>
             </div>
@@ -528,13 +530,12 @@
         <div class="footer-brand">
             <a href="#" class="logo" data-nav="home">
                 <img class="logo-mark" src="assets/vidno-logo.png" alt="">
-                <span class="logo-text">Vid<span class="accent">no</span></span>
+                <span class="logo-text">Vidno</span>
             </a>
             <p>Мониторинг видимости бренда в AI. Превращаем данные в рост.</p>
             <div class="socials small">
                 <a href="https://t.me/vidno_communication" class="social telegram" title="Telegram" aria-label="Telegram" target="_blank" rel="noopener noreferrer"><i class="fa-brands fa-telegram"></i></a>
-                <a href="https://habr.com/ru/users/vidno/" class="social" title="Хабр" aria-label="Хабр" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-book-open"></i></a>
-                <a href="https://vc.ru/id6072191" class="social" title="vc.ru" aria-label="vc.ru" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-pen-nib"></i></a>
+                <a href="https://vc.ru/id6072191" class="social vc-link" title="Блог на vc.ru" aria-label="Блог на vc.ru" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">vc</span></a>
             </div>
         </div>
         <div class="footer-cols">
@@ -552,10 +553,10 @@
             </div>
             <div class="footer-col">
                 <h4>Юридическая информация</h4>
-                <a href="legal/agreement.html">Пользовательское соглашение (черновик)</a>
-                <a href="legal/privacy.html">Политика персональных данных (черновик)</a>
-                <a href="legal/consent.html">Согласие на обработку данных (черновик)</a>
-                <a href="legal/cookies.html">Политика cookie (черновик)</a>
+                <a href="legal/agreement.html"><i class="fa-solid fa-file-signature"></i> Пользовательское соглашение</a>
+                <a href="legal/privacy.html"><i class="fa-solid fa-shield-halved"></i> Политика персональных данных</a>
+                <a href="legal/consent.html"><i class="fa-solid fa-user-check"></i> Согласие на обработку данных</a>
+                <a href="legal/cookies.html"><i class="fa-solid fa-cookie-bite"></i> Политика cookie</a>
             </div>
         </div>
     </div>

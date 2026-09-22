@@ -10,6 +10,7 @@ from database import connection, initialize_database
 
 
 SESSION_DAYS = 30
+INACTIVE_ACCOUNT_DAYS = 7
 
 
 def initialize_auth():
@@ -74,7 +75,10 @@ def create_user(name: str, email: str, password: str, brand: str):
 def authenticate(email: str, password: str):
     with connection() as database:
         row = database.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
-    return _public_user(row) if row and _password_matches(password, row["password_hash"]) else None
+        valid = bool(row and _password_matches(password, row["password_hash"]))
+        if valid:
+            database.execute("UPDATE users SET last_activity_at = NOW() WHERE id = %s", (row["id"],))
+    return _public_user(row) if valid else None
 
 
 def create_session(user_id: int):
@@ -104,7 +108,33 @@ def user_for_session(token: str | None):
             """,
             (token_hash,),
         ).fetchone()
+        if row:
+            database.execute("UPDATE users SET last_activity_at = NOW() WHERE id = %s", (row["id"],))
     return _public_user(row) if row else None
+
+
+def cleanup_inactive_users():
+    with connection() as database:
+        locked = database.execute(
+            "SELECT pg_try_advisory_xact_lock(hashtext('vidno_inactive_user_cleanup')) AS locked"
+        ).fetchone()
+        if not locked or not locked["locked"]:
+            return 0
+        rows = database.execute(
+            """
+            DELETE FROM users
+            WHERE id IN (
+                SELECT users.id
+                FROM users
+                JOIN user_access ON user_access.user_id = users.id
+                WHERE user_access.status = 'pending'
+                  AND users.last_activity_at < NOW() - (%s * INTERVAL '1 day')
+            )
+            RETURNING id
+            """,
+            (INACTIVE_ACCOUNT_DAYS,),
+        ).fetchall()
+    return len(rows)
 
 
 def delete_session(token: str | None):

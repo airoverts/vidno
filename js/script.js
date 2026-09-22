@@ -19,6 +19,50 @@ const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
 localStorage.removeItem('vidno-session-token');
 
+function applyTheme() {
+    const theme = localStorage.getItem('vidno-theme') || 'light';
+    document.documentElement.dataset.theme = theme;
+    const button = $('#themeToggle');
+    if (button) button.innerHTML = `<i class="fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}"></i>`;
+}
+function toggleTheme() {
+    localStorage.setItem('vidno-theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    applyTheme();
+}
+applyTheme();
+document.addEventListener('click', event => { if (event.target.closest('#themeToggle')) toggleTheme(); });
+document.addEventListener('click', async event => {
+    const email = event.target.closest('[data-copy-email]');
+    if (!email) return;
+    const value = email.dataset.copyEmail;
+    try {
+        await navigator.clipboard.writeText(value);
+        showToast('Email скопирован', 'fa-regular fa-copy');
+    } catch {
+        const field = document.createElement('textarea');
+        field.value = value; field.style.position = 'fixed'; field.style.opacity = '0';
+        document.body.appendChild(field); field.select(); document.execCommand('copy'); field.remove();
+        showToast('Email скопирован', 'fa-regular fa-copy');
+    }
+});
+
+async function syncLandingAccount() {
+    try {
+        const response = await fetch(`${AUTH_API_BASE}/auth/me`, { credentials: 'include' });
+        if (!response.ok) return;
+        const { user } = await response.json();
+        const actions = $('.header-actions');
+        if (!actions) return;
+        actions.querySelector('[data-cta="login"]')?.remove();
+        actions.querySelector('[data-cta="signup"]')?.remove();
+        const account = document.createElement('a');
+        account.className = 'account-pill'; account.href = 'dashboard.html';
+        account.innerHTML = `<i class="fa-solid fa-user"></i><span>${user.name || user.email}</span>`;
+        actions.insertBefore(account, $('#burger'));
+    } catch { }
+}
+syncLandingAccount();
+
 async function authRequest(path, options = {}) {
     const response = await fetch(`${AUTH_API_BASE}${path}`, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
@@ -40,7 +84,7 @@ const FEATURE_DETAILS = {
     'feat-6': { title: 'История проверок', icon: 'fa-solid fa-clock-rotate-left',
         body: 'Завершённые проверки сохраняются в кабинете. Их можно открыть позже и сравнить показатели по брендам и AI-системам.' },
     'about': { title: 'О Vidno', icon: 'fa-solid fa-circle-info',
-        body: 'Vidno помогает проверять, как бренд представлен в ответах пяти AI-систем, изучать историю проверок, источники и конкурентов, а также вести задачи в Плане роста.' }
+        body: 'Мы помогаем сотрудникам быть более продуктивными, а компаниям — более прибыльными — вот в чём наша основная задача. Мы ценим искренность и заботу, и то же самое мы стараемся дарить нашим клиентам. Спасибо, что выбираете Vidno.' }
 };
 
 /* ============ 2. NAVIGATION & ROUTING ============ */
@@ -150,7 +194,7 @@ function openCtaModal(type) {
             <h2>Вход в Vidno</h2>
             <p>Войдите в личный кабинет, чтобы открыть проверки, историю и План роста.</p>
             <form class="modal-form" id="modalForm">
-                <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
+                <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="username" required placeholder="you@yandex.ru"></div>
                 <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="••••••••" minlength="6"></div>
                 <p class="form-error" id="authError" role="alert" hidden></p>
                 <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-right-to-bracket"></i> Войти</button>
@@ -171,10 +215,10 @@ function openCtaModal(type) {
     openModal(`
         <h2>Регистрация</h2>
         <p>Создайте аккаунт. Проверки и управление брендами станут доступны после активации доступа.</p>
-        <form class="modal-form" id="modalForm">
-            <div class="form-row"><label>Имя</label><input type="text" name="name" required placeholder="Ваше имя"></div>
-            <div class="form-row"><label>Email</label><input type="email" name="email" required placeholder="you@company.com"></div>
-            <div class="form-row"><label>Бренд</label><input type="text" name="brand" placeholder="Название компании"></div>
+        <form class="modal-form" id="modalForm" autocomplete="off">
+            <div class="form-row"><label>Имя</label><input type="text" name="name" autocomplete="name" required placeholder="Ваше имя"></div>
+            <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="email" required placeholder="you@yandex.ru"></div>
+            <div class="form-row"><label>Бренд</label><input type="text" name="brand" autocomplete="organization" placeholder="Название компании"></div>
             <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="Не менее 8 символов" minlength="8" maxlength="128" autocomplete="new-password"></div><p class="form-error" id="authError" role="alert" hidden></p>
             <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> Создать аккаунт</button>
         </form>

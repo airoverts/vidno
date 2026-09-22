@@ -1192,6 +1192,7 @@ $('#accountProfileForm').addEventListener('submit', saveAccount);
 $('#accountEmailForm').addEventListener('submit', changeEmail);
 $('#accountPasswordForm').addEventListener('submit', changePassword);
 $('#accountPasswordConfirm').addEventListener('input', () => $('#accountPasswordConfirm').setCustomValidity(''));
+window.addEventListener('vidno-theme-change', () => { if (accountState) renderAllForActiveBrand(); });
 $('#deleteAccountForm').addEventListener('submit', deleteAccount);
 $('#adminFilters').addEventListener('submit', event => { event.preventDefault(); loadAdminClients(1); });
 $('#adminPrevPage').addEventListener('click', () => loadAdminClients(adminPage - 1));
