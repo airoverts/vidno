@@ -30,7 +30,7 @@ from perplexity_client import ANALYSIS_VERSION, analyze_answer as analyze_with_p
 from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
-from auth import authenticate, cleanup_inactive_users, create_session, create_user, delete_session, delete_user_verified, get_account, initialize_auth, update_account, user_for_session
+from auth import authenticate, create_session, create_user, delete_session, delete_user_verified, get_account, initialize_auth, update_account, user_for_session
 from storage import AccessControlError, create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, get_access, get_admin_client, list_admin_clients, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, require_workspace_access, restore_opportunity, start_check, update_admin_access, update_brand, update_growth_task
 
 logging.basicConfig(level=logging.INFO)
@@ -101,21 +101,7 @@ def _enforce_rate_limit(client_host: str):
 async def lifespan(_app: FastAPI):
     initialize_cache()
     initialize_auth()
-    stop_cleanup = threading.Event()
-    def cleanup_loop():
-        while not stop_cleanup.is_set():
-            try:
-                removed = cleanup_inactive_users()
-                if removed:
-                    logger.info("Removed %s inactive pending accounts", removed)
-            except Exception:
-                logger.exception("Inactive account cleanup failed")
-            stop_cleanup.wait(24 * 60 * 60)
-    cleanup_thread = threading.Thread(target=cleanup_loop, name="inactive-account-cleanup", daemon=True)
-    cleanup_thread.start()
     yield
-    stop_cleanup.set()
-    cleanup_thread.join(timeout=2)
 
 
 app = FastAPI(lifespan=lifespan)

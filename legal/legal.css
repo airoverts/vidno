@@ -1,10 +1,14 @@
 .legal-page {
     min-height: 100vh;
+    overflow-x: clip;
     background: var(--bg);
     color: var(--text);
 }
 
 .legal-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
 }

@@ -6,15 +6,30 @@ localStorage.removeItem('vidno-session-token');
 function applyTheme() {
     const theme = localStorage.getItem('vidno-theme') || 'light';
     document.documentElement.dataset.theme = theme;
-    const button = document.querySelector('#themeToggle');
-    if (button) button.innerHTML = `<i class="fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}"></i>`;
+    document.querySelectorAll('[data-theme-choice]').forEach(button => {
+        const selected = button.dataset.themeChoice === theme;
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-checked', String(selected));
+        button.tabIndex = selected ? 0 : -1;
+    });
 }
 applyTheme();
 document.addEventListener('click', event => {
-    if (!event.target.closest('#themeToggle')) return;
-    localStorage.setItem('vidno-theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    const choice = event.target.closest('[data-theme-choice]');
+    if (!choice) return;
+    localStorage.setItem('vidno-theme', choice.dataset.themeChoice);
     applyTheme();
     window.dispatchEvent(new CustomEvent('vidno-theme-change'));
+});
+document.addEventListener('keydown', event => {
+    const choice = event.target.closest('[data-theme-choice]');
+    if (!choice || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const choices = [...document.querySelectorAll('[data-theme-choice]')];
+    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1;
+    const next = choices[(choices.indexOf(choice) + direction + choices.length) % choices.length];
+    next.click();
+    next.focus();
 });
 
 async function loadSession() {

@@ -208,6 +208,36 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         self.assertFalse(access.json()["capabilities"]["workspace_write"])
         self.assertFalse(access.json()["capabilities"]["run_checks"])
 
+    def test_startup_preserves_old_pending_accounts(self):
+        admin, _admin_user, _admin_email = self._make_admin()
+        _pending_client, pending_user, _pending_email = self._register("old-pending")
+        _returned_client, returned_user, _returned_email = self._register("returned-pending")
+        self._set_access(admin, returned_user["id"], status="active")
+        self._set_access(admin, returned_user["id"], status="pending")
+        user_ids = (pending_user["id"], returned_user["id"])
+        with self.database.connection() as database:
+            database.execute(
+                "UPDATE users SET last_activity_at = NOW() - INTERVAL '30 days' WHERE id = ANY(%s)",
+                (list(user_ids),),
+            )
+
+        with TestClient(self.main.app):
+            pass
+
+        with self.database.connection() as database:
+            surviving = database.execute(
+                """
+                SELECT users.id, user_access.status
+                FROM users
+                JOIN user_access ON user_access.user_id = users.id
+                WHERE users.id = ANY(%s)
+                ORDER BY users.id
+                """,
+                (list(user_ids),),
+            ).fetchall()
+        self.assertEqual([row["id"] for row in surviving], sorted(user_ids))
+        self.assertEqual([row["status"] for row in surviving], ["pending", "pending"])
+
     def test_fresh_install_creates_complete_access_schema(self):
         fresh_schema = f"vidno_test_{uuid.uuid4().hex}"
         with self.psycopg.connect(self.test_database_url, autocommit=True) as database:

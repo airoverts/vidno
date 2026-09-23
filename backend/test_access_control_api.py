@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from contextlib import contextmanager
@@ -107,6 +108,23 @@ class AccessApiContractTests(unittest.TestCase):
                 response = self.client.request("delete", "/api/account", json=body)
                 self.assertEqual(response.status_code, 422)
 
+    def test_delete_account_still_uses_verified_explicit_deletion(self):
+        main.app.dependency_overrides[main._current_user] = lambda: {
+            "id": 7,
+            "name": "User",
+            "email": "u@example.com",
+            "brand": "",
+            "role": "client",
+        }
+        with patch.object(main, "delete_user_verified", return_value=None) as deleted:
+            response = self.client.request(
+                "delete",
+                "/api/account",
+                json={"current_password": "password1", "confirmation": "УДАЛИТЬ"},
+            )
+        self.assertEqual(response.status_code, 204)
+        deleted.assert_called_once_with(7, "password1")
+
     def test_client_role_cannot_use_admin_api(self):
         main.app.dependency_overrides[main._current_user] = lambda: {
             "id": 7,
@@ -201,6 +219,21 @@ class AccessApiContractTests(unittest.TestCase):
 
 
 class AccessPersistenceContractTests(unittest.TestCase):
+    def test_startup_only_initializes_storage_without_account_cleanup(self):
+        initialized = []
+
+        async def verify():
+            with patch.object(main, "initialize_cache", side_effect=lambda: initialized.append("cache")), patch.object(
+                main,
+                "initialize_auth",
+                side_effect=lambda: initialized.append("auth"),
+            ), patch.object(main.threading, "Thread") as thread:
+                async with main.lifespan(main.app):
+                    thread.assert_not_called()
+
+        asyncio.run(verify())
+        self.assertEqual(initialized, ["cache", "auth"])
+
     def test_registration_keeps_initial_brand_while_access_starts_pending(self):
         class Cursor:
             def fetchone(self):

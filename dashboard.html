@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css?v=20260918-2">
+    <link rel="stylesheet" href="css/style.css?v=20260923-1">
 </head>
 <body class="app-body auth-pending">
     <div class="app-shell">
@@ -38,13 +38,13 @@
                         <button class="app-icon-button" id="projectSettingsButton" type="button" data-settings-tab="project" aria-label="Настройки проекта" title="Настройки проекта"><i class="fa-solid fa-gear"></i></button>
                     </div>
                     <button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button>
-                    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Переключить тему" title="Переключить тему"><i class="fa-solid fa-moon"></i></button>
                     <div class="app-account-menu" id="accountMenuRoot">
                         <button class="app-account-trigger" id="accountMenuTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="app-user-avatar" id="appUserInitials">—</span><span class="app-user-copy"><strong id="appUserName"></strong><small id="appUserAccessCompact">Аккаунт</small></span><i class="fa-solid fa-chevron-down"></i></button>
                         <div class="app-account-popover" id="accountMenu" role="menu" hidden>
                             <div class="app-account-summary"><span class="app-user-avatar" id="accountMenuInitials">—</span><span><strong id="accountMenuName"></strong><small id="accountMenuEmail"></small><i class="access-status-badge" id="accountMenuAccess">—</i></span></div>
                             <div class="app-account-links">
                                 <button type="button" role="menuitem" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Имя и email</small></span></button>
+                                <button type="button" role="menuitem" data-settings-tab="appearance"><i class="fa-solid fa-palette"></i><span><strong>Оформление</strong><small>Светлая и тёмная тема</small></span></button>
                                 <button type="button" role="menuitem" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ и лимиты</strong><small>Статус и использование</small></span></button>
                                 <button type="button" role="menuitem" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                                 <button type="button" role="menuitem" data-view="admin" id="adminMenuItem" hidden><i class="fa-solid fa-user-shield"></i><span><strong>Администрирование</strong><small>Клиенты и доступ</small></span></button>
@@ -118,6 +118,7 @@
                     <nav class="settings-nav" aria-label="Разделы настроек" role="tablist">
                         <button class="active" id="settingsTabProject" type="button" role="tab" aria-selected="true" aria-controls="settings-project" data-settings-tab="project"><i class="fa-solid fa-sliders"></i><span><strong>Проект</strong><small>Бренд и домены</small></span></button>
                         <button id="settingsTabProfile" type="button" role="tab" aria-selected="false" aria-controls="settings-profile" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Личные данные</small></span></button>
+                        <button id="settingsTabAppearance" type="button" role="tab" aria-selected="false" aria-controls="settings-appearance" data-settings-tab="appearance"><i class="fa-solid fa-palette"></i><span><strong>Оформление</strong><small>Цветовая тема</small></span></button>
                         <button id="settingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="settings-access" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ</strong><small>Тариф и лимиты</small></span></button>
                         <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                     </nav>
@@ -145,6 +146,15 @@
                                     <p class="account-form-status" id="accountProfileStatus" role="status"></p>
                                     <button class="btn btn-primary" type="submit">Сохранить профиль</button>
                                 </form>
+                            </div>
+                        </section>
+                        <section class="settings-panel" id="settings-appearance" role="tabpanel" aria-labelledby="settingsTabAppearance" data-settings-panel="appearance" hidden>
+                            <div class="app-card settings-card">
+                                <div class="app-card-head"><div><h2>Цветовая тема</h2><span>Выберите оформление рабочего пространства</span></div></div>
+                                <div class="theme-options" role="radiogroup" aria-label="Цветовая тема">
+                                    <button class="theme-option" type="button" role="radio" aria-checked="false" data-theme-choice="light"><i class="fa-regular fa-lightbulb"></i><span><strong>Светлая</strong><small>Светлый фон и тёмный текст</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
+                                    <button class="theme-option" type="button" role="radio" aria-checked="false" data-theme-choice="dark"><i class="fa-solid fa-moon"></i><span><strong>Тёмная</strong><small>Тёмный фон и светлый текст</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
+                                </div>
                             </div>
                         </section>
                         <section class="settings-panel" id="settings-access" role="tabpanel" aria-labelledby="settingsTabAccess" data-settings-panel="access" hidden>
@@ -195,8 +205,8 @@
         </main>
     </div>
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
-    <script src="js/auth.js?v=20260827-2"></script>
+    <script src="js/auth.js?v=20260923-1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20260918-2"></script>
+    <script src="js/dashboard.js?v=20260923-1"></script>
 </body>
 </html>

@@ -23,7 +23,12 @@ function applyTheme() {
     const theme = localStorage.getItem('vidno-theme') || 'light';
     document.documentElement.dataset.theme = theme;
     const button = $('#themeToggle');
-    if (button) button.innerHTML = `<i class="fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}"></i>`;
+    if (button) {
+        const lightAction = theme === 'dark';
+        button.innerHTML = `<i class="fa-${lightAction ? 'regular' : 'solid'} ${lightAction ? 'fa-lightbulb' : 'fa-moon'}"></i>`;
+        button.setAttribute('aria-label', lightAction ? 'Включить светлую тему' : 'Включить тёмную тему');
+        button.title = lightAction ? 'Включить светлую тему' : 'Включить тёмную тему';
+    }
 }
 function toggleTheme() {
     localStorage.setItem('vidno-theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -31,6 +36,20 @@ function toggleTheme() {
 }
 applyTheme();
 document.addEventListener('click', event => { if (event.target.closest('#themeToggle')) toggleTheme(); });
+
+function initializeLogosMarquee() {
+    const track = $('.logos-track');
+    const group = track?.querySelector('.logos-group');
+    if (!track || !group) return;
+    while (track.children.length < 4) {
+        const clone = group.cloneNode(true);
+        clone.setAttribute('aria-hidden', 'true');
+        track.appendChild(clone);
+    }
+    track.classList.add('is-ready');
+}
+
+initializeLogosMarquee();
 document.addEventListener('click', async event => {
     const email = event.target.closest('[data-copy-email]');
     if (!email) return;
