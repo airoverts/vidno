@@ -212,7 +212,7 @@ function openCtaModal(type) {
         openModal(`
             <h2>Вход в Vidno</h2>
             <p>Войдите в личный кабинет, чтобы открыть проверки, историю и План роста.</p>
-            <form class="modal-form" id="modalForm">
+            <form class="modal-form ym-hide-content" id="modalForm">
                 <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="username" required placeholder="you@yandex.ru"></div>
                 <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="••••••••" minlength="6"></div>
                 <p class="form-error" id="authError" role="alert" hidden></p>
@@ -234,7 +234,7 @@ function openCtaModal(type) {
     openModal(`
         <h2>Регистрация</h2>
         <p>Создайте аккаунт. Проверки и управление брендами станут доступны после активации доступа.</p>
-        <form class="modal-form" id="modalForm" autocomplete="off">
+        <form class="modal-form ym-hide-content" id="modalForm" autocomplete="off">
             <div class="form-row"><label>Имя</label><input type="text" name="name" autocomplete="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="email" required placeholder="you@yandex.ru"></div>
             <div class="form-row"><label>Бренд</label><input type="text" name="brand" autocomplete="organization" placeholder="Название компании"></div>
