@@ -237,7 +237,6 @@ function openCtaModal(type) {
         <form class="modal-form ym-hide-content" id="modalForm" autocomplete="off">
             <div class="form-row"><label>Имя</label><input type="text" name="name" autocomplete="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="email" required placeholder="you@yandex.ru"></div>
-            <div class="form-row"><label>Бренд</label><input type="text" name="brand" autocomplete="organization" placeholder="Название компании"></div>
             <div class="form-row"><label>Пароль</label><input type="password" name="password" required placeholder="Не менее 8 символов" minlength="8" maxlength="128" autocomplete="new-password"></div><p class="form-error" id="authError" role="alert" hidden></p>
             <button type="submit" class="btn btn-primary btn-block"><i class="fa-solid fa-rocket"></i> Создать аккаунт</button>
         </form>

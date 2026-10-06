@@ -1,7 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const IS_LOCAL_FRONTEND = location.protocol === 'file:' || (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000');
-const API_BASE = IS_LOCAL_FRONTEND ? 'http://localhost:8000/api' : '/api';
+const API_BASE = AUTH_API_BASE;
 const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity' };
 const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg', perplexity: 'assets/ai/perplexity.svg' };
 const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
@@ -22,6 +21,22 @@ let accessState = null;
 let adminPage = 1;
 let adminTotalPages = 1;
 let selectedAdminClientId = null;
+let dashboardReady = false;
+let dashboardInitializing = false;
+let dashboardSessionAttempted = false;
+let checkInFlight = false;
+let checkOutcomeUnknown = false;
+let pendingCheckContext = null;
+let onboardingBrandSaving = false;
+let onboardingBrandOutcomeUnknown = false;
+let pendingBrandContext = null;
+let onboardingSuggestionsBusy = false;
+let trackedCheckId = null;
+let checkPollTimer = null;
+let checkPolling = false;
+let selectedCheckId = null;
+let answerCheckId = null;
+let reportCheckId = null;
 
 class ApiError extends Error {
     constructor(message, status, code = '', details = {}) { super(message); this.name = 'ApiError'; this.status = status; this.code = code; this.details = details; }
@@ -167,7 +182,7 @@ function enrichCompetitors(item) {
     return { ...item, competitors };
 }
 function activeHistory() {
-    return historyForActiveBrand().filter(hasCurrentAnalysis).map(item => {
+    return historyForActiveBrand().filter(item => ['completed', 'partial'].includes(item.status)).filter(hasCurrentAnalysis).map(item => {
         const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
         if (item.provider !== 'all') return selectedProviders.has(item.provider) ? enrichCompetitors({ ...item, ...canonicalizeProviderResult(item, identity), brand: canonical.name }) : null;
         const results = selectedResults(item);
@@ -205,7 +220,7 @@ function setActiveBrand(value, syncInput = true, resetResult = true) {
     localStorage.setItem(ACTIVE_BRAND_KEY, key);
     renderBrandSelector();
     if (syncInput) $('#wsBrand').value = currentBrand();
-    if (resetResult) $('#wsResult').hidden = true;
+    if (resetResult) { $('#wsResult').hidden = true; selectedCheckId = null; answerCheckId = null; renderReportContext(null); }
     $('#wsError').hidden = true;
     renderAllForActiveBrand();
 }
@@ -229,9 +244,12 @@ function closeAccountMenu(focusTrigger = false) {
     menu.hidden = true; trigger.setAttribute('aria-expanded', 'false');
     if (focusTrigger) trigger.focus();
 }
-function selectView(view) {
+function selectView(view, checkId = null) {
     if (view === 'admin' && accountState?.role !== 'admin') return selectSettingsTab('profile');
     closeAccountMenu();
+    if (view === 'answers') answerCheckId = checkId;
+    if (view === 'reports') renderReportContext(checkId);
+    $(`#view-${view}`)?.setAttribute('data-check-id', checkId || '');
     $$('.app-nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
     $$('.app-view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
     $('#appBreadcrumb').textContent = $(`.app-nav-item[data-view="${view}"]`)?.textContent.trim() || (view === 'settings' ? 'Настройки' : view === 'admin' ? 'Администрирование' : 'Главная');
@@ -321,11 +339,8 @@ async function suggestPrompts() {
     $('#promptSuggestionList').innerHTML = '';
     $('#promptSuggestionStatus').innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Perplexity определяет категорию бренда и готовит запросы…';
     try {
-        const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
         const identity = identityFor(brand);
-        const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, existing_queries: existingQueries, domains: identity?.domains || [] }) });
-        const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
-        if (!prompts.length) throw new Error('Perplexity не вернул подходящих промптов');
+        const prompts = await requestPromptSuggestions(brand, identity?.domains || []);
         $('#promptSuggestionList').innerHTML = prompts.map((prompt, index) => `<button class="prompt-suggestion-item" type="button" data-suggested-prompt="${encodeURIComponent(prompt)}"><span>${index + 1}</span><strong>${escapeHtml(prompt)}</strong><i class="fa-solid fa-arrow-right"></i></button>`).join('');
         $('#promptSuggestionStatus').textContent = 'Выберите промпт — он подставится в поле проверки.';
         $$('[data-suggested-prompt]').forEach(item => item.addEventListener('click', () => { $('#wsQuery').value = decodeURIComponent(item.dataset.suggestedPrompt); $('#wsQuery').focus(); item.classList.add('selected'); setTimeout(() => item.classList.remove('selected'), 700); }));
@@ -386,7 +401,7 @@ function quotaProgress(quota) { return quota.unlimited ? 100 : quota.limit > 0 ?
 async function refreshAccess(render = true) {
     const data = await apiRequest('/access');
     accessState = normalizeAccess(data.access || data);
-    if (render) { renderAccountAccess(); renderAccessBanner(); applyAccessGating(); }
+    if (render) { renderAccountAccess(); renderAccessBanner(); applyAccessGating(); renderOnboarding(); }
     return accessState;
 }
 function renderAccessBanner() {
@@ -464,30 +479,234 @@ function applyAccessGating() {
     setDisabled('#saveCanonicalBrand, #addBrandDomain, #brandDomainInput, #canonicalBrandName', projectBlocked || Boolean(projectState.cooldown));
     setDisabled('#deleteBrand', projectBlocked);
     $$('[data-remove-brand-value]').forEach(button => { const disabled = projectBlocked || button.dataset.brandValueType === 'domain' && Boolean(projectState.cooldown); button.disabled = disabled; button.setAttribute('aria-disabled', String(disabled)); });
-    setDisabled('[data-delete-check]', !canWrite);
+    $$('[data-delete-check]').forEach(button => { button.disabled = !canWrite || history.find(item => item.id === button.dataset.deleteCheck)?.status === 'running'; button.setAttribute('aria-disabled', String(button.disabled)); });
     $('.app-topbar-cta')?.classList.toggle('is-access-disabled', !canCheck);
+    setDisabled('#wsCheck', !canCheck || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId));
+    setDisabled('#wsBrand, #wsQuery', !canWrite || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId));
+    setDisabled('[data-suggested-prompt]', checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId));
 }
 
 $('#wsCheck').addEventListener('click', async () => {
-    const brand = normalizeBrandName($('#wsBrand').value);
-    const query = $('#wsQuery').value.trim();
-    if (!brand || !query) return showError('Введите бренд и промпт для проверки.');
-    const checkButton = $('#wsCheck');
-    if (checkButton.disabled) return;
-    $('#wsError').hidden = true; $('#wsResult').hidden = true; $('#wsLoader').hidden = false; $('#wsLoaderText').textContent = 'Формируем общий результат проверки…'; checkButton.disabled = true;
-    try {
-        const identity = await ensureBrandIdentity(brand);
-        setActiveBrand(identity.canonicalId, false, false);
-        const raw = await apiRequest('/check-all', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, brand_id: identity.id, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
-        const data = canonicalizeCheckResult(raw, identity);
-        renderResult(data);
-        saveCheck(data, brand, query, 'all');
-        await refreshAccess().catch(() => {});
-        const errors = (data.provider_errors || []).map(item => `${PROVIDERS[item.provider] || item.provider}: ${item.error}`);
-        if (errors.length) showError(`Часть данных недоступна: ${errors.join('; ')}`);
-    } catch (error) { await refreshChecks().catch(() => {}); if ($('#wsError').hidden) showError(`Не удалось выполнить проверку: ${error.message}`); }
-    finally { $('#wsLoader').hidden = true; checkButton.disabled = false; applyAccessGating(); }
+    if (!$('#wsCheck').disabled) await runWorkspaceCheck($('#wsBrand').value, $('#wsQuery').value);
 });
+
+function needsOnboarding() { return dashboardReady && accountState?.onboarding_completed_at === null; }
+function successfulCheck(item) { return item && ['completed', 'partial'].includes(item.status); }
+function showCheckError(message) {
+    const target = needsOnboarding() ? $('#onboardingError') : $('#wsError');
+    target.textContent = message; target.hidden = !message;
+}
+function renderOnboarding() {
+    const visible = needsOnboarding();
+    $('#onboarding').hidden = !visible;
+    document.body.classList.toggle('onboarding-active', visible);
+    if (!visible) return;
+    const identity = activeBrandIdentity() || brandIdentities[0];
+    const step = identity ? 'check' : 'company';
+    const changed = $('#onboarding').dataset.step !== step;
+    $('#onboarding').dataset.step = step;
+    $('#onboardingCompanyForm').hidden = Boolean(identity);
+    $('#onboardingCheckForm').hidden = !identity;
+    $('#onboardingTitle').textContent = identity ? 'Проверьте, рекомендует ли AI вашу компанию' : 'Добавьте вашу компанию';
+    $('#onboardingDescription').textContent = identity ? 'Выберите один вопрос клиента. Мы посмотрим, какие компании AI предлагает в ответ.' : 'Начните с одного бренда. Мы проверим, появляется ли он в рекомендациях AI.';
+    $('#onboardingSavedBrand').textContent = identity?.canonicalName || '';
+    $('#onboardingSavedDomain').textContent = identity?.domains.join(', ') || 'Сайт не указан';
+    $('#onboardingCompanyStep').setAttribute('aria-current', identity ? 'false' : 'step');
+    $('#onboardingCheckStep').setAttribute('aria-current', identity ? 'step' : 'false');
+    const waiting = checkInFlight || Boolean(trackedCheckId);
+    const blocked = identity ? !capability('run_checks') : !capability('create_brands');
+    const notice = $('#onboardingAccessNotice'); notice.hidden = !blocked;
+    $('#onboardingRefreshAccess').hidden = !blocked;
+    notice.textContent = blocked ? accessBlockedMessage(identity ? 'run_checks' : 'create_brands') : '';
+    $('#onboardingContinue').disabled = onboardingBrandSaving || onboardingBrandOutcomeUnknown || blocked;
+    $('#onboardingBrand').readOnly = onboardingBrandSaving || onboardingBrandOutcomeUnknown;
+    $('#onboardingDomain').readOnly = onboardingBrandSaving || onboardingBrandOutcomeUnknown;
+    $('#onboardingRefreshCompany').hidden = !onboardingBrandOutcomeUnknown;
+    $('#onboardingRefreshCompany').disabled = onboardingBrandSaving;
+    $('#onboardingContinue').textContent = onboardingBrandSaving ? 'Сохраняем компанию…' : 'Продолжить →';
+    $('#onboardingRunCheck').disabled = blocked || waiting || checkOutcomeUnknown;
+    $('#onboardingRunCheck').textContent = waiting ? 'Проверка выполняется…' : 'Запустить первую проверку →';
+    $('#onboardingQuery').readOnly = waiting || checkOutcomeUnknown;
+    $('#onboardingSuggest').disabled = !capability('workspace_write') || waiting || checkOutcomeUnknown || onboardingSuggestionsBusy;
+    $$('#onboardingSuggestions button').forEach(button => { button.disabled = waiting || checkOutcomeUnknown; });
+    $('#onboardingWaiting').hidden = !waiting;
+    $('#onboardingRefreshStatus').hidden = !(trackedCheckId || checkOutcomeUnknown);
+    if (changed && !document.body.classList.contains('auth-pending')) $('#onboardingTitle').focus();
+}
+function onboardingDomain(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(raw) ? raw : `https://${raw}`);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !url.hostname.includes('.') || /\s/.test(raw)) throw new Error();
+        return url.hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, '');
+    } catch { throw new Error('Введите домен компании или полный адрес сайта, например company.ru.'); }
+}
+async function saveOnboardingCompany(event) {
+    event.preventDefault();
+    if (onboardingBrandSaving || onboardingBrandOutcomeUnknown || !event.currentTarget.reportValidity()) return;
+    const name = normalizeBrandName($('#onboardingBrand').value);
+    if (!name) { $('#onboardingBrand').setCustomValidity('Введите название компании.'); $('#onboardingBrand').reportValidity(); return; }
+    let domain;
+    try { domain = onboardingDomain($('#onboardingDomain').value); }
+    catch (error) { $('#onboardingDomain').setCustomValidity(error.message); $('#onboardingDomain').reportValidity(); return; }
+    onboardingBrandSaving = true; showCheckError(''); renderOnboarding();
+    let submitted = false;
+    try {
+        await refreshAccess();
+        if (!capability('create_brands')) throw new Error(accessBlockedMessage('create_brands'));
+        submitted = true; pendingBrandContext = { name, domain };
+        const data = await apiRequest('/brands', { method: 'POST', body: JSON.stringify({ canonical_name: name, aliases: [], domains: domain ? [domain] : [] }) });
+        const identity = normalizeBrandRecord(data.brand || data);
+        brandIdentities = [...brandIdentities.filter(item => item.id !== identity.id), identity];
+        setActiveBrand(identity.canonicalId);
+        pendingBrandContext = null;
+        $('#onboardingSuggestions').innerHTML = ''; $('#onboardingSuggestionStatus').textContent = '';
+    } catch (error) {
+        try {
+            const data = await apiRequest('/brands');
+            brandIdentities = (data.brands || []).map(normalizeBrandRecord);
+            const identity = brandIdentities.find(item => identityText(item.canonicalName) === identityText(name) && (domain ? item.domains.includes(domain) : !item.domains.length));
+            pendingBrandContext = null;
+            if (identity) setActiveBrand(identity.canonicalId);
+            else showCheckError(`Не удалось сохранить компанию: ${error.message}`);
+        } catch { onboardingBrandOutcomeUnknown = submitted; showCheckError(submitted ? 'Не удалось подтвердить сохранение компании. Сначала проверьте её сохранение, чтобы не создать второй проект.' : `Не удалось сохранить компанию: ${error.message}`); }
+    } finally { onboardingBrandSaving = false; await refreshAccess().catch(() => {}); renderOnboarding(); }
+}
+async function recoverCompanySave() {
+    if (!pendingBrandContext || onboardingBrandSaving) return;
+    onboardingBrandSaving = true; renderOnboarding();
+    try {
+        const data = await apiRequest('/brands'); brandIdentities = (data.brands || []).map(normalizeBrandRecord);
+        const { name, domain } = pendingBrandContext;
+        const identity = brandIdentities.find(item => identityText(item.canonicalName) === identityText(name) && (domain ? item.domains.includes(domain) : !item.domains.length));
+        onboardingBrandOutcomeUnknown = false; pendingBrandContext = null;
+        if (identity) { setActiveBrand(identity.canonicalId); showCheckError(''); }
+        else showCheckError('Компания не найдена среди сохранённых проектов. Можно повторить сохранение.');
+    } catch { showCheckError('Не удалось проверить сохранение компании. Попробуйте обновить состояние ещё раз.'); }
+    finally { onboardingBrandSaving = false; renderOnboarding(); }
+}
+async function requestPromptSuggestions(brand, domains) {
+    const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
+    const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, domains, existing_queries: existingQueries }) });
+    const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
+    if (!prompts.length) throw new Error('Не удалось получить подходящие запросы');
+    return prompts;
+}
+async function suggestOnboardingPrompts() {
+    const identity = activeBrandIdentity(); if (!identity || onboardingSuggestionsBusy) return;
+    onboardingSuggestionsBusy = true; renderOnboarding();
+    $('#onboardingSuggestions').innerHTML = '';
+    $('#onboardingSuggestionStatus').textContent = 'Определяем направление компании и подбираем вопросы…';
+    try {
+        await refreshAccess();
+        const prompts = await requestPromptSuggestions(identity.canonicalName, identity.domains);
+        $('#onboardingSuggestions').innerHTML = prompts.map((prompt, index) => `<button type="button" data-onboarding-prompt="${index}">${escapeHtml(prompt)}</button>`).join('');
+        $$('#onboardingSuggestions button').forEach(button => button.addEventListener('click', () => {
+            $('#onboardingQuery').value = prompts[Number(button.dataset.onboardingPrompt)]; $('#onboardingQuery').focus();
+        }));
+        $('#onboardingSuggestionStatus').textContent = 'Выберите вопрос и при необходимости измените его.';
+    } catch (error) { $('#onboardingSuggestionStatus').textContent = `Не удалось подобрать запросы: ${error.message}. Введите свой вопрос выше.`; }
+    finally { onboardingSuggestionsBusy = false; renderOnboarding(); }
+}
+function updateCheckWaiting() {
+    const waiting = checkInFlight || Boolean(trackedCheckId);
+    $('#wsLoader').hidden = !waiting;
+    $('#wsLoaderText').textContent = 'Получаем ответы AI и анализируем их. Результат сохранится в проекте…';
+    $('#wsRefreshStatus').hidden = !(trackedCheckId || checkOutcomeUnknown);
+    applyAccessGating(); renderOnboarding();
+}
+function trackRunningCheck(item) {
+    trackedCheckId = item.id;
+    if (needsOnboarding()) $('#onboardingQuery').value = item.query;
+    if (!checkPollTimer) checkPollTimer = setInterval(() => { if (!document.hidden) recoverCheckState(); }, 5000);
+    updateCheckWaiting();
+}
+function stopTrackingCheck() {
+    trackedCheckId = null;
+    clearInterval(checkPollTimer); checkPollTimer = null;
+}
+function openSavedCheck(id, finishOnboarding = false) {
+    const item = history.find(record => record.id === String(id)); if (!item) return;
+    if (finishOnboarding && needsOnboarding() && successfulCheck(item)) accountState.onboarding_completed_at = item.completedAt || new Date(item.createdAt).toISOString();
+    setActiveBrand(item.canonicalId || item.brand, true, false);
+    $('#wsQuery').value = item.query;
+    selectedCheckId = item.id;
+    $('#wsResult').hidden = true; $('#wsError').hidden = true;
+    renderOnboarding();
+    if (!needsOnboarding()) selectView('prompts', item.id);
+    if (item.status === 'running') { trackRunningCheck(item); return; }
+    if (successfulCheck(item)) {
+        renderResult(item.resultData);
+        $('#wsResult').dataset.checkId = item.id;
+        $('#wsResultContext').textContent = `${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)} · ответили ${item.providerResults.length || 1} из ${item.provider === 'all' ? CHECK_PROVIDERS.length : 1} моделей`;
+        const errors = item.providerErrors.map(error => `${PROVIDERS[error.provider] || error.provider}: ${error.error}`);
+        $('#wsResultWarning').hidden = item.status !== 'partial';
+        $('#wsResultWarning').textContent = errors.length ? `Часть данных недоступна: ${errors.join('; ')}` : 'Получен частичный результат: некоторые модели не ответили.';
+        $('#wsVerdict').focus();
+    } else showCheckError(`Проверка не выполнена: ${item.error === 'interrupted' ? 'ожидание превысило час. Можно запустить проверку снова.' : item.error || 'не удалось получить или проанализировать ответы AI'}`);
+    updateCheckWaiting();
+}
+async function recoverCheckState() {
+    if (checkPolling || checkInFlight || !dashboardReady) return;
+    checkPolling = true;
+    const trackedId = trackedCheckId;
+    try {
+        await refreshChecks();
+        const data = await apiRequest('/account'); accountState = normalizeAccount(data.account || data);
+        checkOutcomeUnknown = false;
+        const item = trackedId ? history.find(record => record.id === trackedId) : pendingCheckContext ? history.filter(record => !pendingCheckContext.knownIds.has(record.id) && record.canonicalId === pendingCheckContext.brandKey && normalizeQuery(record.query) === normalizeQuery(pendingCheckContext.query)).at(-1) : null;
+        if (item?.status === 'running') trackRunningCheck(item);
+        else {
+            stopTrackingCheck();
+            pendingCheckContext = null;
+            if (item) { showCheckError(''); openSavedCheck(item.id, true); }
+            else showCheckError('Выполняющаяся проверка не найдена. Можно отправить запрос снова.');
+        }
+    } catch { showCheckError('Не удалось обновить состояние проверки. Нажмите «Обновить состояние проверки» или дождитесь следующего обновления.'); }
+    finally { checkPolling = false; updateCheckWaiting(); }
+}
+async function runWorkspaceCheck(brandValue, queryValue) {
+    if (checkInFlight || trackedCheckId || checkOutcomeUnknown) return;
+    const brand = normalizeBrandName(brandValue); const query = queryValue.trim();
+    if (!brand || !query) return showCheckError('Введите бренд и вопрос для проверки.');
+    checkInFlight = true; showCheckError(''); $('#wsResult').hidden = true; updateCheckWaiting();
+    const knownIds = new Set(history.map(item => item.id));
+    let submitted = false;
+    try {
+        await refreshAccess();
+        if (!capability('run_checks')) throw new Error(accessBlockedMessage('run_checks'));
+        const identity = await ensureBrandIdentity(brand);
+        setActiveBrand(identity.canonicalId, false, false); $('#wsQuery').value = query;
+        pendingCheckContext = { brandKey: identity.canonicalId, query, knownIds };
+        submitted = true;
+        const raw = await apiRequest('/check-all', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        if (!raw.check?.id || !['completed', 'partial'].includes(raw.check.status)) throw new Error('Сервер не подтвердил сохранение результата');
+        const data = canonicalizeCheckResult(raw, identity);
+        const saved = saveCheck(data, identity.canonicalName, query, 'all');
+        pendingCheckContext = null; stopTrackingCheck(); openSavedCheck(saved.id, true);
+    } catch (error) {
+        if (submitted) {
+            try {
+                await refreshChecks();
+                const saved = history.filter(item => !knownIds.has(item.id) && normalizeQuery(item.query) === normalizeQuery(query) && brandKey(item.brand) === brandKey(brand)).at(-1);
+                if (saved?.status === 'running') trackRunningCheck(saved);
+                else if (saved) { pendingCheckContext = null; openSavedCheck(saved.id, true); }
+                else { pendingCheckContext = null; showCheckError(`Не удалось выполнить проверку: ${error.message}. Можно повторить запуск.`); }
+            } catch { checkOutcomeUnknown = true; showCheckError('Связь с сервером прервалась. Сначала обновите состояние проверки: она могла уже запуститься.'); }
+        } else showCheckError(`Не удалось выполнить проверку: ${error.message}`);
+    } finally { checkInFlight = false; await refreshAccess().catch(() => {}); updateCheckWaiting(); }
+}
+function renderReportContext(id) {
+    const item = history.find(record => record.id === String(id));
+    reportCheckId = successfulCheck(item) ? item.id : null;
+    const view = $('#view-reports');
+    view.dataset.checkId = reportCheckId || ''; view.dataset.brandId = reportCheckId ? item.brandId : '';
+    view.dataset.canonicalId = reportCheckId ? item.canonicalId : '';
+    $('#reportCheckContext').textContent = reportCheckId ? `Выбрана проверка: ${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)}${item.status === 'partial' ? ' · частичный результат' : ''}.` : 'Откройте сохранённую проверку в истории, чтобы выбрать данные для отчёта.';
+    $('#reportBackToCheck').hidden = !reportCheckId;
+    window.dispatchEvent(new CustomEvent('vidno-report-context', { detail: { checkId: reportCheckId, brandId: reportCheckId ? item.brandId : null, canonicalId: reportCheckId ? item.canonicalId : null } }));
+}
 
 function showError(message) { const error = $('#wsError'); error.textContent = message; error.hidden = false; }
 function resultPosition(data) {
@@ -550,14 +769,14 @@ function canonicalizeCheckResult(data, identity) {
     return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
 function buildHistoryItem(data, brand, query, provider, record = {}) {
-    const sources = (data.sources || []).map(source => ({ title: source.title, url: source.url }));
+    const sources = (data.sources || []).map(source => ({ ...source }));
     const cited = sources.some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(brand.toLowerCase()));
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || identityFor(data.canonical_name || brand);
     const normalizedBrand = identity?.canonicalName || normalizeBrandName(brand);
     const position = resultPosition(data);
     const storedError = record.error; const error = typeof storedError === 'string' ? storedError : Array.isArray(storedError) ? storedError.map(item => item?.error || item?.message || item).join('; ') : storedError?.error || storedError?.message || '';
-    return { id: String(record.id || data.check?.id || crypto.randomUUID()), createdAt: new Date(record.created_at || data.check?.created_at || Date.now()).getTime(), brand: normalizedBrand, brandKey: identity?.canonicalId || String(record.brand_id || ''), canonicalId: identity?.canonicalId || String(record.brand_id || ''), canonicalName: normalizedBrand, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity?.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [], status: record.status || data.check?.status || 'completed', error: String(error) };
+    return { id: String(record.id || data.check?.id || crypto.randomUUID()), brandId: String(record.brand_id || data.check?.brand_id || identity?.id || ''), completedAt: record.completed_at || data.check?.completed_at || null, resultData: data, providerErrors: data.provider_errors || (Array.isArray(record.error) ? record.error : []), createdAt: new Date(record.created_at || data.check?.created_at || Date.now()).getTime(), brand: normalizedBrand, brandKey: identity?.canonicalId || String(record.brand_id || ''), canonicalId: identity?.canonicalId || String(record.brand_id || ''), canonicalName: normalizedBrand, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity?.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [], status: record.status || data.check?.status || 'completed', error: String(error) };
 }
 function normalizeStoredCheck(record) {
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || brandIdentities.find(item => item.canonicalId === String(record.canonical_id || '')) || identityFor(record.brand);
@@ -574,7 +793,11 @@ function saveCheck(data, brand, query, provider) {
 function renderHistory() {
     const rows = historyForActiveBrand();
     $('#historyCount').textContent = `${rows.length} ${rows.length === 1 ? 'проверка' : 'проверок'}`;
-    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => `<div class="app-history-row"><div><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${item.status === 'failed' ? `ошибка: ${escapeHtml(item.error || 'проверка не выполнена')}` : item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}</span></div><div class="app-history-actions"><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span><button type="button" data-delete-check="${escapeHtml(item.id)}" aria-label="Удалить проверку" title="Удалить проверку"><i class="fa-regular fa-trash-can"></i></button></div></div>`).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
+    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => {
+        const status = item.status === 'running' ? 'проверка выполняется' : item.status === 'failed' ? `ошибка: ${item.error === 'interrupted' ? 'проверка прервана' : item.error || 'проверка не выполнена'}` : `${item.status === 'partial' ? 'частичный результат · ' : ''}${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}`;
+        return `<div class="app-history-row"><button class="history-open-check" type="button" data-open-check="${escapeHtml(item.id)}"><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${escapeHtml(status)}</span></button><div class="app-history-actions"><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span><button type="button" data-delete-check="${escapeHtml(item.id)}" aria-label="Удалить проверку" title="Удалить проверку"${item.status === 'running' ? ' disabled' : ''}><i class="fa-regular fa-trash-can"></i></button></div></div>`;
+    }).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
+    $$('[data-open-check]').forEach(button => button.addEventListener('click', () => openSavedCheck(button.dataset.openCheck)));
     $$('[data-delete-check]').forEach(button => button.addEventListener('click', () => deleteCheck(button.dataset.deleteCheck)));
 }
 
@@ -828,7 +1051,7 @@ function normalizedCompetitors() {
 }
 
 function aiAnswerRows() {
-    return history.filter(item => brandKey(item.brand) === activeBrandKey).flatMap(item => {
+    return history.filter(item => brandKey(item.brand) === activeBrandKey && (!answerCheckId || item.id === answerCheckId) && successfulCheck(item)).flatMap(item => {
         const providerResults = Array.isArray(item.providerResults) ? item.providerResults : Array.isArray(item.provider_results) ? item.provider_results : [];
         const results = providerResults.length ? providerResults : [item];
         return results.map((result, index) => ({
@@ -1045,7 +1268,13 @@ async function refreshChecks(render = true) {
 }
 async function deleteCheck(id) {
     const item = history.find(row => row.id === id); if (!item || !confirm(`Удалить проверку «${item.query}» навсегда?`)) return;
-    try { await apiRequest(`/checks/${encodeURIComponent(id)}`, { method: 'DELETE' }); history = history.filter(row => row.id !== id); renderAllForActiveBrand(); }
+    try {
+        await apiRequest(`/checks/${encodeURIComponent(id)}`, { method: 'DELETE' }); history = history.filter(row => row.id !== id);
+        if (selectedCheckId === id) { selectedCheckId = null; $('#wsResult').hidden = true; }
+        if (answerCheckId === id) answerCheckId = null;
+        if (reportCheckId === id) renderReportContext(null);
+        renderAllForActiveBrand();
+    }
     catch (error) { showError(`Не удалось удалить проверку: ${error.message}`); }
 }
 async function deleteActiveBrand() {
@@ -1057,6 +1286,7 @@ async function deleteActiveBrand() {
         history = history.filter(item => item.brandKey !== identity.canonicalId);
         growthTasks = growthTasks.filter(item => brandKey(item.brand) !== identity.canonicalId && item.brandKey !== identity.canonicalId);
         activeBrandKey = brandIdentities[0]?.canonicalId || '';
+        selectedCheckId = null; answerCheckId = null; $('#wsResult').hidden = true; renderReportContext(null);
         if (activeBrandKey) localStorage.setItem(ACTIVE_BRAND_KEY, activeBrandKey); else localStorage.removeItem(ACTIVE_BRAND_KEY);
         $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
         await refreshAccess().catch(() => {});
@@ -1169,8 +1399,16 @@ async function saveAdminAccess(event) {
     catch (error) { setFormStatus('#adminAccessStatusMessage', error.message); button.disabled = false; }
 }
 async function initializeDashboard() {
+    if (dashboardInitializing) return;
+    dashboardInitializing = true; dashboardReady = false;
+    document.body.classList.add('auth-pending');
+    $('#dashboardLoadState').hidden = false; $('#dashboardLoadRetry').hidden = true;
+    $('#dashboardLoadTitle').textContent = 'Открываем ваш кабинет';
+    $('#dashboardLoadMessage').textContent = 'Загружаем настройки и сохранённые проверки…';
     try {
-        await window.vidnoSessionPromise;
+        const session = dashboardSessionAttempted ? loadSession() : window.vidnoSessionPromise;
+        dashboardSessionAttempted = true;
+        await session;
         const [accountData, accessData] = await Promise.all([apiRequest('/account'), apiRequest('/access')]);
         accountState = normalizeAccount(accountData.account || accountData);
         accessState = normalizeAccess(accessData.access || accessData);
@@ -1183,11 +1421,57 @@ async function initializeDashboard() {
         growthTasks = (Array.isArray(taskData.tasks) ? taskData.tasks : []).map(normalizeGrowthTask);
         dismissedOpportunities = new Set(Array.isArray(dismissedData.items) ? dismissedData.items : []);
         $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
+        dashboardReady = true;
+        document.body.classList.remove('dashboard-load-error');
+        $('#dashboardLoadState').hidden = true;
+        const latest = historyForActiveBrand().at(-1);
+        if (needsOnboarding() && latest) {
+            $('#onboardingQuery').value = latest.query;
+            if (successfulCheck(latest)) openSavedCheck(latest.id, true);
+            else if (latest.status === 'failed') showCheckError(`Последняя проверка не выполнена: ${latest.error === 'interrupted' ? 'ожидание превысило час' : latest.error || 'ошибка AI'}. Можно повторить запуск.`);
+        }
+        const running = historyForActiveBrand().find(item => item.status === 'running');
+        if (running) { $('#wsQuery').value = running.query; trackRunningCheck(running); }
+        renderOnboarding();
         document.body.classList.remove('auth-pending');
+        if (needsOnboarding()) $('#onboardingTitle').focus();
     } catch (error) {
-        if (!location.search.includes('auth=login')) { document.body.classList.remove('auth-pending'); showError(`Не удалось загрузить данные кабинета: ${error.message}`); }
-    }
+        document.body.classList.remove('auth-pending'); document.body.classList.add('dashboard-load-error');
+        $('#onboarding').hidden = true;
+        $('#dashboardLoadState').hidden = false;
+        $('#dashboardLoadTitle').textContent = 'Не удалось загрузить кабинет';
+        $('#dashboardLoadMessage').textContent = error.message;
+        $('#dashboardLoadRetry').hidden = false;
+    } finally { dashboardInitializing = false; }
 }
+$('#dashboardLoadRetry').addEventListener('click', initializeDashboard);
+$('#onboardingCompanyForm').addEventListener('submit', saveOnboardingCompany);
+$('#onboardingBrand').addEventListener('input', event => event.target.setCustomValidity(''));
+$('#onboardingDomain').addEventListener('input', event => event.target.setCustomValidity(''));
+$('#onboardingCheckForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (event.currentTarget.reportValidity() && !$('#onboardingRunCheck').disabled) await runWorkspaceCheck(currentBrand(), $('#onboardingQuery').value);
+});
+$('#onboardingSuggest').addEventListener('click', suggestOnboardingPrompts);
+$('#onboardingRefreshAccess').addEventListener('click', async event => {
+    event.currentTarget.disabled = true;
+    try { await refreshAccess(); showCheckError(''); }
+    catch (error) { showCheckError(`Не удалось проверить доступ: ${error.message}`); }
+    finally { $('#onboardingRefreshAccess').disabled = false; }
+});
+$('#onboardingLogout').addEventListener('click', () => $('#appLogout').click());
+$('#onboardingRefreshStatus').addEventListener('click', recoverCheckState);
+$('#onboardingRefreshCompany').addEventListener('click', recoverCompanySave);
+$('#wsRefreshStatus').addEventListener('click', recoverCheckState);
+$('#resultAnswers').addEventListener('click', () => selectView('answers', selectedCheckId));
+$('#resultAnalytics').addEventListener('click', () => selectView('home', selectedCheckId));
+$('#resultReport').addEventListener('click', () => selectView('reports', selectedCheckId));
+$('#reportBackToCheck').addEventListener('click', () => openSavedCheck(reportCheckId));
+document.addEventListener('visibilitychange', async () => {
+    if (document.hidden || !dashboardReady) return;
+    await refreshAccess().catch(() => {});
+    if (trackedCheckId || checkOutcomeUnknown) await recoverCheckState();
+});
 $('#deleteBrand').addEventListener('click', deleteActiveBrand);
 $('#accountProfileForm').addEventListener('submit', saveAccount);
 $('#accountEmailForm').addEventListener('submit', changeEmail);

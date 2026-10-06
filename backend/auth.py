@@ -43,6 +43,9 @@ def _public_user(row):
     }
     if row.get("created_at"):
         user["created_at"] = row["created_at"].isoformat()
+    if "onboarding_completed_at" in row:
+        completed_at = row["onboarding_completed_at"]
+        user["onboarding_completed_at"] = completed_at.isoformat() if completed_at else None
     return user
 
 
@@ -131,7 +134,7 @@ def delete_user(user_id: int):
 def get_account(user_id: int):
     with connection() as database:
         row = database.execute(
-            "SELECT id, name, email, brand, role, created_at FROM users WHERE id = %s",
+            "SELECT id, name, email, brand, role, created_at, onboarding_completed_at FROM users WHERE id = %s",
             (user_id,),
         ).fetchone()
     return _public_user(row) if row else None
@@ -153,7 +156,7 @@ def update_account(user_id: int, name: str | None = None, email: str | None = No
                     email = COALESCE(%s, email),
                     password_hash = COALESCE(%s, password_hash)
                 WHERE id = %s
-                RETURNING id, name, email, brand, role, created_at
+                RETURNING id, name, email, brand, role, created_at, onboarding_completed_at
                 """,
                 (name, email, _password_hash(new_password) if new_password else None, user_id),
             ).fetchone()

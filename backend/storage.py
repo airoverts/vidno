@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
-from database import connection
+from database import connection, expire_stale_checks
 
 
 class AccessControlError(Exception):
@@ -339,10 +339,13 @@ def start_check(user_id: int, brand: str, canonical_id: str, query: str, provide
 
 def finish_check(user_id: int, check_id: int, status: str, result=None, error=None):
     with connection() as database:
+        _locked_access(database, user_id, refresh=False)
         current = database.execute(
-            "SELECT quota_state, quota_cycle FROM checks WHERE id = %s AND user_id = %s FOR UPDATE",
+            "SELECT * FROM checks WHERE id = %s AND user_id = %s FOR UPDATE",
             (check_id, user_id),
         ).fetchone()
+        if not current or current["status"] != "running":
+            return _check(current) if current else None
         was_reserved = bool(current and current["quota_state"] == "reserved")
         row = database.execute(
             """
@@ -353,7 +356,7 @@ def finish_check(user_id: int, check_id: int, status: str, result=None, error=No
                     WHEN quota_state = 'reserved' THEN 'consumed'
                     ELSE quota_state
                 END
-            WHERE id = %s AND user_id = %s
+            WHERE id = %s AND user_id = %s AND status = 'running'
             RETURNING *
             """,
             (status, Jsonb(result) if result is not None else None, Jsonb(error) if error is not None else None, status, check_id, user_id),
@@ -362,6 +365,11 @@ def finish_check(user_id: int, check_id: int, status: str, result=None, error=No
             database.execute(
                 "UPDATE user_access SET checks_used = GREATEST(0, checks_used - 1), updated_at = NOW() WHERE user_id = %s AND quota_cycle = %s",
                 (user_id, current["quota_cycle"]),
+            )
+        if row and status in {"completed", "partial"}:
+            database.execute(
+                "UPDATE users SET onboarding_completed_at = COALESCE(onboarding_completed_at, NOW()) WHERE id = %s",
+                (user_id,),
             )
     return _check(row) if row else None
 
@@ -401,6 +409,7 @@ def create_saved_check(user_id: int, payload: dict):
 
 def list_checks(user_id: int):
     with connection() as database:
+        expire_stale_checks(database, user_id)
         rows = database.execute(
             "SELECT * FROM checks WHERE user_id = %s ORDER BY created_at DESC, id DESC",
             (user_id,),

@@ -9,10 +9,55 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css?v=20260923-1">
+    <link rel="stylesheet" href="css/style.css?v=20261006-onboarding">
     <script src="js/metrika.js?v=20260928-1" data-webvisor="false" data-cookie-policy="legal/cookies.html"></script>
 </head>
 <body class="app-body auth-pending">
+    <div class="dashboard-load-state" id="dashboardLoadState" role="status">
+        <strong id="dashboardLoadTitle">Открываем ваш кабинет</strong>
+        <p id="dashboardLoadMessage">Загружаем настройки и сохранённые проверки…</p>
+        <button class="btn btn-primary" id="dashboardLoadRetry" type="button" hidden>Повторить загрузку</button>
+    </div>
+    <section class="onboarding" id="onboarding" aria-labelledby="onboardingTitle" hidden>
+        <div class="onboarding-main">
+            <header class="onboarding-header"><a class="onboarding-logo" href="index.html"><img src="assets/vidno-logo.png" alt=""><span>Vidno</span></a><button class="app-text-action" id="onboardingLogout" type="button">Выйти</button></header>
+            <div class="onboarding-content">
+                <ol class="onboarding-steps" aria-label="Настройка проекта"><li id="onboardingCompanyStep" aria-current="step"><span>1</span>Компания</li><li id="onboardingCheckStep"><span>2</span>Первая проверка</li></ol>
+                <h1 id="onboardingTitle" tabindex="-1">Добавьте вашу компанию</h1>
+                <p class="onboarding-intro" id="onboardingDescription">Начните с одного бренда. Мы проверим, появляется ли он в рекомендациях AI.</p>
+                <div class="onboarding-notice" id="onboardingAccessNotice" role="status" hidden></div>
+                <button class="app-text-action" id="onboardingRefreshAccess" type="button" hidden>Проверить доступ</button>
+                <form class="onboarding-form ym-hide-content" id="onboardingCompanyForm">
+                    <label for="onboardingBrand">Название компании <span aria-hidden="true">*</span></label>
+                    <input id="onboardingBrand" name="brand" required maxlength="200" autocomplete="organization" placeholder="Например: Vidno">
+                    <label for="onboardingDomain">Сайт компании <span class="onboarding-optional">необязательно</span></label>
+                    <input id="onboardingDomain" name="domain" maxlength="200" inputmode="url" autocomplete="url" aria-describedby="onboardingDomainHelp" placeholder="company.ru или https://company.ru">
+                    <p class="onboarding-help" id="onboardingDomainHelp">Сайт поможет точнее определить вашу компанию. Если сайта нет, оставьте поле пустым.</p>
+                    <button class="btn btn-primary" id="onboardingContinue" type="submit">Продолжить <span aria-hidden="true">→</span></button>
+                    <p class="onboarding-footnote">Название и сайт сохранятся в проекте. Затем их можно менять раз в 14 дней.</p>
+                </form>
+                <form class="onboarding-form ym-hide-content" id="onboardingCheckForm" hidden>
+                    <div class="onboarding-company"><span>Ваш проект</span><strong id="onboardingSavedBrand"></strong><small id="onboardingSavedDomain"></small></div>
+                    <label for="onboardingQuery">Вопрос вашего потенциального клиента <span aria-hidden="true">*</span></label>
+                    <textarea id="onboardingQuery" required maxlength="2000" rows="4" aria-describedby="onboardingQueryHelp" placeholder="Например: какие сервисы помогают отслеживать видимость компании в AI?"></textarea>
+                    <p class="onboarding-help" id="onboardingQueryHelp">Спросите о выборе компании или решения. Название вашего бренда в вопросе может подсказать AI ответ.</p>
+                    <button class="btn btn-ghost" id="onboardingSuggest" type="button">Предложить запросы</button>
+                    <div class="onboarding-suggestions" id="onboardingSuggestions"></div>
+                    <p class="onboarding-help" id="onboardingSuggestionStatus" role="status"></p>
+                    <button class="btn btn-primary" id="onboardingRunCheck" type="submit">Запустить первую проверку <span aria-hidden="true">→</span></button>
+                    <p class="onboarding-footnote">Одна проверка включает GigaChat, Алису AI, ChatGPT, Gemini и Perplexity.</p>
+                </form>
+                <div class="onboarding-waiting" id="onboardingWaiting" role="status" hidden><span class="onboarding-spinner" aria-hidden="true"></span><strong>Получаем ответы AI и анализируем их</strong><p>Это может занять несколько минут. Результат сохранится в вашем проекте.</p></div>
+                <p class="onboarding-error" id="onboardingError" role="alert" hidden></p>
+                <button class="app-text-action" id="onboardingRefreshCompany" type="button" hidden>Проверить сохранение компании</button>
+                <button class="app-text-action" id="onboardingRefreshStatus" type="button" hidden>Обновить состояние проверки</button>
+            </div>
+            <footer class="onboarding-footer">Первый срез покажет, где ваш бренд уже виден.</footer>
+        </div>
+        <aside class="onboarding-explainer" aria-label="Что даст первая проверка">
+            <div class="onboarding-explainer-content"><span class="onboarding-eyebrow">Ваша компания глазами AI</span><h2>Узнайте, попадает ли ваш бренд в ответ</h2><p>Один вопрос — первый срез видимости в пяти AI-моделях.</p><div class="onboarding-models" aria-hidden="true"><img src="assets/ai/gigachat.svg" alt=""><img src="assets/ai/alice-ai.svg" alt=""><img src="assets/ai/openai.svg" alt=""><img src="assets/ai/gemini.svg" alt=""><img src="assets/ai/perplexity.svg" alt=""></div><div class="onboarding-outcomes"><article><span>01</span><div><h3>Упоминания бренда</h3><p>В каких ответах появляется ваша компания.</p></div></article><article><span>02</span><div><h3>Полные ответы AI</h3><p>Что именно модели говорят клиенту.</p></div></article><article><span>03</span><div><h3>Конкуренты и источники</h3><p>Кого рекомендуют рядом с вами и на что ссылаются.</p></div></article></div><small>Это отправная точка. Следующие проверки помогут увидеть изменения.</small></div>
+        </aside>
+    </section>
     <div class="app-shell">
         <aside class="app-sidebar">
             <a class="app-logo" href="index.html"><img class="logo-mark" src="assets/vidno-logo.png" alt=""><span>Vidno</span></a>
@@ -88,7 +133,8 @@
                 <div class="app-card app-check-form"><label>Бренд<input id="wsBrand" maxlength="200"></label><label class="app-field-grow">Промпт<input id="wsQuery" placeholder="Например: лучший сервис для мониторинга AI-видимости" maxlength="2000"></label><button class="btn btn-ghost" id="wsSuggestPrompts"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Предложить промпты</span></button><button class="btn btn-primary" id="wsCheck"><i class="fa-solid fa-magnifying-glass"></i><span id="wsCheckText">Сделать проверку</span></button></div>
                 <div class="app-card prompt-suggestions" id="promptSuggestions" hidden><div class="app-card-head"><div><h2>Промпты для проверки видимости</h2><span>Без названия бренда и подсказанных конкурентов</span></div><button class="app-text-action" id="refreshPromptSuggestions" type="button">Обновить <i class="fa-solid fa-rotate"></i></button></div><div class="prompt-suggestion-list" id="promptSuggestionList"></div><p class="prompt-suggestion-status" id="promptSuggestionStatus"></p></div>
                 <div class="app-loader" id="wsLoader" hidden><i class="fa-solid fa-circle-notch fa-spin"></i><span id="wsLoaderText">Анализируем ответ…</span></div><div class="ws-error" id="wsError" hidden></div>
-                <div class="ws-result" id="wsResult" hidden><div class="ws-verdict" id="wsVerdict"></div><div class="ws-meta" id="wsMeta"></div><div class="ws-brands-wrap" id="wsBrandsWrap" hidden><h3>Конкуренты</h3><ul class="ws-brands" id="wsBrands"></ul></div><div class="ws-sources-wrap" id="wsSourcesWrap" hidden><h3>Источники</h3><div class="ws-source-columns" aria-hidden="true"><span>Авторитетность</span></div><div class="ws-sources" id="wsSources"></div></div></div>
+                <button class="app-text-action" id="wsRefreshStatus" type="button" hidden>Обновить состояние проверки</button>
+                <div class="ws-result" id="wsResult" hidden><p class="check-result-context" id="wsResultContext"></p><div class="ws-verdict" id="wsVerdict" tabindex="-1"></div><div class="ws-meta" id="wsMeta"></div><p class="check-result-warning" id="wsResultWarning" role="status" hidden></p><div class="check-result-actions"><button class="btn btn-ghost btn-sm" id="resultAnswers" type="button">Ответы AI</button><button class="btn btn-ghost btn-sm" id="resultAnalytics" type="button">Аналитика</button><button class="btn btn-primary btn-sm" id="resultReport" type="button">Отчёт</button></div><div class="ws-brands-wrap" id="wsBrandsWrap" hidden><h3>Конкуренты</h3><ul class="ws-brands" id="wsBrands"></ul></div><div class="ws-sources-wrap" id="wsSourcesWrap" hidden><h3>Источники</h3><div class="ws-source-columns" aria-hidden="true"><span>Авторитетность</span></div><div class="ws-sources" id="wsSources"></div></div></div>
                 <div class="app-card app-history"><div class="app-card-head"><h2>История проверок</h2><span id="historyCount">0 проверок</span></div><div id="historyList" class="app-history-list"></div></div>
             </section>
             <section class="app-view" id="view-answers">
@@ -112,7 +158,7 @@
                 </div>
                 <div id="growthOpportunities" class="growth-list" role="tabpanel"></div><div id="growthTasks" class="growth-list" role="tabpanel" hidden></div><div id="growthResults" class="growth-list" role="tabpanel" hidden></div>
             </section>
-            <section class="app-view" id="view-reports"><div class="app-empty app-view-first-card"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span>Используйте историю проверок, чтобы собрать первый срез.</span></div></section>
+            <section class="app-view" id="view-reports"><div class="app-empty app-view-first-card"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span id="reportCheckContext">Откройте сохранённую проверку в истории, чтобы выбрать данные для отчёта.</span><span>Создание отчётов ещё готовится. Ответы AI и аналитика уже доступны в кабинете.</span><button class="btn btn-ghost btn-sm" id="reportBackToCheck" type="button" hidden>Вернуться к проверке</button></div></section>
             <section class="app-view" id="view-settings">
                 <div class="settings-heading app-view-first-card"><div><span>Настройки</span><h1 id="settingsTitle">Проект</h1><p id="settingsDescription">Название, варианты написания и домены активного проекта.</p></div><span class="settings-project-context" id="settingsProjectName">—</span></div>
                 <div class="settings-layout">
@@ -206,8 +252,8 @@
         </main>
     </div>
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
-    <script src="js/auth.js?v=20260923-1"></script>
+    <script src="js/auth.js?v=20261006-onboarding"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20260923-1"></script>
+    <script src="js/dashboard.js?v=20261006-onboarding"></script>
 </body>
 </html>

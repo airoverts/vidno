@@ -195,6 +195,9 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         self.assertEqual(materialized[0]["canonical_name"], "Legacy Materialized")
         self.assertEqual(existing, [{"id": 9100001, "canonical_id": "existing", "aliases": ["alias"], "domains": ["existing.test"]}])
         self.assertEqual(legacy_check, {"id": 9200001, "result": {"mentioned": True}, "quota_state": "unmetered"})
+        with self.database.connection() as database:
+            legacy_users = database.execute("SELECT onboarding_completed_at FROM users WHERE id IN (9000001, 9000002)").fetchall()
+        self.assertTrue(all(row["onboarding_completed_at"] is not None for row in legacy_users))
 
         client, user, _email = self._register("pending")
         account = client.get("/api/account")
@@ -202,6 +205,7 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         self.assertEqual(account.status_code, 200, account.text)
         self.assertEqual(account.json()["role"], "client")
         self.assertEqual(account.json()["id"], user["id"])
+        self.assertIsNone(account.json()["onboarding_completed_at"])
         self.assertEqual(access.status_code, 200, access.text)
         self.assertEqual(access.json()["status"], "pending")
         self.assertEqual(access.json()["administrative_status"], "pending")
@@ -500,6 +504,81 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         self.assertEqual(partial.status_code, 200, partial.text)
         self.assertEqual(partial.json()["check"]["status"], "partial")
         self.assertEqual(partial_client.get("/api/access").json()["checks"]["used"], 1)
+
+    def test_first_success_completes_onboarding_once_even_after_history_deletion(self):
+        admin, _admin_user, _admin_email = self._make_admin()
+        client, user, _email = self._register("onboarding")
+        self._set_access(admin, user["id"], status="active", checks_limit=None, brands_limit=None)
+        self.assertIsNone(client.get("/api/account").json()["onboarding_completed_at"])
+        first = self.main.start_check(user["id"], "Brand", "", "Query", "all")
+        self.main.finish_check(user["id"], first["id"], "partial", result={"provider_errors": [{"provider": "openai", "error": "unavailable"}]})
+        completed_at = client.get("/api/account").json()["onboarding_completed_at"]
+        self.assertIsNotNone(completed_at)
+        second = self.main.start_check(user["id"], "Brand", first["canonical_id"], "Query 2", "all")
+        self.main.finish_check(user["id"], second["id"], "completed", result={"mentioned": False})
+        self.assertEqual(client.get("/api/account").json()["onboarding_completed_at"], completed_at)
+        for check in (first, second):
+            self.assertEqual(client.delete(f"/api/checks/{check['id']}").status_code, 204)
+        self.assertEqual(client.get("/api/checks").json()["checks"], [])
+        self.assertEqual(client.get("/api/account").json()["onboarding_completed_at"], completed_at)
+
+        failed_client, failed_user, _email = self._register("onboarding-failed")
+        self._set_access(admin, failed_user["id"], status="active", checks_limit=None, brands_limit=None)
+        failed = self.main.start_check(failed_user["id"], "Brand", "", "Query", "all")
+        self.main.finish_check(failed_user["id"], failed["id"], "failed", error={"error": "unavailable"})
+        self.assertIsNone(failed_client.get("/api/account").json()["onboarding_completed_at"])
+
+    def test_history_expires_only_owned_stale_checks_and_refunds_current_cycle_once(self):
+        admin, _admin_user, _admin_email = self._make_admin()
+        client, user, _email = self._register("stale-checks")
+        other_client, other_user, _email = self._register("other-stale-checks")
+        for owner in (user, other_user):
+            self._set_access(admin, owner["id"], status="active", checks_limit=None, brands_limit=None)
+        expired = self.main.start_check(user["id"], "Brand", "", "Expired query", "all")
+        old_cycle = self.main.start_check(user["id"], "Brand", expired["canonical_id"], "Old cycle", "all")
+        fresh = self.main.start_check(user["id"], "Brand", expired["canonical_id"], "Fresh query", "all")
+        foreign = self.main.start_check(other_user["id"], "Other", "", "Other query", "all")
+        with self.database.connection() as database:
+            database.execute("UPDATE checks SET created_at = NOW() - INTERVAL '2 hours' WHERE id = ANY(%s)", ([expired["id"], old_cycle["id"], foreign["id"]],))
+            database.execute("UPDATE checks SET quota_cycle = quota_cycle - 1 WHERE id = %s", (old_cycle["id"],))
+        for _attempt in range(2):
+            response = client.get("/api/checks")
+            self.assertEqual(response.status_code, 200, response.text)
+            history = {item["id"]: item for item in response.json()["checks"]}
+            self.assertEqual(history[expired["id"]]["status"], "failed")
+            self.assertEqual(history[old_cycle["id"]]["status"], "failed")
+            self.assertEqual(history[expired["id"]]["quota_state"], "refunded")
+            self.assertEqual(history[fresh["id"]]["status"], "running")
+            self.assertEqual(client.get("/api/access").json()["checks"]["used"], 2)
+        with self.database.connection() as database:
+            foreign_row = database.execute("SELECT status, quota_state FROM checks WHERE id = %s", (foreign["id"],)).fetchone()
+        self.assertEqual(foreign_row, {"status": "running", "quota_state": "reserved"})
+        self.assertEqual(other_client.get("/api/access").json()["checks"]["used"], 1)
+        late = self.main.finish_check(user["id"], expired["id"], "completed", result={"mentioned": True})
+        self.assertEqual(late["status"], "failed")
+        self.assertEqual(late["error"], {"error": "interrupted"})
+        self.assertIsNone(late["result"])
+        self.assertIsNone(client.get("/api/account").json()["onboarding_completed_at"])
+        self.assertEqual(client.get("/api/access").json()["checks"]["used"], 2)
+
+    def test_cleanup_and_completion_share_one_terminal_transition(self):
+        admin, _admin_user, _admin_email = self._make_admin()
+        client, user, _email = self._register("cleanup-race")
+        self._set_access(admin, user["id"], status="active", checks_limit=None, brands_limit=None)
+        check = self.main.start_check(user["id"], "Brand", "", "Query", "all")
+        with self.database.connection() as database:
+            database.execute("UPDATE checks SET created_at = NOW() - INTERVAL '2 hours' WHERE id = %s", (check["id"],))
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            cleanup = executor.submit(self.main.list_checks, user["id"])
+            completion = executor.submit(self.main.finish_check, user["id"], check["id"], "completed", {"mentioned": True})
+            cleanup.result(timeout=10)
+            completion.result(timeout=10)
+        stored = client.get("/api/checks").json()["checks"][0]
+        self.assertIn(stored["status"], ("failed", "completed"))
+        consumed = stored["status"] == "completed"
+        self.assertEqual(client.get("/api/access").json()["checks"]["used"], int(consumed))
+        self.assertEqual(stored["quota_state"], "consumed" if consumed else "refunded")
+        self.assertEqual(client.get("/api/account").json()["onboarding_completed_at"] is not None, consumed)
 
     def test_last_check_slot_is_reserved_atomically(self):
         admin, _admin_user, _admin_email = self._make_admin()

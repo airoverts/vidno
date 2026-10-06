@@ -33,16 +33,17 @@ document.addEventListener('keydown', event => {
 });
 
 async function loadSession() {
-    try {
-        const response = await fetch(`${AUTH_API_BASE}/auth/me`, { credentials: 'include' });
-        if (!response.ok) throw new Error();
-        const { user } = await response.json();
-        document.querySelector('#appUserName').textContent = user.name;
-        return user;
-    } catch {
+    let response;
+    try { response = await fetch(`${AUTH_API_BASE}/auth/me`, { credentials: 'include' }); }
+    catch { throw new Error('Нет связи с сервером. Повторите загрузку кабинета.'); }
+    if (response.status === 401) {
         window.location.replace('index.html?auth=login');
         throw new Error('Требуется вход');
     }
+    if (!response.ok) throw new Error('Не удалось проверить сессию. Повторите загрузку кабинета.');
+    const { user } = await response.json();
+    document.querySelector('#appUserName').textContent = user.name;
+    return user;
 }
 
 document.querySelector('#appLogout').addEventListener('click', async () => {
@@ -52,3 +53,4 @@ document.querySelector('#appLogout').addEventListener('click', async () => {
 });
 
 window.vidnoSessionPromise = loadSession();
+window.vidnoSessionPromise.catch(() => {});

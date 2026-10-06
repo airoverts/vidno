@@ -56,6 +56,30 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertEqual(response.json()["check_id"], 42)
         self.assertEqual(finish.call_args.kwargs["error"], {"error": "provider failed"})
 
+    def test_late_provider_success_does_not_return_unsaved_metrics(self):
+        started = {"id": 42, "brand_id": 9, "status": "running", "created_at": "now", "completed_at": None}
+        interrupted = {**started, "status": "failed", "completed_at": "later"}
+        with patch.object(main, "start_check", return_value=started), patch.object(main, "_run_check", return_value={"provider": "gigachat", "mentioned": True}), patch.object(main, "finish_check", return_value=interrupted):
+            response = self.client.post("/api/check", json={"brand": "Vidno", "query": "Лучший сервис?", "provider": "gigachat"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["check_id"], 42)
+        self.assertNotIn("mentioned", response.json())
+
+    def test_repeated_completion_returns_persisted_result(self):
+        for status in ("completed", "partial"):
+            with self.subTest(status=status):
+                saved_result = {"provider": "all", "mentioned": False, "provider_results": [{"provider": "gigachat", "mentioned": False}]}
+                if status == "partial":
+                    saved_result["provider_errors"] = [{"provider": "openai", "error": "unavailable"}]
+                record = {"id": 42, "brand_id": 9, "status": status, "created_at": "now", "completed_at": "later", "result": saved_result}
+                with patch.object(main, "finish_check", return_value=record):
+                    response = main._complete_check_response(7, 42, {"provider": "all", "mentioned": True, "new_unsaved_field": True})
+                self.assertFalse(response["mentioned"])
+                self.assertEqual(response["provider_results"], saved_result["provider_results"])
+                self.assertEqual(response.get("provider_errors"), saved_result.get("provider_errors"))
+                self.assertEqual(response["check"]["status"], status)
+                self.assertNotIn("new_unsaved_field", response)
+
     def test_start_failure_releases_concurrency_slot(self):
         with patch.object(main, "start_check", side_effect=RuntimeError("database unavailable")):
             with self.assertRaises(RuntimeError):
@@ -133,6 +157,68 @@ class StorageResolutionTests(unittest.TestCase):
         self.assertEqual(database.calls[1][1], (7,))
         self.assertEqual(database.calls[2][1], (7,))
         self.assertEqual(database.calls[3][1], (7, "vidno"))
+
+
+class CheckCompletionTests(unittest.TestCase):
+    def _record(self, status="running"):
+        return {
+            "id": 41, "brand_id": 9, "brand": "Vidno", "canonical_id": "vidno",
+            "query": "Query", "provider": "all", "status": status,
+            "quota_state": "reserved" if status == "running" else "refunded", "quota_cycle": 3,
+            "result": None, "error": None, "created_at": "now", "completed_at": None,
+        }
+
+    def _database(self, current, finished=None):
+        class Cursor:
+            def __init__(self, row):
+                self.row = row
+
+            def fetchone(self):
+                return self.row
+
+        class Database:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, query, params):
+                self.calls.append((" ".join(query.split()), params))
+                return Cursor(current if query.strip().startswith("SELECT") else finished)
+
+        return Database()
+
+    def test_terminal_check_cannot_be_overwritten_or_refunded_again(self):
+        for status in ("failed", "completed", "partial"):
+            with self.subTest(status=status):
+                current = self._record(status)
+                database = self._database(current)
+
+                @contextmanager
+                def fake_connection():
+                    yield database
+
+                with patch.object(storage, "connection", fake_connection), patch.object(storage, "_locked_access") as access:
+                    result = storage.finish_check(7, 41, "completed", result={"mentioned": True})
+                self.assertEqual(result["status"], status)
+                self.assertEqual(len(database.calls), 1)
+                access.assert_called_once_with(database, 7, refresh=False)
+
+    def test_success_marks_onboarding_but_failure_only_refunds_quota(self):
+        for status in ("completed", "partial", "failed"):
+            with self.subTest(status=status):
+                current = self._record()
+                finished = {**current, "status": status}
+                database = self._database(current, finished)
+
+                @contextmanager
+                def fake_connection():
+                    yield database
+
+                with patch.object(storage, "connection", fake_connection), patch.object(storage, "_locked_access"):
+                    result = storage.finish_check(7, 41, status)
+                self.assertEqual(result["status"], status)
+                writes = [query for query, _params in database.calls]
+                self.assertEqual(any("UPDATE users SET onboarding_completed_at" in query for query in writes), status != "failed")
+                self.assertEqual(any("UPDATE user_access SET checks_used" in query for query in writes), status == "failed")
 
 
 if __name__ == "__main__":

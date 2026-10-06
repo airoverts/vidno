@@ -417,7 +417,10 @@ def _complete_check_response(user_id: int, check_id: int, response):
         return JSONResponse(status_code=response.status_code, content=payload)
     status = "partial" if response.get("provider_errors") else "completed"
     record = finish_check(user_id, check_id, status, result=response, error=response.get("provider_errors") or None)
-    return {**response, "check": _check_metadata(record)}
+    if not record or record["status"] not in {"completed", "partial"}:
+        return JSONResponse(status_code=409, content={"error": "Проверка прервана. Запустите её повторно.", "check_id": check_id})
+    saved_result = record.get("result")
+    return {**(saved_result if isinstance(saved_result, dict) else response), "check": _check_metadata(record)}
 
 
 @app.get("/api/checks")

@@ -59,6 +59,7 @@ class AccessApiContractTests(unittest.TestCase):
             {"plan": "business"},
             {"checks_limit": None},
             {"brands_limit": None},
+            {"onboarding_completed_at": "2026-10-06T00:00:00Z"},
         ):
             with self.subTest(body=body):
                 response = self.client.patch("/api/account", json=body)
@@ -151,7 +152,7 @@ class AccessApiContractTests(unittest.TestCase):
             "brand": "Legacy",
             "role": "client",
         }
-        account = {**user, "created_at": "2026-01-01T00:00:00+00:00"}
+        account = {**user, "created_at": "2026-01-01T00:00:00+00:00", "onboarding_completed_at": None}
         access = {
             "status": "active",
             "administrative_status": "active",
@@ -192,7 +193,7 @@ class AccessApiContractTests(unittest.TestCase):
         self.assertEqual(account_response.status_code, 200)
         self.assertEqual(
             account_response.json(),
-            {key: account[key] for key in ("id", "name", "email", "created_at", "role")},
+            {key: account[key] for key in ("id", "name", "email", "created_at", "role", "onboarding_completed_at")},
         )
         self.assertEqual(access_response.status_code, 200)
         self.assertEqual(access_response.json(), access)
@@ -219,6 +220,16 @@ class AccessApiContractTests(unittest.TestCase):
 
 
 class AccessPersistenceContractTests(unittest.TestCase):
+    def test_account_serializes_nullable_onboarding_completion(self):
+        from datetime import datetime, timezone
+
+        completed = datetime(2026, 10, 6, tzinfo=timezone.utc)
+        for value in (None, completed):
+            with self.subTest(completed=value is not None):
+                row = {"id": 7, "name": "User", "email": "u@example.com", "brand": "", "role": "client", "onboarding_completed_at": value}
+                result = auth._public_user(row)
+                self.assertEqual(result["onboarding_completed_at"], value.isoformat() if value else None)
+
     def test_startup_only_initializes_storage_without_account_cleanup(self):
         initialized = []
 

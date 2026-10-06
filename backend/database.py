@@ -19,6 +19,43 @@ def connection():
         yield database
 
 
+def expire_stale_checks(database, user_id: int):
+    access = database.execute(
+        "SELECT quota_cycle FROM user_access WHERE user_id = %s FOR UPDATE",
+        (user_id,),
+    ).fetchone()
+    if not access:
+        return
+    expired = database.execute(
+        """
+        WITH stale AS MATERIALIZED (
+            SELECT id, quota_state, quota_cycle
+            FROM checks
+            WHERE user_id = %s AND status = 'running'
+              AND created_at < NOW() - INTERVAL '1 hour'
+            FOR UPDATE
+        ), interrupted AS (
+            UPDATE checks
+            SET status = 'failed', error = '{"error":"interrupted"}'::jsonb,
+                completed_at = NOW(),
+                quota_state = CASE WHEN checks.quota_state = 'reserved' THEN 'refunded' ELSE checks.quota_state END
+            FROM stale
+            WHERE checks.id = stale.id AND checks.status = 'running'
+            RETURNING stale.quota_state, stale.quota_cycle
+        )
+        SELECT COUNT(*) AS amount
+        FROM interrupted
+        WHERE quota_state = 'reserved' AND quota_cycle = %s
+        """,
+        (user_id, access["quota_cycle"]),
+    ).fetchone()
+    if expired["amount"]:
+        database.execute(
+            "UPDATE user_access SET checks_used = GREATEST(0, checks_used - %s), updated_at = NOW() WHERE user_id = %s AND quota_cycle = %s",
+            (expired["amount"], user_id, access["quota_cycle"]),
+        )
+
+
 def initialize_database():
     statements = (
         """
@@ -135,26 +172,8 @@ def initialize_database():
                 "INSERT INTO schema_migrations(version) VALUES (%s)",
                 (migration.name,),
             )
-        database.execute(
-            """
-            WITH interrupted AS (
-                UPDATE checks
-                SET status = 'failed',
-                    error = '{"error":"interrupted"}'::jsonb,
-                    completed_at = NOW(),
-                    quota_state = CASE WHEN quota_state = 'reserved' THEN 'refunded' ELSE quota_state END
-                WHERE status = 'running' AND created_at < NOW() - INTERVAL '1 hour'
-                RETURNING user_id, quota_state, quota_cycle
-            ), refunds AS (
-                SELECT user_id, quota_cycle, COUNT(*) AS amount
-                FROM interrupted
-                WHERE quota_state = 'refunded'
-                GROUP BY user_id, quota_cycle
-            )
-            UPDATE user_access
-            SET checks_used = GREATEST(0, checks_used - refunds.amount), updated_at = NOW()
-            FROM refunds
-            WHERE user_access.user_id = refunds.user_id
-              AND user_access.quota_cycle = refunds.quota_cycle
-            """
-        )
+        interrupted_users = database.execute(
+            "SELECT DISTINCT user_id FROM checks WHERE status = 'running' AND created_at < NOW() - INTERVAL '1 hour' ORDER BY user_id"
+        ).fetchall()
+        for row in interrupted_users:
+            expire_stale_checks(database, row["user_id"])
