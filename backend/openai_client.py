@@ -88,7 +88,7 @@ def _web_evidence(data: dict) -> tuple[bool, list[dict]]:
                 continue
             url = source.get("url")
             if isinstance(url, str) and url.startswith(("http://", "https://")):
-                sources.setdefault(url, {"url": url, "title": str(source.get("title") or url), "authority_score": 5, "authority_label": "не определена"})
+                sources.setdefault(url, {"url": url, "title": str(source.get("title") or url), "authority_score": 5, "authority_label": "не определена", "cited_in_answer": False})
         if item_type != "message":
             continue
         for content in item.get("content") or []:
@@ -99,7 +99,8 @@ def _web_evidence(data: dict) -> tuple[bool, list[dict]]:
                     continue
                 url = annotation.get("url")
                 if isinstance(url, str) and url.startswith(("http://", "https://")):
-                    sources.setdefault(url, {"url": url, "title": str(annotation.get("title") or url), "authority_score": 5, "authority_label": "не определена"})
+                    source = sources.setdefault(url, {"url": url, "title": str(annotation.get("title") or url), "authority_score": 5, "authority_label": "не определена", "cited_in_answer": True})
+                    source["cited_in_answer"] = True
     return web_search_used, list(sources.values())
 
 

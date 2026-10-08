@@ -9,10 +9,12 @@ from google.genai import errors
 import gemini_client
 
 
-def grounded_response(text="Ответ Gemini", queries=None, chunks=None):
+def grounded_response(text="Ответ Gemini", queries=None, chunks=None, supports=None):
+    actual_chunks = chunks if chunks is not None else [SimpleNamespace(web=SimpleNamespace(uri="https://example.com/a", title="Источник A"))]
     metadata = SimpleNamespace(
         web_search_queries=queries if queries is not None else ["поисковый запрос"],
-        grounding_chunks=chunks if chunks is not None else [SimpleNamespace(web=SimpleNamespace(uri="https://example.com/a", title="Источник A"))],
+        grounding_chunks=actual_chunks,
+        grounding_supports=supports if supports is not None else [SimpleNamespace(grounding_chunk_indices=list(range(len(actual_chunks))))],
     )
     return SimpleNamespace(text=text, candidates=[SimpleNamespace(grounding_metadata=metadata, finish_reason="STOP")])
 
@@ -33,9 +35,19 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(answer, "Ответ Gemini")
         self.assertEqual(queries, ["запрос", "другой запрос"])
         self.assertEqual([source["url"] for source in sources], ["https://example.com/a", "https://example.com/b"])
+        self.assertTrue(all(source["cited_in_answer"] for source in sources))
         call = client.models.generate_content.call_args.kwargs
         self.assertEqual(call["contents"], "запрос пользователя")
         self.assertIsNotNone(call["config"].tools[0].google_search)
+
+    def test_only_supported_grounding_chunks_are_marked_as_answer_citations(self):
+        chunks = [
+            SimpleNamespace(web=SimpleNamespace(uri="https://example.com/search-only", title="Только поиск")),
+            SimpleNamespace(web=SimpleNamespace(uri="https://example.com/cited", title="Цитата")),
+        ]
+        response = grounded_response(chunks=chunks, supports=[SimpleNamespace(grounding_chunk_indices=[1])])
+        _, sources = gemini_client._grounding_evidence(response)
+        self.assertEqual([source["cited_in_answer"] for source in sources], [False, True])
 
     def test_grounded_answer_rejects_missing_search_queries(self):
         client = SimpleNamespace(models=SimpleNamespace(generate_content=Mock(return_value=grounded_response(queries=[]))))

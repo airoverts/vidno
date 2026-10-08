@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css?v=20261006-onboarding">
+    <link rel="stylesheet" href="css/style.css?v=20261008-mvp-core">
     <script src="js/metrika.js?v=20260928-1" data-webvisor="false" data-cookie-policy="legal/cookies.html"></script>
 </head>
 <body class="app-body auth-pending">
@@ -135,7 +135,7 @@
                 <div class="app-loader" id="wsLoader" hidden><i class="fa-solid fa-circle-notch fa-spin"></i><span id="wsLoaderText">Анализируем ответ…</span></div><div class="ws-error" id="wsError" hidden></div>
                 <button class="app-text-action" id="wsRefreshStatus" type="button" hidden>Обновить состояние проверки</button>
                 <div class="ws-result" id="wsResult" hidden><p class="check-result-context" id="wsResultContext"></p><div class="ws-verdict" id="wsVerdict" tabindex="-1"></div><div class="ws-meta" id="wsMeta"></div><p class="check-result-warning" id="wsResultWarning" role="status" hidden></p><div class="check-result-actions"><button class="btn btn-ghost btn-sm" id="resultAnswers" type="button">Ответы AI</button><button class="btn btn-ghost btn-sm" id="resultAnalytics" type="button">Аналитика</button><button class="btn btn-primary btn-sm" id="resultReport" type="button">Отчёт</button></div><div class="ws-brands-wrap" id="wsBrandsWrap" hidden><h3>Конкуренты</h3><ul class="ws-brands" id="wsBrands"></ul></div><div class="ws-sources-wrap" id="wsSourcesWrap" hidden><h3>Источники</h3><div class="ws-source-columns" aria-hidden="true"><span>Авторитетность</span></div><div class="ws-sources" id="wsSources"></div></div></div>
-                <div class="app-card app-history"><div class="app-card-head"><h2>История проверок</h2><span id="historyCount">0 проверок</span></div><div id="historyList" class="app-history-list"></div></div>
+                <div class="app-card app-history"><div class="app-card-head"><h2>История проверок</h2><span id="historyCount">0 проверок</span></div><div id="historyList" class="app-history-list"></div><button class="ranking-toggle" id="historyToggle" type="button" aria-controls="historyList" aria-expanded="false" hidden>Показать все</button></div>
             </section>
             <section class="app-view" id="view-answers">
                 <div class="app-card app-view-first-card">
@@ -252,8 +252,9 @@
         </main>
     </div>
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
+    <dialog class="check-details-dialog" id="checkDetailsDialog"><div id="checkDetailsContent"></div></dialog>
     <script src="js/auth.js?v=20261006-onboarding"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20261006-onboarding"></script>
+    <script src="js/dashboard.js?v=20261008-mvp-core"></script>
 </body>
 </html>

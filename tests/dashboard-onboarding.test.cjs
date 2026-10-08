@@ -49,7 +49,7 @@ function state(overrides = {}) {
             checks: { limit: 20, used: 0, remaining: 20 }, brands: { limit: 2, used: 0, remaining: 2 },
             capabilities: { workspace_write: true, run_checks: true, create_brands: true, manage_existing_brands: true },
         },
-        brands: [], checks: [], requests: [], checkMode: 'completed', checkReads: 0,
+        brands: [], checks: [], growthTasks: [], requests: [], checkMode: 'completed', checkReads: 0, nextCheckId: 501,
         ...overrides,
     };
 }
@@ -114,16 +114,34 @@ async function fixture(server = state(), width = 1440, stored = {}) {
                 server.checks = server.checks.filter(item => String(item.id) !== endpoint.split('/').at(-1));
                 return route.fulfill({ status: 204, body: '' });
             }
-            if (endpoint === '/growth-tasks') return json({ tasks: [] });
+            if (endpoint === '/growth-tasks' && method === 'GET') return json({ tasks: server.growthTasks });
+            if (/^\/growth-tasks\/\d+$/.test(endpoint) && method === 'PATCH') {
+                const id = Number(endpoint.split('/').at(-1));
+                const item = server.growthTasks.find(task => Number(task.id) === id);
+                if (!item) return json({ detail: 'Task not found' }, 404);
+                Object.assign(item, body, { updated_at: stamp });
+                return json({ task: item });
+            }
             if (endpoint === '/dismissed-opportunities') return json({ items: [] });
             if (endpoint === '/prompt-suggestions') {
                 if (server.suggestionFailure) return json({ detail: 'suggestions unavailable' }, 503);
                 return json({ prompts: ['Как выбрать сервис?', 'Какие компании рекомендуют?', 'Какой инструмент лучше?'] });
             }
+            if (endpoint === '/check') {
+                const id = server.nextCheckId++;
+                const result = { provider: body.provider, model: body.provider, analysis_version: 'perplexity-direct-v1', mentioned: true, raw_answer: `Рекомендуем Acme. ${body.provider} ${id}`, ordered_mentions: [{ name: 'Acme', position: 1, role: 'рекомендация' }], competitors: [], sources: [] };
+                const item = { id, brand_id: 101, brand: 'Acme', query: body.query, provider: body.provider, status: 'completed', created_at: stamp, completed_at: stamp, result, error: null };
+                server.checks.push(item);
+                return json({ ...result, check: { id, brand_id: 101, created_at: stamp, completed_at: stamp, status: 'completed' } });
+            }
             if (endpoint === '/check-all') {
                 if (server.checkDelay) await new Promise(resolve => setTimeout(resolve, server.checkDelay));
                 const status = server.checkMode.startsWith('drop') ? 'running' : server.checkMode;
-                const item = check(501, status, server.mentioned !== false, body.query);
+                const item = check(server.nextCheckId++, status, server.mentioned !== false, body.query);
+                if (Array.isArray(body.providers) && item.result) {
+                    item.result.provider_results = item.result.provider_results.filter(result => body.providers.includes(result.provider));
+                    item.result.requested_providers = [...body.providers];
+                }
                 server.checks.push(item);
                 if (server.checkMode.startsWith('drop')) {
                     if (server.checkMode === 'drop-unreadable') server.checkReadFailure = true;
@@ -621,6 +639,132 @@ test('deleting selected check removes result and previously selected report cont
         assert.match(await f.page.locator('#reportCheckContext').textContent(), /Откройте сохранённую проверку/);
         await f.page.locator('.app-nav [data-view="reports"]').click();
         assert.equal(await f.page.locator('#reportBackToCheck').isVisible(), false);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+for (const width of [1440, 375]) {
+    test(`saved check details and exact repeat work at ${width}px`, async () => {
+        const saved = check();
+        saved.result.requested_providers = [...providers];
+        const server = state({ brands: [brand()], checks: [saved], nextCheckId: 502 });
+        server.account.onboarding_completed_at = stamp;
+        const f = await fixture(server, width);
+        try {
+            await hidden(f.page, '#dashboardLoadState');
+            await f.page.locator('.app-nav [data-view="prompts"]').click();
+            await f.page.locator('[data-check-details="501"]').click();
+            await visible(f.page, '#checkDetailsDialog');
+            assert.equal(await f.page.locator('.check-detail-model').count(), 5);
+            assert.match(await f.page.locator('#checkDetailsDialog').textContent(), /gigachat 501/i);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            await f.page.locator('#checkDetailsDialog [data-repeat-check="501"]').click();
+            await visible(f.page, '#wsResult');
+            const request = server.requests.filter(item => item.endpoint === '/check-all' && item.method === 'POST').at(-1);
+            assert.equal(request.body.query, saved.query);
+            assert.deepEqual(request.body.providers, providers);
+            assert.equal(server.checks.length, 2);
+            assert.equal(count(server, '/check', 'POST'), 0);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+test('history can reveal more than ten saved checks', async () => {
+    const checks = Array.from({ length: 12 }, (_, index) => check(600 + index, 'completed', true, `Вопрос ${index + 1}`));
+    const server = state({ brands: [brand()], checks });
+    server.account.onboarding_completed_at = stamp;
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState');
+        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        assert.equal(await f.page.locator('.app-history-row').count(), 10);
+        await f.page.locator('#historyToggle').click();
+        assert.equal(await f.page.locator('.app-history-row').count(), 12);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('single-model history repeats through the single-provider endpoint', async () => {
+    const saved = check();
+    const providerResult = saved.result.provider_results[0];
+    saved.provider = providerResult.provider;
+    saved.result = { ...providerResult };
+    const server = state({ brands: [brand()], checks: [saved], nextCheckId: 502 });
+    server.account.onboarding_completed_at = stamp;
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState');
+        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await f.page.locator('[data-repeat-check="501"]').click();
+        await visible(f.page, '#wsResult');
+        const request = server.requests.find(item => item.endpoint === '/check' && item.method === 'POST');
+        assert.equal(request.body.provider, 'gigachat');
+        assert.equal(request.body.query, saved.query);
+        assert.equal(count(server, '/check-all'), 0);
+        assert.equal(server.checks.length, 2);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('citation rate uses cited links on official domains only', async () => {
+    const saved = check();
+    saved.result.provider_results[0].sources = [{ url: 'https://shop.acme.test/page', title: 'Не содержит название', cited_in_answer: true }];
+    saved.result.provider_results[1].sources = [{ url: 'https://example.test/?next=acme.test', title: 'Acme', cited_in_answer: true }];
+    const server = state({ brands: [brand()], checks: [saved] });
+    server.account.onboarding_completed_at = stamp;
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState');
+        assert.equal(await f.page.locator('#metricCitation').textContent(), '20%');
+        assert.match(await f.page.locator('#metricCitationNote').textContent(), /1 ответ/);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('growth control check repeats the exact prompt and provider set through check-all', async () => {
+    const query = 'Какой сервис выбрать?';
+    const baselineResults = ['gigachat', 'openai'].map(provider => ({ provider, model: provider, mentioned: false, position: null, role: 'не упомянут' }));
+    const task = { id: 901, brand_id: 101, brand: 'Acme', brandKey: 'brand-101', query, provider: 'all', providers: ['gigachat', 'openai'], title: 'Усилить присутствие', action: 'Обновить материал', workType: 'content', status: 'ready_for_check', baseline: { id: 500, createdAt: Date.parse(stamp), provider: 'all', providers: ['gigachat', 'openai'], providerResults: baselineResults, mentioned: false }, created_at: stamp, updated_at: stamp };
+    const server = state({ brands: [brand()], checks: [check(500, 'completed', false, query)], growthTasks: [task], nextCheckId: 501 });
+    server.account.onboarding_completed_at = stamp;
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState');
+        await f.page.locator('.app-nav [data-view="growth"]').click();
+        await f.page.locator('[data-growth-tab="tasks"]').click();
+        await f.page.locator('[data-measure-task="901"]').click();
+        await f.page.locator('[data-growth-tab="results"]').click();
+        await visible(f.page, '.growth-result');
+        const request = server.requests.find(item => item.endpoint === '/check-all' && item.method === 'POST');
+        assert.equal(request.body.query, query);
+        assert.deepEqual(request.body.providers, ['gigachat', 'openai']);
+        assert.equal(count(server, '/check', 'POST'), 0);
+        assert.equal(server.growthTasks[0].status, 'measured');
+        assert.deepEqual(server.growthTasks[0].comparison.providers, ['gigachat', 'openai']);
+        assert.equal(server.checks.length, 2);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('growth control check saves partial history but does not compare different model sets', async () => {
+    const query = 'Какой сервис выбрать?';
+    const requested = ['gigachat', 'perplexity'];
+    const baselineResults = requested.map(provider => ({ provider, model: provider, mentioned: false, position: null, role: 'не упомянут' }));
+    const task = { id: 902, brand_id: 101, brand: 'Acme', brandKey: 'brand-101', query, provider: 'all', providers: requested, title: 'Усилить присутствие', action: 'Обновить материал', workType: 'content', status: 'ready_for_check', baseline: { id: 500, createdAt: Date.parse(stamp), provider: 'all', providers: requested, providerResults: baselineResults, mentioned: false }, created_at: stamp, updated_at: stamp };
+    const server = state({ brands: [brand()], checks: [check(500, 'completed', false, query)], growthTasks: [task], nextCheckId: 501, checkMode: 'partial' });
+    server.account.onboarding_completed_at = stamp;
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState');
+        await f.page.locator('.app-nav [data-view="growth"]').click();
+        await f.page.locator('[data-growth-tab="tasks"]').click();
+        f.page.once('dialog', dialog => dialog.accept());
+        await f.page.locator('[data-measure-task="902"]').click();
+        await f.page.waitForFunction(() => document.querySelector('[data-measure-task="902"]')?.disabled === false);
+        assert.equal(server.checks.length, 2);
+        assert.equal(server.growthTasks[0].status, 'ready_for_check');
+        assert.equal(count(server, '/growth-tasks/902', 'PATCH'), 0);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });

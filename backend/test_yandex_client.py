@@ -17,6 +17,17 @@ class MockResponse:
 
 
 class YandexAnalysisTests(unittest.TestCase):
+    def test_url_annotations_are_marked_as_answer_citations(self):
+        data = {
+            "output": [
+                {"type": "web_search_call", "status": "completed"},
+                {"type": "message", "content": [{"type": "output_text", "annotations": [{"type": "url_citation", "url": "https://brand.example/page", "title": "Источник"}]}]},
+            ]
+        }
+        used, sources = yandex_client._web_evidence(data)
+        self.assertTrue(used)
+        self.assertEqual(sources[0]["cited_in_answer"], True)
+
     def test_structured_analysis_uses_yandex_without_web_search(self):
         data = {
             "status": "completed",

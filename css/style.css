@@ -1637,6 +1637,29 @@ html[data-theme="dark"] .compare-table thead .compare-accent {
 .app-history-actions { display: flex; align-items: center; gap: 10px; }
 .app-history-actions button { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 6px; color: var(--text-soft); background: transparent; }
 .app-history-actions button:hover { color: var(--bad); background: var(--status-bad-bg); }
+.app-history-actions button[data-check-details]:hover, .app-history-actions button[data-repeat-check]:hover { color: var(--accent); background: var(--bg-soft-2); }
+.check-details-dialog { width: min(920px, calc(100vw - 32px)); max-height: min(860px, calc(100vh - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 16px; color: var(--text); background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.check-details-dialog::backdrop { background: color-mix(in srgb, var(--night) 58%, transparent); }
+.check-details-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 24px 26px 20px; border-bottom: 1px solid var(--border); }
+.check-details-head h2 { margin: 4px 0 7px; font-size: 1.2rem; line-height: 1.35; overflow-wrap: anywhere; }
+.check-details-head p { margin: 0; color: var(--text-soft); font-size: .8rem; }
+.check-details-body { max-height: calc(100vh - 230px); padding: 22px 26px; overflow-y: auto; }
+.check-details-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 13px 15px; border-radius: 10px; background: var(--bg-soft); }
+.check-details-summary strong { font-size: .9rem; }
+.check-details-summary span { color: var(--text-soft); font-size: .76rem; }
+.check-detail-models { display: flex; flex-direction: column; gap: 12px; }
+.check-detail-model { padding: 17px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.check-detail-model-head { display: flex; align-items: center; gap: 10px; }
+.check-detail-model-head > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.check-detail-model-head strong { font-size: .86rem; }
+.check-detail-model-head span { color: var(--text-soft); font-size: .72rem; overflow-wrap: anywhere; }
+.check-detail-answer { margin-top: 14px; color: var(--text); font-size: .82rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.check-detail-sources { display: flex; flex-direction: column; gap: 5px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.check-detail-sources strong { font-size: .72rem; }
+.check-detail-sources a { color: var(--accent); font-size: .75rem; overflow-wrap: anywhere; }
+.check-detail-error { border-color: var(--bad); background: var(--status-bad-bg); }
+.check-detail-error p { margin: 12px 0 0; color: var(--bad); font-size: .78rem; }
+.check-details-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 26px; border-top: 1px solid var(--border); background: var(--surface); }
 .account-danger { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border); }
 .account-danger > div { display: flex; flex-direction: column; gap: 4px; }
 .account-danger > div:last-child { flex-direction: row; }
@@ -2023,4 +2046,13 @@ html[data-theme="dark"] .compare-table thead .compare-accent {
     .check-result-actions { flex-direction: column; }
     .check-result-actions .btn { width: 100%; }
     .app-history-row { gap: 12px; }
+    .app-history-actions { flex-wrap: wrap; justify-content: flex-end; }
+    .check-details-dialog { width: 100vw; max-width: none; height: 100svh; max-height: none; border: 0; border-radius: 0; }
+    .check-details-head { padding: 20px 16px 16px; }
+    .check-details-head h2 { font-size: 1.05rem; }
+    .check-details-body { max-height: calc(100svh - 238px); padding: 16px; }
+    .check-details-summary { align-items: flex-start; flex-direction: column; }
+    .check-detail-model { padding: 14px; }
+    .check-details-actions { align-items: stretch; flex-direction: column; padding: 14px 16px; }
+    .check-details-actions .btn { width: 100%; }
 }

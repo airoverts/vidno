@@ -39,6 +39,7 @@ class PerplexityClientTests(unittest.TestCase):
         self.assertEqual(answer, "Ответ Perplexity")
         self.assertEqual(queries, ["актуальный запрос"])
         self.assertEqual([source["url"] for source in sources], ["https://example.com/source", "https://example.org/page"])
+        self.assertEqual([source["cited_in_answer"] for source in sources], [False, True])
         payload = post.call_args.args[0]
         self.assertEqual(payload["tools"], [{"type": "web_search"}])
         self.assertEqual(payload["model"], perplexity_client.MODEL_NAME)

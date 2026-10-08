@@ -37,6 +37,7 @@ let checkPolling = false;
 let selectedCheckId = null;
 let answerCheckId = null;
 let reportCheckId = null;
+let historyExpanded = false;
 
 class ApiError extends Error {
     constructor(message, status, code = '', details = {}) { super(message); this.name = 'ApiError'; this.status = status; this.code = code; this.details = details; }
@@ -99,6 +100,14 @@ function plausibleBrandName(value) { const name = normalizeBrandName(value).repl
 function identityText(value) { return normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/gi, ''); }
 function automaticIdentityText(value) { const normalized = normalizeBrandName(value).toLocaleLowerCase('ru-RU').replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '').replace(/\.(?:ru|ру|рф|com|net|org|io|ai)$/i, ''); return identityText(normalized); }
 function domainText(value) { const raw = normalizeBrandName(value); if (!/^https?:\/\//i.test(raw) && !raw.includes('.')) return ''; try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, ''); } catch { return ''; } }
+function sourceHost(value) { try { return new URL(String(value || '')).hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, ''); } catch { return ''; } }
+function sourceMatchesDomain(source, domain) { const host = sourceHost(typeof source === 'string' ? source : source?.url); const official = domainText(domain); return Boolean(host && official && (host === official || host.endsWith(`.${official}`))); }
+function resultCitesIdentity(result, identity) {
+    if (!identity?.domains?.length) return false;
+    if (typeof result?.brand_cited === 'boolean') return result.brand_cited;
+    if (typeof result?.brandCited === 'boolean') return result.brandCited;
+    return (result?.sources || []).some(source => source?.cited_in_answer !== false && identity.domains.some(domain => sourceMatchesDomain(source, domain)));
+}
 function identityVariants(identity) { return [identity.canonicalName, ...(identity.aliases || [])].map(normalizeBrandName).filter(Boolean); }
 function identityFor(value) {
     const token = automaticIdentityText(value); const domain = domainText(value);
@@ -194,7 +203,7 @@ function activeHistory() {
         if (results.length === 1) {
             const result = results[0];
             const position = resultPosition(result);
-            return enrichCompetitors({ ...item, ...result, id: item.id, createdAt: item.createdAt, brand: item.brand, brandKey: item.brandKey, query: item.query, providerResults: results, orderedMentions: result.ordered_mentions || [], position: position.value, positionKind: position.kind, competitors: listedCompetitors(result), cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())) });
+            return enrichCompetitors({ ...item, ...result, id: item.id, createdAt: item.createdAt, brand: item.brand, brandKey: item.brandKey, query: item.query, providerResults: results, orderedMentions: result.ordered_mentions || [], position: position.value, positionKind: position.kind, competitors: listedCompetitors(result), cited: resultCitesIdentity(result, identity) });
         }
         const mentionedResults = results.filter(result => result.mentioned);
         const ordered = canonicalizeMentionList(results.flatMap(result => result.ordered_mentions || []));
@@ -473,13 +482,14 @@ function applyAccessGating() {
     const canCheck = capability('run_checks');
     const projectState = renderProjectSettingsState();
     const projectBlocked = !projectState.canManage || !projectState.identity;
-    setDisabled('#wsCheck, .app-topbar-cta, [data-empty-chart-action], [data-view="prompts"]:not(.app-nav-item), [data-measure-task], #dialogMeasureTask', !canCheck);
+    setDisabled('#wsCheck, .app-topbar-cta, [data-empty-chart-action], [data-view="prompts"]:not(.app-nav-item), [data-measure-task], #dialogMeasureTask, [data-repeat-check]', !canCheck);
     setDisabled('#wsBrand, #wsQuery, #wsSuggestPrompts, #refreshPromptSuggestions, [data-create-task], [data-dismiss], [data-quick-status], #growthTaskForm input, #growthTaskForm select, #growthTaskForm textarea, #growthTaskForm [type="submit"], #deleteGrowthTask', !canWrite);
     setDisabled('#addBrandAlias, #brandAliasInput, [data-merge-alias]', projectBlocked);
     setDisabled('#saveCanonicalBrand, #addBrandDomain, #brandDomainInput, #canonicalBrandName', projectBlocked || Boolean(projectState.cooldown));
     setDisabled('#deleteBrand', projectBlocked);
     $$('[data-remove-brand-value]').forEach(button => { const disabled = projectBlocked || button.dataset.brandValueType === 'domain' && Boolean(projectState.cooldown); button.disabled = disabled; button.setAttribute('aria-disabled', String(disabled)); });
     $$('[data-delete-check]').forEach(button => { button.disabled = !canWrite || history.find(item => item.id === button.dataset.deleteCheck)?.status === 'running'; button.setAttribute('aria-disabled', String(button.disabled)); });
+    $$('[data-repeat-check]').forEach(button => { const running = history.find(item => item.id === button.dataset.repeatCheck)?.status === 'running'; button.disabled = !canCheck || running || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId); button.setAttribute('aria-disabled', String(button.disabled)); });
     $('.app-topbar-cta')?.classList.toggle('is-access-disabled', !canCheck);
     setDisabled('#wsCheck', !canCheck || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId));
     setDisabled('#wsBrand, #wsQuery', !canWrite || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId));
@@ -655,7 +665,7 @@ async function recoverCheckState() {
         await refreshChecks();
         const data = await apiRequest('/account'); accountState = normalizeAccount(data.account || data);
         checkOutcomeUnknown = false;
-        const item = trackedId ? history.find(record => record.id === trackedId) : pendingCheckContext ? history.filter(record => !pendingCheckContext.knownIds.has(record.id) && record.canonicalId === pendingCheckContext.brandKey && normalizeQuery(record.query) === normalizeQuery(pendingCheckContext.query)).at(-1) : null;
+        const item = trackedId ? history.find(record => record.id === trackedId) : pendingCheckContext ? history.filter(record => !pendingCheckContext.knownIds.has(record.id) && record.canonicalId === pendingCheckContext.brandKey && normalizeQuery(record.query) === normalizeQuery(pendingCheckContext.query) && record.provider === pendingCheckContext.provider).at(-1) : null;
         if (item?.status === 'running') trackRunningCheck(item);
         else {
             stopTrackingCheck();
@@ -666,7 +676,7 @@ async function recoverCheckState() {
     } catch { showCheckError('Не удалось обновить состояние проверки. Нажмите «Обновить состояние проверки» или дождитесь следующего обновления.'); }
     finally { checkPolling = false; updateCheckWaiting(); }
 }
-async function runWorkspaceCheck(brandValue, queryValue) {
+async function runWorkspaceCheck(brandValue, queryValue, provider = 'all', requestedProviders = null) {
     if (checkInFlight || trackedCheckId || checkOutcomeUnknown) return;
     const brand = normalizeBrandName(brandValue); const query = queryValue.trim();
     if (!brand || !query) return showCheckError('Введите бренд и вопрос для проверки.');
@@ -678,18 +688,21 @@ async function runWorkspaceCheck(brandValue, queryValue) {
         if (!capability('run_checks')) throw new Error(accessBlockedMessage('run_checks'));
         const identity = await ensureBrandIdentity(brand);
         setActiveBrand(identity.canonicalId, false, false); $('#wsQuery').value = query;
-        pendingCheckContext = { brandKey: identity.canonicalId, query, knownIds };
+        pendingCheckContext = { brandKey: identity.canonicalId, query, provider, knownIds };
         submitted = true;
-        const raw = await apiRequest('/check-all', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, query, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const body = { brand: identity.canonicalName, query, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains };
+        if (provider === 'all') body.providers = Array.isArray(requestedProviders) && requestedProviders.length ? requestedProviders : CHECK_PROVIDERS;
+        else body.provider = provider;
+        const raw = await apiRequest(provider === 'all' ? '/check-all' : '/check', { method: 'POST', body: JSON.stringify(body) });
         if (!raw.check?.id || !['completed', 'partial'].includes(raw.check.status)) throw new Error('Сервер не подтвердил сохранение результата');
         const data = canonicalizeCheckResult(raw, identity);
-        const saved = saveCheck(data, identity.canonicalName, query, 'all');
+        const saved = saveCheck(data, identity.canonicalName, query, provider);
         pendingCheckContext = null; stopTrackingCheck(); openSavedCheck(saved.id, true);
     } catch (error) {
         if (submitted) {
             try {
                 await refreshChecks();
-                const saved = history.filter(item => !knownIds.has(item.id) && normalizeQuery(item.query) === normalizeQuery(query) && brandKey(item.brand) === brandKey(brand)).at(-1);
+                const saved = history.filter(item => !knownIds.has(item.id) && normalizeQuery(item.query) === normalizeQuery(query) && brandKey(item.brand) === brandKey(brand) && item.provider === provider).at(-1);
                 if (saved?.status === 'running') trackRunningCheck(saved);
                 else if (saved) { pendingCheckContext = null; openSavedCheck(saved.id, true); }
                 else { pendingCheckContext = null; showCheckError(`Не удалось выполнить проверку: ${error.message}. Можно повторить запуск.`); }
@@ -757,7 +770,7 @@ function canonicalizeProviderResult(result, targetIdentity) {
     }
     const own = ordered.find(mention => mention.canonical_id === targetIdentity.canonicalId);
     const mentioned = hasCurrentAnalysis(result) ? Boolean(result?.mentioned) : Boolean(own || (!rawAnswer && result?.mentioned));
-    return { ...result, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, observed_name: result?.observed_name || targetIdentity.canonicalName, mentioned, position: own?.position || null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
+    return { ...result, canonical_id: targetIdentity.canonicalId, canonical_name: targetIdentity.canonicalName, observed_name: result?.observed_name || targetIdentity.canonicalName, mentioned, position: own?.position || null, ordered_mentions: ordered, competitors, mentioned_brands: competitors, cited: resultCitesIdentity(result, targetIdentity) };
 }
 function canonicalizeCheckResult(data, identity) {
     if (!data || typeof data !== 'object') return data;
@@ -770,9 +783,9 @@ function canonicalizeCheckResult(data, identity) {
 }
 function buildHistoryItem(data, brand, query, provider, record = {}) {
     const sources = (data.sources || []).map(source => ({ ...source }));
-    const cited = sources.some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(brand.toLowerCase()));
-    const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || identityFor(data.canonical_name || brand);
+    const cited = resultCitesIdentity(data, identity);
+    const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
     const normalizedBrand = identity?.canonicalName || normalizeBrandName(brand);
     const position = resultPosition(data);
     const storedError = record.error; const error = typeof storedError === 'string' ? storedError : Array.isArray(storedError) ? storedError.map(item => item?.error || item?.message || item).join('; ') : storedError?.error || storedError?.message || '';
@@ -790,15 +803,56 @@ function saveCheck(data, brand, query, provider) {
     setActiveBrand(saved.brand, false, false);
     return saved;
 }
+function requestedProvidersFor(item) {
+    if (item?.provider !== 'all') return item?.provider ? [item.provider] : [];
+    const stored = item.resultData?.requested_providers || item.resultData?.requestedProviders;
+    return Array.isArray(stored) && stored.length ? [...new Set(stored.filter(provider => CHECK_PROVIDERS.includes(provider)))] : CHECK_PROVIDERS;
+}
+function checkDetailRows(item) {
+    const results = item.providerResults.length ? item.providerResults : item.provider === 'all' ? [] : [item.resultData];
+    const rows = results.map(result => ({ ...result, error: '', provider: result.provider || item.provider }));
+    item.providerErrors.forEach(error => {
+        if (!rows.some(result => result.provider === error.provider)) rows.push({ provider: error.provider, model: PROVIDERS[error.provider] || error.provider, error: error.error || 'Модель не ответила', sources: [] });
+    });
+    return rows.sort((a, b) => requestedProvidersFor(item).indexOf(a.provider) - requestedProvidersFor(item).indexOf(b.provider));
+}
+function renderCheckDetails(item) {
+    const rows = checkDetailRows(item);
+    const status = item.status === 'partial' ? 'Частичный результат' : item.status === 'failed' ? 'Ошибка' : item.status === 'running' ? 'Выполняется' : 'Завершена';
+    const modelCards = rows.map(result => {
+        const providerName = PROVIDERS[result.provider] || result.model || result.provider || 'AI-модель';
+        if (result.error) return `<article class="check-detail-model check-detail-error"><div class="check-detail-model-head">${modelAvatarMarkup(result.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>Ответ недоступен</span></div></div><p>${escapeHtml(result.error)}</p></article>`;
+        const position = resultPosition(result);
+        const identity = identityFor(item.brand);
+        const cited = resultCitesIdentity(result, identity);
+        const sources = (result.sources || []).filter(source => source?.cited_in_answer !== false);
+        return `<article class="check-detail-model"><div class="check-detail-model-head">${modelAvatarMarkup(result.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${result.mentioned ? 'Бренд упомянут' : 'Бренд не упомянут'}${position.value ? ` · ${escapeHtml(positionText(position.value, position.kind))}` : ''}${cited ? ' · есть ссылка на сайт бренда' : ''}</span></div></div><div class="check-detail-answer">${escapeHtml(result.raw_answer || result.rawAnswer || 'Полный ответ модели не сохранён.')}</div>${sources.length ? `<div class="check-detail-sources"><strong>Ссылки в ответе</strong>${sources.map(source => `<a href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a>`).join('')}</div>` : ''}</article>`;
+    }).join('');
+    return `<div class="check-details-head"><div><p class="app-eyebrow">Сохранённая проверка</p><h2>${escapeHtml(item.query)}</h2><p>${escapeHtml(item.brand)} · ${escapeHtml(formatDateTime(item.createdAt))} · ${escapeHtml(status)}</p></div><button class="brief-close" type="button" data-check-details-close aria-label="Закрыть">×</button></div><div class="check-details-body"><div class="check-details-summary"><strong>${item.mentioned ? 'Бренд упомянут' : 'Бренд не упомянут'}</strong><span>${rows.filter(row => !row.error).length} из ${requestedProvidersFor(item).length || 1} моделей дали результат</span></div><div class="check-detail-models">${modelCards || '<div class="app-empty"><strong>Нет сохранённых ответов</strong><span>Для этой проверки доступен только общий статус.</span></div>'}</div></div><div class="check-details-actions"><button class="btn btn-ghost" type="button" data-check-details-close>Закрыть</button><button class="btn btn-ghost" type="button" data-open-check-result="${escapeHtml(item.id)}">Открыть общий результат</button><button class="btn btn-primary" type="button" data-repeat-check="${escapeHtml(item.id)}">Повторить проверку</button></div>`;
+}
+function openCheckDetails(id) {
+    const item = history.find(record => record.id === String(id)); if (!item) return;
+    $('#checkDetailsContent').innerHTML = renderCheckDetails(item);
+    const dialog = $('#checkDetailsDialog'); dialog.showModal(); bindAvatarFallbacks(); applyAccessGating();
+}
+async function repeatSavedCheck(id) {
+    const item = history.find(record => record.id === String(id)); if (!item || item.status === 'running') return;
+    $('#checkDetailsDialog').close(); selectView('prompts');
+    await runWorkspaceCheck(item.brand, item.query, item.provider, requestedProvidersFor(item));
+}
 function renderHistory() {
     const rows = historyForActiveBrand();
     $('#historyCount').textContent = `${rows.length} ${rows.length === 1 ? 'проверка' : 'проверок'}`;
-    $('#historyList').innerHTML = rows.length ? rows.slice().reverse().slice(0, 10).map(item => {
+    const visibleRows = rows.slice().reverse().slice(0, historyExpanded ? rows.length : 10);
+    $('#historyList').innerHTML = rows.length ? visibleRows.map(item => {
         const status = item.status === 'running' ? 'проверка выполняется' : item.status === 'failed' ? `ошибка: ${item.error === 'interrupted' ? 'проверка прервана' : item.error || 'проверка не выполнена'}` : `${item.status === 'partial' ? 'частичный результат · ' : ''}${item.mentioned ? 'бренд упомянут' : 'бренд не упомянут'}`;
-        return `<div class="app-history-row"><button class="history-open-check" type="button" data-open-check="${escapeHtml(item.id)}"><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? '' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${escapeHtml(status)}</span></button><div class="app-history-actions"><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span><button type="button" data-delete-check="${escapeHtml(item.id)}" aria-label="Удалить проверку" title="Удалить проверку"${item.status === 'running' ? ' disabled' : ''}><i class="fa-regular fa-trash-can"></i></button></div></div>`;
+        return `<div class="app-history-row"><button class="history-open-check" type="button" data-open-check="${escapeHtml(item.id)}"><strong>${escapeHtml(item.query)}</strong><span>${escapeHtml(item.brand)}${item.provider === 'all' ? ' · Все модели' : ` · ${escapeHtml(PROVIDERS[item.provider] || item.provider)}`} · ${escapeHtml(status)}</span></button><div class="app-history-actions"><span>${new Date(item.createdAt).toLocaleDateString('ru-RU')}</span><button type="button" data-check-details="${escapeHtml(item.id)}" aria-label="Посмотреть полный результат" title="Полный результат"><i class="fa-regular fa-eye"></i></button><button type="button" data-repeat-check="${escapeHtml(item.id)}" aria-label="Повторить проверку" title="Повторить проверку"${item.status === 'running' ? ' disabled' : ''}><i class="fa-solid fa-rotate-right"></i></button><button type="button" data-delete-check="${escapeHtml(item.id)}" aria-label="Удалить проверку" title="Удалить проверку"${item.status === 'running' ? ' disabled' : ''}><i class="fa-regular fa-trash-can"></i></button></div></div>`;
     }).join('') : '<div class="app-empty"><strong>Пока нет проверок</strong><span>Запустите первую проверку выше.</span></div>';
-    $$('[data-open-check]').forEach(button => button.addEventListener('click', () => openSavedCheck(button.dataset.openCheck)));
-    $$('[data-delete-check]').forEach(button => button.addEventListener('click', () => deleteCheck(button.dataset.deleteCheck)));
+    $$('#historyList [data-open-check]').forEach(button => button.addEventListener('click', () => openSavedCheck(button.dataset.openCheck)));
+    $$('#historyList [data-check-details]').forEach(button => button.addEventListener('click', () => openCheckDetails(button.dataset.checkDetails)));
+    $$('#historyList [data-repeat-check]').forEach(button => button.addEventListener('click', () => repeatSavedCheck(button.dataset.repeatCheck)));
+    $$('#historyList [data-delete-check]').forEach(button => button.addEventListener('click', () => deleteCheck(button.dataset.deleteCheck)));
+    const toggle = $('#historyToggle'); toggle.hidden = rows.length <= 10; toggle.textContent = historyExpanded ? 'Свернуть историю' : `Показать все · ${rows.length}`; toggle.setAttribute('aria-expanded', String(historyExpanded));
 }
 
 function normalizeQuery(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU'); }
@@ -829,7 +883,14 @@ function recommendations() {
         });
     }).filter(Boolean).sort((a, b) => b.count - a.count);
 }
-function snapshotCheck(item) { return item ? { id: item.id || null, createdAt: item.createdAt || Date.now(), mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || 'weighted', role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] } : null; }
+function snapshotResult(item) { return item ? { provider: item.provider || '', model: item.model || '', mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || (item.weighted_position ? 'weighted' : 'direct'), role: item.role || '' } : null; }
+function snapshotCheck(item) {
+    if (!item) return null;
+    const providerResults = item.providerResults || item.provider_results || item.resultData?.provider_results || [];
+    const snapshots = providerResults.map(snapshotResult).filter(Boolean);
+    const providers = snapshots.length ? snapshots.map(result => result.provider).filter(Boolean) : item.provider && item.provider !== 'all' ? [item.provider] : requestedProvidersFor(item);
+    return { id: item.id || null, createdAt: item.createdAt || Date.now(), provider: item.provider || '', providers: [...new Set(providers)], providerResults: snapshots, mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || 'weighted', role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] };
+}
 function growthTaskForBrand(task) { return brandKey(task.brand) === activeBrandKey; }
 function statusLabel(status) { return ({ planned: 'Запланировано', in_progress: 'В работе', ready_for_check: 'Готово к проверке', measured: 'Измерено' })[status] || status; }
 function workTypeLabel(type) { return ({ content: 'Контент', seo: 'SEO', pr: 'PR', technical: 'Техническая' })[type] || type; }
@@ -873,7 +934,9 @@ function renderResultCard(task) {
     const tone = task.verdict === 'improved' ? 'positive' : task.verdict === 'declined' ? 'negative' : 'neutral';
     const label = task.verdict === 'improved' ? 'Предварительно улучшилось' : task.verdict === 'declined' ? 'Предварительно ухудшилось' : 'Без изменений';
     const icon = tone === 'positive' ? 'fa-arrow-trend-up' : tone === 'negative' ? 'fa-arrow-trend-down' : 'fa-equals';
-    return `<article class="growth-card growth-result result-${tone}"><div class="growth-card-main"><div class="growth-result-head"><div><span class="growth-result-kicker">Результат контрольной проверки</span><div class="growth-result-verdict ${tone}"><i class="fa-solid ${icon}"></i><strong>${label}</strong></div></div><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До изменений</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div class="growth-after"><span>После изменений</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><aside class="growth-card-actions"><span class="growth-action-label">Подробнее</span><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть результат</button></aside></article>`;
+    const compared = task.comparison?.providers?.length ? `Сравнены одинаковые модели: ${task.comparison.providers.map(provider => PROVIDERS[provider] || provider).join(', ')}.` : 'Сравнение выполнено по одинаковому промпту и модели.';
+    const unavailable = task.comparison?.unavailable?.length ? ` Не ответили: ${task.comparison.unavailable.map(provider => PROVIDERS[provider] || provider).join(', ')}.` : '';
+    return `<article class="growth-card growth-result result-${tone}"><div class="growth-card-main"><div class="growth-result-head"><div><span class="growth-result-kicker">Результат контрольной проверки</span><div class="growth-result-verdict ${tone}"><i class="fa-solid ${icon}"></i><strong>${label}</strong></div></div><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-before-after"><div><span>До изменений</span><strong>${escapeHtml(checkSummary(task.baseline))}</strong><small>${task.baseline?.createdAt ? new Date(task.baseline.createdAt).toLocaleDateString('ru-RU') : 'Дата неизвестна'}</small></div><i class="fa-solid fa-arrow-right"></i><div class="growth-after"><span>После изменений</span><strong>${escapeHtml(checkSummary(task.postCheck))}</strong><small>${new Date(task.postCheck.createdAt).toLocaleDateString('ru-RU')}</small></div></div><p class="growth-disclaimer">${escapeHtml(compared + unavailable)} Один контрольный запуск показывает предварительную динамику и не доказывает причинность.</p></div><aside class="growth-card-actions"><span class="growth-action-label">Подробнее</span><button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть результат</button></aside></article>`;
 }
 function bindGrowthActions() {
     $$('[data-create-task]').forEach(button => button.addEventListener('click', () => openOpportunity(decodeURIComponent(button.dataset.createTask))));
@@ -983,7 +1046,8 @@ function dialogValues() { return { title: $('#growthTitle').value.trim(), workTy
 async function createTaskFromDialog() {
     const form = $('#growthTaskForm'); if (!form.reportValidity() || !activeRecommendation) return;
     const item = activeRecommendation; const latest = item.evidenceRows.at(-1); const now = Date.now();
-    const draft = { version: 1, opportunityId: item.id, brand_id: activeBrandIdentity()?.id || null, brand: item.brand, brandKey: brandKey(item.brand), query: item.query, provider: item.provider, model: item.model, problemType: item.type, ...dialogValues(), status: 'planned', createdAt: now, updatedAt: now, baseline: snapshotCheck(latest), evidence: { count: item.count, checkIds: item.evidenceRows.map(row => row.id), competitors: item.competitors, reasoning: latest.reasoning || '', quotes: item.evidenceRows.flatMap(row => row.quotes || []).slice(-5) }, postCheck: null, verdict: null };
+    const baseline = snapshotCheck(latest);
+    const draft = { version: 2, opportunityId: item.id, brand_id: activeBrandIdentity()?.id || null, brand: item.brand, brandKey: brandKey(item.brand), query: item.query, provider: item.provider, providers: baseline.providers, model: item.model, problemType: item.type, ...dialogValues(), status: 'planned', createdAt: now, updatedAt: now, baselineCheckId: latest.id || null, baseline, evidence: { count: item.count, checkIds: item.evidenceRows.map(row => row.id), competitors: item.competitors, reasoning: latest.reasoning || '', quotes: item.evidenceRows.flatMap(row => row.quotes || []).slice(-5) }, postCheck: null, verdict: null };
     const submit = form.querySelector('[type="submit"]') || document.querySelector('[form="growthTaskForm"][type="submit"]'); if (submit) submit.disabled = true;
     try {
         const data = await apiRequest('/growth-tasks', { method: 'POST', body: JSON.stringify(draft) });
@@ -1005,18 +1069,38 @@ async function deleteActiveTask() {
     catch (error) { const status = $('#growthBriefStatus'); status.textContent = `Не удалось удалить задачу: ${error.message}`; status.className = 'growth-form-status error'; }
 }
 function resultLevel(item) { if (!item?.mentioned) return 0; return isRecommendationRole(item.role) ? 2 : 1; }
-function compareChecks(before, after) { const beforeLevel = resultLevel(before); const afterLevel = resultLevel(after); if (afterLevel > beforeLevel) return 'improved'; if (afterLevel < beforeLevel) return 'declined'; const beforePosition = Number(before?.position) || null; const afterPosition = Number(after?.position) || null; const beforeKind = before?.positionKind || 'weighted'; const afterKind = after?.positionKind || 'weighted'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition < beforePosition) return 'improved'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition > beforePosition) return 'declined'; return 'unchanged'; }
+function compareSingleCheck(before, after) { const beforeLevel = resultLevel(before); const afterLevel = resultLevel(after); if (afterLevel > beforeLevel) return 'improved'; if (afterLevel < beforeLevel) return 'declined'; const beforePosition = Number(before?.position) || null; const afterPosition = Number(after?.position) || null; const beforeKind = before?.positionKind || 'weighted'; const afterKind = after?.positionKind || 'weighted'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition < beforePosition) return 'improved'; if (beforePosition && afterPosition && beforeKind === afterKind && afterPosition > beforePosition) return 'declined'; return 'unchanged'; }
+function compareChecks(before, after, requestedProviders = []) {
+    const beforeRows = new Map((before?.providerResults || []).map(item => [item.provider, item]));
+    const afterRows = new Map((after?.providerResults || []).map(item => [item.provider, item]));
+    const requested = requestedProviders.length ? requestedProviders : [...new Set([...beforeRows.keys(), ...afterRows.keys()])];
+    if (!beforeRows.size && !afterRows.size) return { verdict: compareSingleCheck(before, after), providers: before?.provider ? [before.provider] : [], unavailable: [] };
+    const unavailable = requested.filter(provider => !beforeRows.has(provider) || !afterRows.has(provider));
+    if (unavailable.length) throw new Error(`Нельзя сравнить результат: не ответили ${unavailable.map(provider => PROVIDERS[provider] || provider).join(', ')}`);
+    const changedModels = requested.filter(provider => beforeRows.get(provider)?.model && afterRows.get(provider)?.model && beforeRows.get(provider).model !== afterRows.get(provider).model);
+    if (changedModels.length) throw new Error(`Нельзя сравнить результат: изменилась версия ${changedModels.map(provider => PROVIDERS[provider] || provider).join(', ')}`);
+    const providers = requested;
+    const verdicts = providers.map(provider => compareSingleCheck(beforeRows.get(provider), afterRows.get(provider)));
+    const improved = verdicts.filter(value => value === 'improved').length;
+    const declined = verdicts.filter(value => value === 'declined').length;
+    return { verdict: improved > declined ? 'improved' : declined > improved ? 'declined' : 'unchanged', providers, unavailable: [] };
+}
 async function measureTask(id, button) {
     const task = growthTasks.find(item => item.id === id); if (!task || task.status !== 'ready_for_check' || !task.query) return;
     const original = button.textContent; button.disabled = true; button.textContent = 'Проверяем…';
     const errorTarget = $('#briefDialog').open ? $('#growthBriefStatus') : null;
     try {
         const identity = await ensureBrandIdentity(task.brand);
-        const raw = await apiRequest('/check', { method: 'POST', body: JSON.stringify({ brand: identity.canonicalName, brand_id: identity.id, query: task.query, provider: task.provider, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains }) });
+        const providers = Array.isArray(task.providers) && task.providers.length ? task.providers : task.provider === 'all' ? task.baseline?.providers?.length ? task.baseline.providers : CHECK_PROVIDERS : [task.provider];
+        const body = { brand: identity.canonicalName, brand_id: identity.id, query: task.query, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains };
+        if (task.provider === 'all') body.providers = providers; else body.provider = task.provider;
+        const raw = await apiRequest(task.provider === 'all' ? '/check-all' : '/check', { method: 'POST', body: JSON.stringify(body) });
+        if (!raw.check?.id || !['completed', 'partial'].includes(raw.check.status)) throw new Error('Сервер не подтвердил сохранение контрольной проверки');
         const data = canonicalizeCheckResult(raw, identity);
         const saved = saveCheck(data, task.brand, task.query, task.provider);
         await refreshAccess().catch(() => {});
-        const changes = { postCheck: snapshotCheck(saved), verdict: compareChecks(task.baseline, snapshotCheck(saved)), status: 'measured' };
+        const postCheck = snapshotCheck(saved); const comparison = compareChecks(task.baseline, postCheck, providers);
+        const changes = { postCheck, verdict: comparison.verdict, comparison, status: 'measured' };
         const taskData = await apiRequest(`/growth-tasks/${encodeURIComponent(task.id)}`, { method: 'PATCH', body: JSON.stringify(changes) }); Object.assign(task, normalizeGrowthTask(taskData.task || taskData));
         if ($('#briefDialog').open) $('#briefDialog').close(); showGrowthTab('results'); renderGrowth();
     } catch (error) {
@@ -1152,7 +1236,8 @@ function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].dest
 function percentage(value, total) { return total ? Math.round(value / total * 100) : 0; }
 function answerRowsFor(item) {
     const results = selectedResults(item);
-    return results.length ? results.map(result => ({ ...item, ...result, brand: item.brand, query: item.query, orderedMentions: result.ordered_mentions || result.orderedMentions || [], cited: (result.sources || []).some(source => `${source.title || ''} ${source.url || ''}`.toLowerCase().includes(item.brand.toLowerCase())), sentiments: (result.source_analysis || []).filter(analysis => analysis.mentions_brand).map(analysis => analysis.sentiment).filter(Boolean) })) : [item];
+    const identity = activeBrandIdentity() || identityFor(item.brand);
+    return results.length ? results.map(result => ({ ...item, ...result, brand: item.brand, query: item.query, orderedMentions: result.ordered_mentions || result.orderedMentions || [], cited: resultCitesIdentity(result, identity), sentiments: (result.source_analysis || []).filter(analysis => analysis.mentions_brand).map(analysis => analysis.sentiment).filter(Boolean) })) : [{ ...item, cited: resultCitesIdentity(item, identity) }];
 }
 function orderedMentionsFor(item) {
     const supplied = Array.isArray(item.orderedMentions) ? item.orderedMentions : Array.isArray(item.ordered_mentions) ? item.ordered_mentions : [];
@@ -1467,6 +1552,14 @@ $('#resultAnswers').addEventListener('click', () => selectView('answers', select
 $('#resultAnalytics').addEventListener('click', () => selectView('home', selectedCheckId));
 $('#resultReport').addEventListener('click', () => selectView('reports', selectedCheckId));
 $('#reportBackToCheck').addEventListener('click', () => openSavedCheck(reportCheckId));
+$('#historyToggle').addEventListener('click', () => { historyExpanded = !historyExpanded; renderHistory(); });
+$('#checkDetailsDialog').addEventListener('click', event => {
+    if (event.target.closest('[data-check-details-close]')) $('#checkDetailsDialog').close();
+    const resultButton = event.target.closest('[data-open-check-result]');
+    if (resultButton) { $('#checkDetailsDialog').close(); openSavedCheck(resultButton.dataset.openCheckResult); }
+    const repeatButton = event.target.closest('[data-repeat-check]');
+    if (repeatButton && !repeatButton.disabled) repeatSavedCheck(repeatButton.dataset.repeatCheck);
+});
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden || !dashboardReady) return;
     await refreshAccess().catch(() => {});

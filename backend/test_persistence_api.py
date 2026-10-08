@@ -47,6 +47,22 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[1], 7)
         self.assertEqual(finish.call_args.args[2], "completed")
 
+    def test_check_all_runs_and_persists_only_requested_provider_set(self):
+        started = {"id": 43, "brand_id": 9, "status": "running", "created_at": "now", "completed_at": None}
+
+        def finish(_user_id, _check_id, status, result=None, error=None):
+            return {**started, "status": status, "completed_at": "later", "result": result, "error": error}
+
+        def run(request, _user_id, _use_cache):
+            return {"provider": request.provider, "model": request.provider, "mentioned": False, "sources": [], "ordered_mentions": []}
+
+        with patch.object(main, "start_check", return_value=started), patch.object(main, "is_perplexity_configured", return_value=True), patch.object(main, "_run_check", side_effect=run), patch.object(main, "finish_check", side_effect=finish):
+            response = self.client.post("/api/check-all", json={"brand": "Vidno", "query": "Лучший сервис?", "providers": ["gigachat", "openai"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["requested_providers"], ["gigachat", "openai"])
+        self.assertEqual({item["provider"] for item in response.json()["provider_results"]}, {"gigachat", "openai"})
+        self.assertEqual(response.json()["check"]["id"], 43)
+
     def test_failed_check_keeps_check_id_and_error(self):
         started = {"id": 42, "brand_id": 9, "status": "running", "created_at": "now", "completed_at": None}
         finished = {**started, "status": "failed", "completed_at": "later"}

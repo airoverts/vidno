@@ -28,6 +28,7 @@ class OpenAIClientTests(unittest.TestCase):
                 "action": {"sources": [
                     {"url": "https://example.com/a", "title": "Источник A"},
                     {"url": "https://example.com/a", "title": "Дубликат"},
+                    {"url": "https://example.com/search-only", "title": "Только поиск"},
                 ]},
             },
             {
@@ -45,7 +46,8 @@ class OpenAIClientTests(unittest.TestCase):
         with patch.object(openai_client, "_post_with_retry", return_value=mocked_response(payload)) as post:
             answer, sources = openai_client._call_with_web_search("запрос")
         self.assertEqual(answer, "Естественный ответ")
-        self.assertEqual([source["url"] for source in sources], ["https://example.com/a", "https://example.com/b"])
+        self.assertEqual([source["url"] for source in sources], ["https://example.com/a", "https://example.com/search-only", "https://example.com/b"])
+        self.assertEqual([source["cited_in_answer"] for source in sources], [True, False, True])
         sent = post.call_args.args[0]
         self.assertEqual(sent["tools"], [{"type": "web_search"}])
         self.assertEqual(sent["tool_choice"], "required")

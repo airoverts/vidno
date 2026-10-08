@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import Body, Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +86,47 @@ PROVIDERS = {
         "cache_identity": get_perplexity_cache_identity,
     },
 }
+CHECK_ALL_PROVIDERS = ("gigachat", "yandex", "openai", "gemini", "perplexity")
+
+
+def _normalized_hostname(value: str, require_http: bool = False) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw if "://" in raw else f"//{raw}")
+        if require_http and parsed.scheme.casefold() not in {"http", "https"}:
+            return ""
+        hostname = str(parsed.hostname or "").casefold().rstrip(".")
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        return hostname.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return ""
+
+
+def _apply_brand_citations(result: dict, domains: list[str]) -> dict:
+    official_domains = {
+        hostname
+        for value in domains
+        if (hostname := _normalized_hostname(value))
+    }
+    citation_urls = []
+    seen_urls = set()
+    for source in result.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source["cited_in_answer"] = source.get("cited_in_answer") is True
+        hostname = _normalized_hostname(source.get("url", ""), require_http=True)
+        is_brand_source = bool(hostname and any(hostname == domain or hostname.endswith(f".{domain}") for domain in official_domains))
+        source["is_brand_source"] = is_brand_source
+        url = source.get("url")
+        if source["cited_in_answer"] and is_brand_source and isinstance(url, str) and url not in seen_urls:
+            seen_urls.add(url)
+            citation_urls.append(url)
+    result["brand_citation_urls"] = citation_urls
+    result["brand_cited"] = bool(citation_urls)
+    return result
 
 
 def _enforce_rate_limit(client_host: str):
@@ -388,6 +430,7 @@ class CheckAllRequest(BaseModel):
     canonical_name: str = Field(default="", max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=50)
     domains: list[str] = Field(default_factory=list, max_length=50)
+    providers: list[Literal["gigachat", "yandex", "openai", "gemini", "perplexity"]] = Field(default_factory=lambda: list(CHECK_ALL_PROVIDERS), min_length=1, max_length=5)
 
 
 class BriefRequest(BaseModel):
@@ -536,11 +579,13 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
         record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), "all", req.aliases, req.domains)
         if not is_perplexity_configured():
             return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен"}))
+        requested_providers = tuple(dict.fromkeys(req.providers))
         provider_results = []
         errors = []
         analysis_errors = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(_run_check, CheckRequest(**req.model_dump(), provider=provider), user["id"], False): provider for provider in ("gigachat", "yandex", "openai", "gemini", "perplexity")}
+        with ThreadPoolExecutor(max_workers=len(requested_providers)) as executor:
+            request_data = req.model_dump(exclude={"providers"})
+            futures = {executor.submit(_run_check, CheckRequest(**request_data, provider=provider), user["id"], False): provider for provider in requested_providers}
             for future in as_completed(futures):
                 provider = futures[future]
                 try:
@@ -560,7 +605,7 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
             return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider_errors": errors}))
         if not provider_results:
             return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors}))
-        return _complete_check_response(user["id"], record["id"], _aggregate_results(provider_results, errors))
+        return _complete_check_response(user["id"], record["id"], _aggregate_results(provider_results, errors, requested_providers))
     except Exception as error:
         if record:
             finish_check(user["id"], record["id"], "failed", error={"error": type(error).__name__})
@@ -569,7 +614,7 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
         _check_semaphore.release()
 
 
-def _aggregate_results(results, errors):
+def _aggregate_results(results, errors, requested_providers=None):
     mentioned_results = [item for item in results if item.get("mentioned")]
     positions = [item.get("position") or item.get("weighted_position") for item in mentioned_results]
     positions = [float(value) for value in positions if value]
@@ -596,8 +641,19 @@ def _aggregate_results(results, errors):
     for item in results:
         for source in item.get("sources", []):
             key = source.get("url") or source.get("title")
-            if key and key not in sources_by_url:
-                sources_by_url[key] = source
+            if not key:
+                continue
+            if key not in sources_by_url:
+                sources_by_url[key] = dict(source)
+                continue
+            sources_by_url[key]["cited_in_answer"] = sources_by_url[key].get("cited_in_answer") is True or source.get("cited_in_answer") is True
+            sources_by_url[key]["is_brand_source"] = sources_by_url[key].get("is_brand_source") is True or source.get("is_brand_source") is True
+    brand_citation_urls = list(dict.fromkeys(
+        url
+        for item in results
+        for url in item.get("brand_citation_urls", [])
+        if isinstance(url, str) and url
+    ))
     if len(mentioned_results) == len(results):
         reasoning = f"Бренд упомянут во всех полученных ответах ({len(mentioned_results)} из {len(results)})."
     elif mentioned_results:
@@ -617,9 +673,12 @@ def _aggregate_results(results, errors):
         "mentioned_brands": competitors,
         "ordered_mentions": ordered_mentions,
         "sources": list(sources_by_url.values()),
+        "brand_cited": bool(brand_citation_urls),
+        "brand_citation_urls": brand_citation_urls,
         "source_analysis": [analysis for item in results for analysis in item.get("source_analysis", [])],
         "provider_results": results,
         "provider_errors": errors,
+        "requested_providers": list(requested_providers or [item.get("provider") for item in results if item.get("provider")]),
         "canonical_id": next((item.get("canonical_id") for item in results if item.get("canonical_id")), None),
         "canonical_name": next((item.get("canonical_name") for item in results if item.get("canonical_name")), None),
         "observed_name": next((item.get("observed_name") for item in results if item.get("observed_name")), None),
@@ -671,7 +730,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
     identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
-    cache_version = f"{get_analysis_cache_identity()}|canonical-brands-v1:{identity_cache}"
+    cache_version = f"{get_analysis_cache_identity()}|canonical-brands-v1|brand-citations-v1:{identity_cache}"
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
@@ -764,6 +823,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
                 "brand_check_status": s.get("brand_check_status", "unavailable"),
                 "brand_check_basis": s.get("brand_check_basis", "unavailable"),
                 "brand_matches": s.get("brand_matches", []),
+                "cited_in_answer": False,
             }
             for s in sources
         ]
@@ -784,6 +844,8 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
                     if status != "unavailable":
                         analysis["mentions_brand"] = status == "found"
             result["sources_count"] = sum(item.get("mentions_brand") is True for item in result["source_analysis"])
+
+    _apply_brand_citations(result, domains)
 
     if not has_custom_context and use_result_cache and user_id is not None:
         set_result_cache(user_id, brand, query, result, provider, cache_identity)

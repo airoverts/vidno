@@ -54,18 +54,27 @@ def _grounding_evidence(response) -> tuple[list[str], list[dict]]:
         value = str(query or "").strip()
         if value and value not in queries:
             queries.append(value)
+    chunks = getattr(metadata, "grounding_chunks", None) or []
+    cited_indexes = set()
+    for support in getattr(metadata, "grounding_supports", None) or []:
+        for index in getattr(support, "grounding_chunk_indices", None) or []:
+            if isinstance(index, int) and 0 <= index < len(chunks):
+                cited_indexes.add(index)
     sources = {}
-    for chunk in getattr(metadata, "grounding_chunks", None) or []:
+    for index, chunk in enumerate(chunks):
         web = getattr(chunk, "web", None)
         url = str(getattr(web, "uri", "") or "").strip()
         if not url.startswith(("http://", "https://")):
             continue
-        sources.setdefault(url, {
+        source = sources.setdefault(url, {
             "url": url,
             "title": str(getattr(web, "title", "") or url),
             "authority_score": 5,
             "authority_label": "не определена",
+            "cited_in_answer": False,
         })
+        if index in cited_indexes:
+            source["cited_in_answer"] = True
     return queries, list(sources.values())
 
 

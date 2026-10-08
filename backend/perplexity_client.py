@@ -99,18 +99,19 @@ def _web_evidence(data: dict) -> tuple[bool, list[dict], list[str]]:
                 continue
             url = result.get("url")
             if isinstance(url, str) and url.startswith(("http://", "https://")):
-                sources.setdefault(url, {"url": url, "title": str(result.get("title") or url), "authority_score": 5, "authority_label": "не определена"})
+                sources.setdefault(url, {"url": url, "title": str(result.get("title") or url), "authority_score": 5, "authority_label": "не определена", "cited_in_answer": False})
         if item.get("type") != "message":
             continue
         for content in item.get("content") or []:
             if not isinstance(content, dict):
                 continue
             for annotation in content.get("annotations") or []:
-                if not isinstance(annotation, dict):
+                if not isinstance(annotation, dict) or annotation.get("type") != "url_citation":
                     continue
                 url = annotation.get("url")
                 if isinstance(url, str) and url.startswith(("http://", "https://")):
-                    sources.setdefault(url, {"url": url, "title": str(annotation.get("title") or url), "authority_score": 5, "authority_label": "не определена"})
+                    source = sources.setdefault(url, {"url": url, "title": str(annotation.get("title") or url), "authority_score": 5, "authority_label": "не определена", "cited_in_answer": True})
+                    source["cited_in_answer"] = True
     return bool(queries or sources), list(sources.values()), queries
 
 
