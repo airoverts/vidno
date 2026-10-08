@@ -50,6 +50,7 @@ function state(overrides = {}) {
             capabilities: { workspace_write: true, run_checks: true, create_brands: true, manage_existing_brands: true },
         },
         brands: [], checks: [], growthTasks: [], requests: [], checkMode: 'completed', checkReads: 0, nextCheckId: 501,
+        tariffs: [{ plan: 'basic', checks_limit: 3, brands_limit: 1 }, { plan: 'pro', checks_limit: 30, brands_limit: 3 }, { plan: 'business', checks_limit: 100, brands_limit: 10 }], voucherBatches: [],
         ...overrides,
     };
 }
@@ -89,7 +90,59 @@ async function fixture(server = state(), width = 1440, stored = {}) {
                 if (server.accountFailure) return json({ detail: 'account unavailable' }, 503);
                 return json({ account: server.account });
             }
-            if (endpoint === '/access') return json({ access: server.access });
+            if (endpoint === '/access') {
+                if (server.accessFailure) return json({ detail: 'access unavailable' }, 503);
+                return json({ access: server.access });
+            }
+            if (endpoint === '/vouchers/redeem') {
+                if (server.voucherMode === 'invalid') return json({ detail: { code: 'voucher_invalid', message: 'invalid' } }, 400);
+                if (!server.access.can_redeem_voucher) return json({ detail: { code: 'voucher_not_allowed', message: 'not allowed' } }, 403);
+                Object.assign(server.access, { status: 'active', administrative_status: 'active', plan: 'basic', expires_at: '2026-11-07T10:00:00Z', can_redeem_voucher: false, voucher_redeemed: true, checks: { limit: 3, used: 0, remaining: 3 }, brands: { limit: 1, used: server.brands.length, remaining: Math.max(0, 1 - server.brands.length) } });
+                for (const key of Object.keys(server.access.capabilities)) server.access.capabilities[key] = true;
+                if (server.voucherMode?.startsWith('drop')) {
+                    if (server.voucherMode === 'drop-unreadable') server.accessFailure = true;
+                    return route.abort('failed');
+                }
+                return json({ access: server.access });
+            }
+            if (endpoint === '/admin/tariffs') {
+                if (server.tariffFailure) return json({ detail: 'tariffs unavailable' }, 503);
+                return json({ items: server.tariffs });
+            }
+            if (/^\/admin\/tariffs\//.test(endpoint) && method === 'PATCH') {
+                const tariff = server.tariffs.find(item => item.plan === endpoint.split('/').at(-1));
+                if (server.tariffSaveDelay) await new Promise(resolve => setTimeout(resolve, server.tariffSaveDelay));
+                Object.assign(tariff, body); return json(tariff);
+            }
+            if (endpoint.startsWith('/admin/clients') && method === 'GET') {
+                if (endpoint === '/admin/clients') { const items = Object.values(server.clientDetails || {}); return json({ items, total: items.length, page: 1, page_size: 20 }); }
+                const id = endpoint.split('/').at(-1);
+                if (server.clientReadDelays?.[id]) await new Promise(resolve => setTimeout(resolve, server.clientReadDelays[id]));
+                if (server.clientDetails?.[id]) return json(server.clientDetails[id]);
+                return json({ account: { ...server.account, id: 2, role: 'client', name: 'Получатель' }, access: server.access });
+            }
+            if (/^\/admin\/clients\/\d+\/access$/.test(endpoint) && method === 'PATCH') {
+                const id = endpoint.split('/').at(-2); const detail = server.clientDetails[id];
+                if (server.clientSaveDelay) await new Promise(resolve => setTimeout(resolve, server.clientSaveDelay));
+                return json({ account: detail.account, access: { ...detail.access, plan: body.plan } });
+            }
+            if (endpoint === '/admin/voucher-batches' && method === 'POST') {
+                const tariff = server.tariffs.find(item => item.plan === body.plan);
+                const batch = { id: server.voucherBatches.length + 1, ...tariff, ...body, created_at: stamp, available_count: body.quantity, redeemed_count: 0, revoked_count: 0 };
+                const vouchers = Array.from({ length: body.quantity }, (_, index) => ({ id: batch.id * 100 + index, batch_id: batch.id, code_mask: `••••-0000${index}`, status: 'available', code: `AAAAA-BBBBB-CCCCC-DDDDD-EEEEE-FFFFF-00000-0000${index}` }));
+                server.voucherBatches.unshift({ batch, vouchers }); return json({ batch, vouchers }, 201);
+            }
+            if (endpoint === '/admin/voucher-batches') return json({ items: server.voucherBatches.map(item => item.batch) });
+            if (/^\/admin\/voucher-batches\/\d+$/.test(endpoint)) {
+                const item = server.voucherBatches.find(item => String(item.batch.id) === endpoint.split('/').at(-1));
+                return item ? json({ batch: item.batch, vouchers: item.vouchers.map(({ code, ...voucher }) => voucher) }) : json({ detail: 'not found' }, 404);
+            }
+            if (/^\/admin\/vouchers\/\d+\/revoke$/.test(endpoint)) {
+                const id = Number(endpoint.split('/').at(-2));
+                const item = server.voucherBatches.find(item => item.vouchers.some(voucher => voucher.id === id));
+                const voucher = item.vouchers.find(voucher => voucher.id === id); voucher.status = 'revoked'; voucher.revoked_at = stamp;
+                item.batch.available_count--; item.batch.revoked_count++; return json({ voucher });
+            }
             if (endpoint === '/brands' && method === 'GET') {
                 if (server.brandReadFailure) return json({ detail: 'brands unavailable' }, 503);
                 return json({ brands: server.brands });
@@ -183,6 +236,219 @@ async function run(page, query = 'Какой сервис выбрать?') {
     await page.locator('#onboardingRunCheck').click();
 }
 function count(server, endpoint, method = 'POST') { return server.requests.filter(item => item.endpoint === endpoint && item.method === method).length; }
+
+function pendingVoucherState(overrides = {}) {
+    const server = state(overrides);
+    server.access = { ...server.access, status: 'pending', administrative_status: 'pending', plan: 'custom', can_redeem_voucher: true, voucher_redeemed: false, capabilities: { workspace_write: false, run_checks: false, create_brands: false, manage_existing_brands: false } };
+    return server;
+}
+
+for (const width of [1440, 768, 375]) {
+    test(`voucher activation is inline, fits ${width}px and disappears after activation and reload`, async () => {
+        const f = await fixture(pendingVoucherState(), width);
+        try {
+            await visible(f.page, '#voucherActivationForm');
+            assert.equal(await f.page.locator('#onboardingVoucherSlot #voucherActivationForm').count(), 1);
+            assert.equal(await f.page.locator('#voucherCode').count(), 1);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            assert.equal(await f.page.locator('#onboardingContinue').isDisabled(), true);
+            const directory = path.join(os.tmpdir(), 'vidno-voucher-qa'); await fs.mkdir(directory, { recursive: true });
+            await f.page.screenshot({ path: path.join(directory, `activation-${width}.png`), fullPage: true });
+            await f.page.locator('#onboardingBrand').fill('Acme');
+            await f.page.locator('#voucherCode').fill('FAKE-TEST-ONLY-VOUCHER');
+            await f.page.locator('#voucherActivate').click();
+            await hidden(f.page, '#voucherActivationForm'); await enabled(f.page, '#onboardingContinue');
+            assert.equal(await f.page.locator('#onboardingBrand').inputValue(), 'Acme');
+            assert.equal(await f.page.locator('#onboardingBrand').evaluate(element => element === document.activeElement), true);
+            assert.match(await f.page.locator('#voucherActivationStatus').textContent(), /Basic/);
+            assert.equal(count(f.server, '/vouchers/redeem'), 1);
+            assert.equal(await f.page.locator('#voucherCode').inputValue(), '');
+            await f.page.reload(); await hidden(f.page, '#dashboardLoadState');
+            assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), false);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+test('invalid voucher keeps input and error, retry activates without submitting a brand', async () => {
+    const server = pendingVoucherState({ voucherMode: 'invalid' }); const f = await fixture(server, 375);
+    try {
+        await visible(f.page, '#voucherActivationForm'); await f.page.locator('#voucherCode').fill('WRONG-TEST-CODE');
+        await f.page.locator('#voucherActivate').click();
+        await f.page.waitForFunction(() => document.querySelector('#voucherActivationStatus').textContent.includes('Код неверный'));
+        assert.equal(await f.page.locator('#voucherCode').inputValue(), 'WRONG-TEST-CODE');
+        assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), true);
+        server.voucherMode = ''; await f.page.locator('#voucherActivate').click(); await hidden(f.page, '#voucherActivationForm');
+        assert.equal(count(server, '/brands'), 0); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('lost successful voucher response recovers access without submitting code twice', async () => {
+    const server = pendingVoucherState({ voucherMode: 'drop' }); const f = await fixture(server);
+    try {
+        await visible(f.page, '#voucherActivationForm'); await f.page.locator('#voucherCode').fill('FAKE-TEST-ONLY-VOUCHER');
+        await f.page.locator('#voucherActivate').click(); await hidden(f.page, '#voucherActivationForm');
+        await enabled(f.page, '#onboardingContinue');
+        assert.match(await f.page.locator('#voucherActivationStatus').textContent(), /Доступ активирован/);
+        assert.equal(count(server, '/vouchers/redeem'), 1); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('unreadable voucher recovery locks code until access can be checked', async () => {
+    const server = pendingVoucherState({ voucherMode: 'drop-unreadable' }); const f = await fixture(server, 375);
+    try {
+        await visible(f.page, '#voucherActivationForm'); await f.page.locator('#voucherCode').fill('FAKE-TEST-ONLY-VOUCHER');
+        await f.page.locator('#voucherActivate').click(); await visible(f.page, '#voucherRefreshAccess');
+        assert.equal(await f.page.locator('#voucherActivate').isDisabled(), true);
+        assert.equal(await f.page.locator('#voucherCode').evaluate(element => element.readOnly), true);
+        server.accessFailure = false; await f.page.locator('#voucherRefreshAccess').click();
+        await hidden(f.page, '#voucherActivationForm'); assert.equal(count(server, '/vouchers/redeem'), 1);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('legacy pending account redeems in access settings and does not store code locally', async () => {
+    const server = pendingVoucherState({ account: { id: 1, name: 'Клиент', email: 'legacy@example.test', role: 'client', onboarding_completed_at: stamp } });
+    const f = await fixture(server, 375);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click();
+        await f.page.locator('#accountMenu [data-settings-tab="access"]').click(); await visible(f.page, '#voucherActivationForm');
+        assert.equal(await f.page.locator('#accountVoucherSlot #voucherActivationForm').count(), 1);
+        await f.page.locator('#voucherCode').fill('FAKE-TEST-ONLY-VOUCHER'); await f.page.locator('#voucherActivate').click();
+        await hidden(f.page, '#voucherActivationForm'); assert.equal(await f.page.locator('#accountPlan').textContent(), 'Basic');
+        assert.equal(await f.page.evaluate(() => JSON.stringify({ ...localStorage }).includes('FAKE-TEST-ONLY-VOUCHER')), false);
+        server.access.status = 'expired'; await f.page.reload(); await hidden(f.page, '#dashboardLoadState');
+        assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), false); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('manual first activation permanently removes voucher field', async () => {
+    const server = pendingVoucherState(); const f = await fixture(server);
+    try {
+        await visible(f.page, '#voucherActivationForm');
+        server.access.status = 'active'; server.access.can_redeem_voucher = false;
+        for (const key of Object.keys(server.access.capabilities)) server.access.capabilities[key] = true;
+        await f.page.locator('#onboardingRefreshAccess').click(); await hidden(f.page, '#voucherActivationForm');
+        server.access.status = 'pending'; await f.page.reload(); await hidden(f.page, '#dashboardLoadState');
+        assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), false); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+for (const width of [1440, 375]) {
+    test(`admin edits tariff, issues batch and revokes a voucher at ${width}px`, async () => {
+        const server = state({ account: { id: 1, name: 'Администратор', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp } });
+        const f = await fixture(server, width);
+        try {
+            await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click();
+            await f.page.locator('#adminMenuItem').click(); await f.page.locator('#adminTabTariffs').click();
+            await visible(f.page, '[data-tariff="basic"]');
+            await f.page.locator('[data-tariff="basic"] [name="checks_limit"]').fill('5');
+            await f.page.locator('[data-tariff="basic"] [type="submit"]').click();
+            await f.page.waitForFunction(() => document.querySelector('[data-tariff="basic"] [role="status"]').textContent.includes('Сохранено'));
+            assert.equal(server.requests.find(item => item.endpoint === '/admin/tariffs/basic' && item.method === 'PATCH').body.checks_limit, 5);
+            await f.page.locator('#adminTabVouchers').click(); await enabled(f.page, '#voucherBatchCreate');
+            assert.match(await f.page.locator('#voucherBatchSummary').textContent(), /5 проверок/);
+            await f.page.locator('#voucherBatchQuantity').fill('2'); await f.page.locator('#voucherBatchCreate').click();
+            await visible(f.page, '#voucherIssued'); await f.page.locator('[data-revoke-voucher]').first().waitFor({ state: 'visible' });
+            await enabled(f.page, '#voucherBatchCreate');
+            assert.equal((await f.page.locator('#voucherIssuedCodes').inputValue()).split('\n').length, 2);
+            assert.equal(await f.page.locator('#voucherBatchDetail').textContent().then(text => text.includes('AAAAA-BBBBB')), false);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            const directory = path.join(os.tmpdir(), 'vidno-voucher-qa'); await fs.mkdir(directory, { recursive: true });
+            await f.page.screenshot({ path: path.join(directory, `admin-${width}.png`), fullPage: true });
+            f.page.once('dialog', dialog => dialog.accept()); await f.page.locator('[data-revoke-voucher]').first().click();
+            await f.page.waitForFunction(() => document.querySelector('#voucherBatchDetail').textContent.includes('Отозван'));
+            assert.equal(count(server, '/admin/voucher-batches'), 1);
+            await f.page.reload(); await hidden(f.page, '#dashboardLoadState');
+            assert.equal(await f.page.locator('#voucherIssuedCodes').inputValue(), ''); assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+test('admin cannot issue batch while tariff settings are unavailable and can recover', async () => {
+    const server = state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, tariffFailure: true });
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await f.page.locator('#adminTabVouchers').click();
+        assert.equal(await f.page.locator('#voucherBatchCreate').isDisabled(), true);
+        await f.page.locator('#adminTabTariffs').click(); await visible(f.page, '#adminTariffRetry');
+        server.tariffFailure = false; await f.page.locator('#adminTariffRetry').click(); await visible(f.page, '[data-tariff="basic"]');
+        await f.page.locator('#adminTabVouchers').click(); await enabled(f.page, '#voucherBatchCreate');
+        assert.equal(count(server, '/admin/voucher-batches'), 0); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('pending administrator can manage vouchers without completing client onboarding', async () => {
+    const server = pendingVoucherState({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: null } });
+    server.access.can_redeem_voucher = false;
+    const f = await fixture(server, 375);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await hidden(f.page, '#onboarding');
+        assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), false);
+        await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await f.page.locator('#adminTabVouchers').click(); await enabled(f.page, '#voucherBatchCreate');
+        assert.equal(count(server, '/brands'), 0); assert.equal(count(server, '/check-all'), 0); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+function adminClientRaceState(overrides = {}) {
+    const server = state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, ...overrides });
+    server.clientDetails = {
+        2: { account: { id: 2, name: 'Клиент A', email: 'a@example.test', role: 'client' }, access: { ...server.access, plan: 'basic', checks: { limit: 5, used: 0, remaining: 5 } } },
+        3: { account: { id: 3, name: 'Клиент B', email: 'b@example.test', role: 'client' }, access: { ...server.access, plan: 'pro', checks: { limit: 30, used: 0, remaining: 30 } } },
+    };
+    return server;
+}
+
+test('late client profile does not overwrite another client or save limits to wrong recipient', async () => {
+    const server = adminClientRaceState({ clientReadDelays: { 2: 350 } }); const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await visible(f.page, '[data-admin-client="2"]');
+        const late = f.page.waitForResponse(response => response.url().endsWith('/admin/clients/2'));
+        await f.page.locator('[data-admin-client="2"]').click(); await f.page.locator('[data-admin-client="3"]').click();
+        await f.page.waitForFunction(() => document.querySelector('#adminClientEditor h2')?.textContent === 'Клиент B');
+        await late;
+        assert.equal(await f.page.locator('#adminClientEditor h2').textContent(), 'Клиент B');
+        assert.equal(await f.page.locator('#adminChecksLimit').inputValue(), '30');
+        await f.page.locator('#adminAccessForm [type="submit"]').click();
+        await f.page.waitForFunction(() => document.querySelector('#adminAccessStatusMessage')?.textContent.includes('сохранены'));
+        const saved = server.requests.find(item => item.endpoint === '/admin/clients/3/access' && item.method === 'PATCH');
+        assert.equal(saved.body.checks_limit, 30); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('late client save response does not replace currently selected client', async () => {
+    const server = adminClientRaceState({ clientSaveDelay: 350 }); const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await visible(f.page, '[data-admin-client="2"]'); await f.page.locator('[data-admin-client="2"]').click();
+        await visible(f.page, '#adminAccessForm');
+        const late = f.page.waitForResponse(response => response.url().endsWith('/admin/clients/2/access'));
+        await f.page.locator('#adminAccessForm [type="submit"]').click(); await f.page.locator('[data-admin-client="3"]').click();
+        await f.page.waitForFunction(() => document.querySelector('#adminClientEditor h2')?.textContent === 'Клиент B');
+        await late;
+        assert.equal(await f.page.locator('#adminClientEditor h2').textContent(), 'Клиент B');
+        assert.equal(await f.page.locator('#adminChecksLimit').inputValue(), '30'); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('voucher batch waits for pending tariff save and uses updated conditions', async () => {
+    const server = state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, tariffSaveDelay: 350 });
+    const f = await fixture(server);
+    try {
+        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await f.page.locator('#adminTabTariffs').click(); await visible(f.page, '[data-tariff="basic"]');
+        await f.page.locator('[data-tariff="basic"] [name="checks_limit"]').fill('9');
+        await f.page.locator('[data-tariff="basic"] [type="submit"]').click(); await f.page.locator('#adminTabVouchers').click();
+        assert.equal(await f.page.locator('#voucherBatchCreate').isDisabled(), true);
+        await enabled(f.page, '#voucherBatchCreate'); assert.match(await f.page.locator('#voucherBatchSummary').textContent(), /9 проверок/);
+        await f.page.locator('#voucherBatchQuantity').fill('1'); await f.page.locator('#voucherBatchCreate').click();
+        await visible(f.page, '#voucherIssued'); assert.equal(server.voucherBatches[0].batch.checks_limit, 9);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
 
 for (const width of [1440, 768, 375]) {
     test(`new startup fits ${width}px and exposes accessible company form`, async () => {

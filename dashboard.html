@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <link rel="stylesheet" href="css/style.css?v=20261008-mvp-core">
+    <link rel="stylesheet" href="css/style.css?v=20261009-reports">
     <script src="js/metrika.js?v=20260928-1" data-webvisor="false" data-cookie-policy="legal/cookies.html"></script>
 </head>
 <body class="app-body auth-pending">
@@ -25,6 +25,17 @@
                 <ol class="onboarding-steps" aria-label="Настройка проекта"><li id="onboardingCompanyStep" aria-current="step"><span>1</span>Компания</li><li id="onboardingCheckStep"><span>2</span>Первая проверка</li></ol>
                 <h1 id="onboardingTitle" tabindex="-1">Добавьте вашу компанию</h1>
                 <p class="onboarding-intro" id="onboardingDescription">Начните с одного бренда. Мы проверим, появляется ли он в рекомендациях AI.</p>
+                <div id="onboardingVoucherSlot">
+                    <div class="voucher-activation" id="voucherActivation" hidden>
+                        <form class="account-form ym-hide-content" id="voucherActivationForm" autocomplete="off">
+                            <label for="voucherCode">Код ваучера<input id="voucherCode" name="code" maxlength="128" required autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Введите полученный код" aria-describedby="voucherActivationHelp voucherActivationStatus"></label>
+                            <p id="voucherActivationHelp" class="voucher-help">Ваучер активирует ваш тариф. Каждый код можно использовать один раз.</p>
+                            <button class="btn btn-primary btn-sm" id="voucherActivate" type="submit">Активировать</button>
+                        </form>
+                        <p class="account-form-status" id="voucherActivationStatus" role="status"></p>
+                        <button class="app-text-action" id="voucherRefreshAccess" type="button" hidden>Проверить активацию</button>
+                    </div>
+                </div>
                 <div class="onboarding-notice" id="onboardingAccessNotice" role="status" hidden></div>
                 <button class="app-text-action" id="onboardingRefreshAccess" type="button" hidden>Проверить доступ</button>
                 <form class="onboarding-form ym-hide-content" id="onboardingCompanyForm">
@@ -103,6 +114,11 @@
             <div class="access-banner" id="accessBanner" hidden><div><i class="fa-solid fa-circle-info"></i><span><strong id="accessBannerTitle"></strong><small id="accessBannerText"></small></span></div><button class="btn btn-ghost btn-sm" type="button" data-settings-tab="access">Подробнее</button></div>
             <section class="app-view active" id="view-home">
                 <div class="app-home-toolbar">
+                    <div class="analytics-period">
+                        <label>Период<select data-analytics-period aria-label="Период аналитики"><option value="all">Всё время</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="custom">Свои даты</option></select></label>
+                        <div class="analytics-dates" data-analytics-dates hidden><label>С<input type="date" data-analytics-start aria-label="Начало периода"></label><label>По<input type="date" data-analytics-end aria-label="Конец периода"></label></div>
+                        <span data-analytics-error role="status" hidden></span>
+                    </div>
                     <div class="provider-filter" id="providerFilter">
                         <button class="provider-filter-trigger" id="providerFilterTrigger" type="button" aria-expanded="false" aria-controls="providerFilterMenu"><span>Провайдеры</span><strong id="providerFilterLabel">Все</strong><i class="fa-solid fa-chevron-down"></i></button>
                         <div class="provider-filter-menu" id="providerFilterMenu" hidden>
@@ -158,7 +174,28 @@
                 </div>
                 <div id="growthOpportunities" class="growth-list" role="tabpanel"></div><div id="growthTasks" class="growth-list" role="tabpanel" hidden></div><div id="growthResults" class="growth-list" role="tabpanel" hidden></div>
             </section>
-            <section class="app-view" id="view-reports"><div class="app-empty app-view-first-card"><i class="fa-solid fa-file-arrow-up"></i><strong>Пока нет готовых отчётов</strong><span id="reportCheckContext">Откройте сохранённую проверку в истории, чтобы выбрать данные для отчёта.</span><span>Создание отчётов ещё готовится. Ответы AI и аналитика уже доступны в кабинете.</span><button class="btn btn-ghost btn-sm" id="reportBackToCheck" type="button" hidden>Вернуться к проверке</button></div></section>
+            <section class="app-view" id="view-reports">
+                <div class="report-toolbar app-view-first-card">
+                    <div><h1>Отчёт о видимости</h1><p>Срез активного бренда по сохранённым ответам AI.</p></div>
+                    <div class="report-actions"><button class="btn btn-ghost btn-sm" id="reportRefresh" type="button">Обновить данные</button><button class="btn btn-primary btn-sm" id="reportPrint" type="button" disabled><i class="fa-solid fa-print"></i>Печать / PDF</button></div>
+                </div>
+                <div class="app-card report-controls">
+                    <div class="analytics-period"><label>Период<select data-analytics-period aria-label="Период отчёта"><option value="all">Всё время</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="custom">Свои даты</option></select></label><div class="analytics-dates" data-analytics-dates hidden><label>С<input type="date" data-analytics-start aria-label="Начало периода отчёта"></label><label>По<input type="date" data-analytics-end aria-label="Конец периода отчёта"></label></div><span data-analytics-error role="status" hidden></span></div>
+                    <fieldset class="report-model-filter"><legend>AI-модели · общий фильтр с главной</legend><label><input type="checkbox" data-report-provider="gigachat" checked>GigaChat</label><label><input type="checkbox" data-report-provider="yandex" checked>Алиса AI</label><label><input type="checkbox" data-report-provider="openai" checked>ChatGPT</label><label><input type="checkbox" data-report-provider="gemini" checked>Gemini</label><label><input type="checkbox" data-report-provider="perplexity" checked>Perplexity</label></fieldset>
+                    <div class="report-check-context"><span id="reportCheckContext">Откройте сохранённую проверку в истории, чтобы вернуться к её ответам.</span><button class="app-text-action" id="reportBackToCheck" type="button" hidden>Вернуться к проверке</button></div>
+                </div>
+                <div class="report-status" id="reportStatus" role="status"></div>
+                <article class="report-document" id="reportDocument" aria-label="Предпросмотр отчёта" hidden>
+                    <header class="report-header"><span class="report-wordmark">Vidno<span>AI-видимость бренда</span></span><span id="reportGeneratedAt"></span></header>
+                    <div class="report-title"><span>Отчёт о видимости</span><h2 id="reportBrandName"></h2><p id="reportPeriodLabel"></p><p id="reportProvidersLabel"></p></div>
+                    <p class="report-coverage" id="reportCoverage"></p>
+                    <div class="report-kpis"><article><span>Share of Voice</span><strong data-report-metric="sov">—</strong><small>Доля голоса с учётом позиции</small></article><article><span>Brand Visibility</span><strong data-report-metric="visibility">—</strong><small id="reportVisibilityNote"></small></article><article><span>Citation Rate</span><strong data-report-metric="citation">—</strong><small id="reportCitationNote"></small></article><article><span>Average Position</span><strong data-report-metric="position">—</strong><small>В извлечённых списках брендов</small></article></div>
+                    <section class="report-section"><h3>Видимость по AI-моделям</h3><div class="report-table-wrap"><table class="report-table"><thead><tr><th scope="col">Модель</th><th scope="col">Ответы</th><th scope="col">Упоминания</th><th scope="col">Видимость</th></tr></thead><tbody id="reportModelBody"></tbody></table></div></section>
+                    <section class="report-section"><h3>Бренд и конкуренты</h3><p>Активный бренд и до пяти конкурентов по доле голоса.</p><div class="report-table-wrap"><table class="report-table"><thead><tr><th scope="col">Бренд</th><th scope="col">SoV</th><th scope="col">Видимость</th><th scope="col">Ср. позиция</th></tr></thead><tbody id="reportBrandBody"></tbody></table></div></section>
+                    <section class="report-section"><h3>Источники в ответах AI</h3><div class="report-table-wrap"><table class="report-table"><thead><tr><th scope="col">Домен</th><th scope="col">Ответы с источником</th><th scope="col">Доля ответов</th></tr></thead><tbody id="reportSourceBody"></tbody></table></div></section>
+                    <footer class="report-method"><strong>Как читать цифры</strong><p>Видимость — доля полученных ответов с упоминанием бренда. SoV — доля веса бренда среди всех извлечённых брендов: каждое появление имеет вес 1 / позиция. Средняя позиция считается только по извлечённым спискам. Citation Rate — доля ответов со ссылкой на указанные домены бренда; при отсутствии доменов показатель не определён.</p><p>Ошибки моделей и незавершённые проверки не считаются отрицательными ответами. Проверки с прежней версией анализа и результаты без разбивки по моделям исключены. Повторные проверки учитываются отдельно. Отчёт описывает выбранную выборку, а не все ответы AI.</p><span>Vidno · vidno.one</span></footer>
+                </article>
+            </section>
             <section class="app-view" id="view-settings">
                 <div class="settings-heading app-view-first-card"><div><span>Настройки</span><h1 id="settingsTitle">Проект</h1><p id="settingsDescription">Название, варианты написания и домены активного проекта.</p></div><span class="settings-project-context" id="settingsProjectName">—</span></div>
                 <div class="settings-layout">
@@ -207,6 +244,7 @@
                         <section class="settings-panel" id="settings-access" role="tabpanel" aria-labelledby="settingsTabAccess" data-settings-panel="access" hidden>
                             <div class="app-card settings-card account-access-card">
                                 <div class="app-card-head"><div><h2>Доступ и лимиты</h2><span>Тариф, срок и использование возможностей</span></div><span class="access-status-badge" id="accountAccessStatus">—</span></div>
+                                <div id="accountVoucherSlot"></div>
                                 <dl class="account-access-meta"><div><dt>Тариф</dt><dd id="accountPlan">—</dd></div><div><dt>Действует до</dt><dd id="accountAccessExpires">—</dd></div><div><dt>Расчётный период</dt><dd id="accountAccessPeriod">—</dd></div></dl>
                                 <div class="account-quota-grid"><article><span>Проверки</span><strong id="accountChecksQuota">—</strong><div class="quota-progress"><span id="accountChecksProgress"></span></div><small id="accountChecksPeriod"></small></article><article><span>Проекты</span><strong id="accountBrandsQuota">—</strong><div class="quota-progress"><span id="accountBrandsProgress"></span></div><small id="accountBrandsPeriod"></small></article></div>
                             </div>
@@ -240,6 +278,12 @@
                 </div>
             </section>
             <section class="app-view" id="view-admin">
+                <div class="app-tabs admin-section-tabs" role="tablist" aria-label="Администрирование">
+                    <button class="app-tab active" id="adminTabClients" type="button" data-admin-tab="clients" role="tab" aria-selected="true" aria-controls="adminPanelClients">Пользователи</button>
+                    <button class="app-tab" id="adminTabTariffs" type="button" data-admin-tab="tariffs" role="tab" aria-selected="false" aria-controls="adminPanelTariffs" tabindex="-1">Тарифы</button>
+                    <button class="app-tab" id="adminTabVouchers" type="button" data-admin-tab="vouchers" role="tab" aria-selected="false" aria-controls="adminPanelVouchers" tabindex="-1">Ваучеры</button>
+                </div>
+                <div id="adminPanelClients" role="tabpanel" aria-labelledby="adminTabClients" data-admin-panel="clients">
                 <div class="app-card app-view-first-card admin-toolbar-card">
                     <div class="app-card-head"><div><h2>Пользователи</h2><span>Управление статусами, сроками и квотами</span></div><span id="adminClientCount"></span></div>
                     <form class="admin-filters" id="adminFilters"><label class="admin-search">Поиск<input id="adminSearch" placeholder="Имя, email или бренд"></label><label>Статус<select id="adminStatusFilter"><option value="">Все</option><option value="pending">Ожидает</option><option value="active">Активен</option><option value="expired">Истёк</option><option value="suspended">Приостановлен</option></select></label><label>Тариф<select id="adminPlanFilter"><option value="">Все</option><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option><option value="custom">Custom</option></select></label><button class="btn btn-primary btn-sm" type="submit">Найти</button></form>
@@ -248,6 +292,29 @@
                     <div class="app-card admin-client-list-card"><div class="admin-client-list" id="adminClientList"></div><div class="admin-pagination"><button class="btn btn-ghost btn-sm" id="adminPrevPage" type="button">Назад</button><span id="adminPageLabel"></span><button class="btn btn-ghost btn-sm" id="adminNextPage" type="button">Вперёд</button></div></div>
                     <div class="app-card admin-client-editor" id="adminClientEditor"><div class="app-empty"><i class="fa-solid fa-user-gear"></i><strong>Выберите пользователя</strong><span>Профиль и настройки доступа откроются здесь.</span></div></div>
                 </div>
+                </div>
+                <div id="adminPanelTariffs" role="tabpanel" aria-labelledby="adminTabTariffs" data-admin-panel="tariffs" hidden>
+                    <div class="app-card"><div class="app-card-head"><div><h2>Настройки тарифов</h2><span>Новые значения применяются к следующим партиям ваучеров. Действующие аккаунты и выпущенные коды сохраняют свои условия.</span></div></div><div class="admin-tariff-grid" id="adminTariffList"></div><p class="account-form-status" id="adminTariffStatus" role="status"></p><button class="btn btn-ghost btn-sm" id="adminTariffRetry" type="button" hidden>Повторить загрузку</button></div>
+                </div>
+                <div id="adminPanelVouchers" role="tabpanel" aria-labelledby="adminTabVouchers" data-admin-panel="vouchers" hidden>
+                    <div class="app-card">
+                        <div class="app-card-head"><div><h2>Выпустить ваучеры</h2><span>Один ваучер — первая активация одного аккаунта.</span></div></div>
+                        <form class="account-form voucher-batch-form" id="voucherBatchForm">
+                            <label>Тариф<select id="voucherBatchPlan" name="plan"><option value="basic">Basic</option><option value="pro">Pro</option><option value="business">Business</option></select></label>
+                            <label>Количество<input id="voucherBatchQuantity" name="quantity" type="number" min="1" max="100" step="1" value="10" required></label>
+                            <label>Срок доступа, дней<input id="voucherBatchDuration" name="duration_days" type="number" min="1" max="365" step="1" value="30" required></label>
+                            <p class="voucher-batch-summary" id="voucherBatchSummary">Загружаем условия тарифа…</p>
+                            <p class="account-form-status" id="voucherBatchStatus" role="status"></p>
+                            <button class="btn btn-primary btn-sm" id="voucherBatchCreate" type="submit" disabled>Создать партию</button>
+                        </form>
+                        <div class="voucher-issued ym-hide-content" id="voucherIssued" hidden>
+                            <strong>Сохраните коды перед уходом из раздела</strong><p>Полные коды показаны только сейчас. После обновления страницы останутся только их обозначения и статусы.</p>
+                            <label for="voucherIssuedCodes">Коды новой партии</label><textarea id="voucherIssuedCodes" readonly rows="5" spellcheck="false"></textarea>
+                            <button class="btn btn-ghost btn-sm" id="voucherCopyCodes" type="button">Скопировать все коды</button><p class="account-form-status" id="voucherCopyStatus" role="status"></p>
+                        </div>
+                    </div>
+                    <div class="app-card voucher-batch-history"><div class="app-card-head"><div><h2>Партии ваучеров</h2><span>Использование кодов и получатели доступа</span></div><button class="btn btn-ghost btn-sm" id="voucherRefreshBatches" type="button">Обновить</button></div><div id="voucherBatchList" class="voucher-batch-list"></div><div id="voucherBatchDetail" hidden></div></div>
+                </div>
             </section>
         </main>
     </div>
@@ -255,6 +322,6 @@
     <dialog class="check-details-dialog" id="checkDetailsDialog"><div id="checkDetailsContent"></div></dialog>
     <script src="js/auth.js?v=20261006-onboarding"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20261008-mvp-core"></script>
+    <script src="js/dashboard.js?v=20261009-reports"></script>
 </body>
 </html>

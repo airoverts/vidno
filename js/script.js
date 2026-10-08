@@ -233,7 +233,7 @@ function openCtaModal(type) {
     }
     openModal(`
         <h2>Регистрация</h2>
-        <p>Создайте аккаунт. Проверки и управление брендами станут доступны после активации доступа.</p>
+        <p>Создайте аккаунт и введите ваучер в кабинете, чтобы активировать тариф. Если кода нет, обратитесь к администратору.</p>
         <form class="modal-form ym-hide-content" id="modalForm" autocomplete="off">
             <div class="form-row"><label>Имя</label><input type="text" name="name" autocomplete="name" required placeholder="Ваше имя"></div>
             <div class="form-row"><label>Email</label><input type="email" name="email" autocomplete="email" required placeholder="you@yandex.ru"></div>
@@ -248,7 +248,7 @@ function openCtaModal(type) {
         try {
             const payload = Object.fromEntries(new FormData(form));
             await authRequest('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
-            closeModal(); showToast('Аккаунт создан. Доступ ожидает активации.', 'fa-solid fa-circle-check');
+            closeModal(); showToast('Аккаунт создан. Введите ваучер в кабинете.', 'fa-solid fa-circle-check');
             setTimeout(() => { window.location.href = 'dashboard.html'; }, 400);
         } catch (requestError) { error.textContent = requestError.message; error.hidden = false; button.disabled = false; }
     });

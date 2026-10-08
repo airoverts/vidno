@@ -35,11 +35,12 @@ def _period_bounds(activated_at: datetime, now: datetime):
 
 def _locked_access(database, user_id: int, refresh: bool = True):
     row = database.execute(
-        "SELECT * FROM user_access WHERE user_id = %s FOR UPDATE",
+        "SELECT user_access.*, users.role FROM user_access JOIN users ON users.id = user_access.user_id WHERE user_id = %s FOR UPDATE OF user_access",
         (user_id,),
     ).fetchone()
     if not row:
         raise AccessControlError(403, "access_pending", "Доступ ожидает активации")
+    role = row["role"]
     now = datetime.now(timezone.utc)
     if refresh and row["status"] == "active":
         activated_at = row["activated_at"] or now
@@ -58,6 +59,7 @@ def _locked_access(database, user_id: int, refresh: bool = True):
                 """,
                 (activated_at, period_start, period_end, reset, reset, user_id),
             ).fetchone()
+    row["role"] = role
     return row
 
 
@@ -113,6 +115,8 @@ def _access_payload(database, row):
         "plan": row["plan"],
         "activated_at": _timestamp(row["activated_at"]),
         "expires_at": _timestamp(row["expires_at"]),
+        "voucher_redeemed": bool(row.get("voucher_redeemed_at")),
+        "can_redeem_voucher": row.get("role") == "client" and status == "pending" and not row.get("first_activated_at") and not row.get("voucher_redeemed_at"),
         "checks": _quota_payload(row["checks_limit"], row["checks_used"], row["period_start"], row["period_end"]),
         "brands": _quota_payload(row["brands_limit"], brands_used, row["period_start"], row["period_end"]),
         "capabilities": {
@@ -581,7 +585,7 @@ def _account_payload(row):
 
 
 def list_admin_clients(query: str = "", status: str | None = None, plan: str | None = None, page: int = 1, page_size: int = 25):
-    clauses = ["TRUE"]
+    clauses = ["users.role = 'client'"]
     params = []
     if query:
         clauses.append(
@@ -632,7 +636,7 @@ def get_admin_client(user_id: int):
                    user_access.*
             FROM users
             JOIN user_access ON user_access.user_id = users.id
-            WHERE users.id = %s
+            WHERE users.id = %s AND users.role = 'client'
             """,
             (user_id,),
         ).fetchone()
@@ -645,7 +649,7 @@ def get_admin_client(user_id: int):
 def update_admin_access(user_id: int, changes: dict):
     with connection() as database:
         user = database.execute(
-            "SELECT id, name, email, created_at, role FROM users WHERE id = %s",
+            "SELECT id, name, email, created_at, role FROM users WHERE id = %s AND role = 'client'",
             (user_id,),
         ).fetchone()
         if not user:
@@ -687,10 +691,12 @@ def update_admin_access(user_id: int, changes: dict):
             SET status = %s, plan = %s, expires_at = %s,
                 checks_limit = %s, brands_limit = %s,
                 activated_at = %s, period_start = %s, period_end = %s,
+                first_activated_at = COALESCE(first_activated_at, CASE WHEN %s THEN %s END),
                 checks_used = %s, quota_cycle = %s, updated_at = NOW()
             WHERE user_id = %s
             RETURNING *
             """,
-            (new_status, new_plan, new_expires_at, checks_limit, brands_limit, activated_at, period_start, period_end, checks_used, quota_cycle, user_id),
+            (new_status, new_plan, new_expires_at, checks_limit, brands_limit, activated_at, period_start, period_end, becomes_active, now, checks_used, quota_cycle, user_id),
         ).fetchone()
+        updated["role"] = user["role"]
         return {"account": _account_payload(user), "access": _access_payload(database, updated)}

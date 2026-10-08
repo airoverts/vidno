@@ -21,6 +21,14 @@ let accessState = null;
 let adminPage = 1;
 let adminTotalPages = 1;
 let selectedAdminClientId = null;
+let adminTariffs = [];
+let adminTariffsLoad = null;
+const adminTariffSaves = new Set();
+let selectedVoucherBatchId = null;
+let voucherActivating = false;
+let voucherActivationSucceeded = false;
+let voucherActivationOutcomeUnknown = false;
+let voucherBatchCreating = false;
 let dashboardReady = false;
 let dashboardInitializing = false;
 let dashboardSessionAttempted = false;
@@ -38,6 +46,55 @@ let selectedCheckId = null;
 let answerCheckId = null;
 let reportCheckId = null;
 let historyExpanded = false;
+const analyticsPeriod = { preset: 'all', start: '', end: '' };
+const checksLoadState = { loading: false, error: '', updatedAt: null };
+let reportPrinting = false;
+
+function moscowDay(value = Date.now()) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
+}
+function shiftDay(day, amount) { return new Date(Date.parse(`${day}T00:00:00Z`) + amount * 86400000).toISOString().slice(0, 10); }
+function analyticsBounds() {
+    if (analyticsPeriod.preset === 'all') return { start: -Infinity, end: Infinity, label: 'Всё время · даты по Москве' };
+    const end = analyticsPeriod.preset === 'custom' ? analyticsPeriod.end : moscowDay();
+    const start = analyticsPeriod.preset === 'custom' ? analyticsPeriod.start : shiftDay(end, 1 - Number(analyticsPeriod.preset));
+    const valid = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    if (!valid(start) || !valid(end) || start > end) return { error: 'Выберите корректные даты: начало не позднее конца периода.' };
+    const label = value => value.split('-').reverse().join('.');
+    return { start: Date.parse(`${start}T00:00:00+03:00`), end: Date.parse(`${shiftDay(end, 1)}T00:00:00+03:00`), label: `${label(start)} — ${label(end)} · даты по Москве` };
+}
+function analyticsRecords() {
+    const bounds = analyticsBounds();
+    return bounds.error ? [] : historyForActiveBrand().filter(item => item.createdAt >= bounds.start && item.createdAt < bounds.end && (item.provider === 'all' || selectedProviders.has(item.provider)));
+}
+function analyticsHistory() {
+    const records = analyticsRecords().map(item => item.provider === 'all' ? { ...item, providerResults: item.providerResults.filter(hasCurrentAnalysis) } : item);
+    return activeHistory(records).filter(item => item.provider !== 'all' || selectedResults(item).length).map(item => ({ ...item, sources: answerRowsFor(item).flatMap(answer => answer.sources || []) }));
+}
+function syncAnalyticsFilters() {
+    const bounds = analyticsBounds();
+    $$('[data-analytics-period]').forEach(input => { input.value = analyticsPeriod.preset; });
+    $$('[data-analytics-start]').forEach(input => { input.value = analyticsPeriod.start; });
+    $$('[data-analytics-end]').forEach(input => { input.value = analyticsPeriod.end; });
+    $$('[data-analytics-dates]').forEach(element => { element.hidden = analyticsPeriod.preset !== 'custom'; });
+    $$('[data-analytics-error]').forEach(element => { element.textContent = bounds.error || ''; element.hidden = !bounds.error; });
+    $$('[data-report-provider]').forEach(input => { input.checked = selectedProviders.has(input.dataset.reportProvider); });
+}
+$$('[data-analytics-period]').forEach(input => input.addEventListener('change', () => {
+    analyticsPeriod.preset = input.value;
+    if (input.value === 'custom' && !analyticsPeriod.start) { analyticsPeriod.end = moscowDay(); analyticsPeriod.start = shiftDay(analyticsPeriod.end, -29); }
+    renderAllForActiveBrand();
+}));
+$$('[data-analytics-start], [data-analytics-end]').forEach(input => input.addEventListener('change', () => {
+    analyticsPeriod[input.hasAttribute('data-analytics-start') ? 'start' : 'end'] = input.value;
+    renderAllForActiveBrand();
+}));
+$$('[data-report-provider]').forEach(input => input.addEventListener('change', () => {
+    const provider = input.dataset.reportProvider;
+    if (input.checked) selectedProviders.add(provider); else selectedProviders.delete(provider);
+    if (!selectedProviders.size) selectedProviders.add(provider);
+    updateProviderFilter(); renderAllForActiveBrand();
+}));
 
 class ApiError extends Error {
     constructor(message, status, code = '', details = {}) { super(message); this.name = 'ApiError'; this.status = status; this.code = code; this.details = details; }
@@ -47,13 +104,14 @@ function capability(name, fallback = false) { return accessState ? Boolean(acces
 function requiredCapability(path, method) {
     if (method === 'GET' || method === 'HEAD') return '';
     if (/^\/(?:account|admin\/|auth\/)/.test(path)) return '';
+    if (path === '/vouchers/redeem') return '';
     if (/^\/check(?:-all)?$/.test(path)) return 'run_checks';
     if (path === '/brands' && method === 'POST') return 'create_brands';
     if (/^\/brands\//.test(path)) return 'manage_existing_brands';
     return 'workspace_write';
 }
 function accessBlockedMessage(name) {
-    if (accessState?.status === 'pending') return 'Доступ ещё не активирован. Вы можете просматривать сохранённые данные.';
+    if (accessState?.status === 'pending') return accessState.canRedeemVoucher ? 'Доступ ещё не активирован. Введите ваучер в кабинете или обратитесь к администратору.' : 'Доступ ещё не активирован. Обратитесь к администратору. Сохранённые данные доступны для просмотра.';
     if (accessState?.status === 'expired') return 'Срок доступа истёк. Сохранённые данные доступны только для просмотра.';
     if (accessState?.status === 'suspended') return 'Доступ приостановлен. Сохранённые данные доступны только для просмотра.';
     if (name === 'run_checks') return 'Лимит проверок исчерпан. Подробности доступны в разделе «Аккаунт».';
@@ -190,8 +248,8 @@ function enrichCompetitors(item) {
     const competitors = listedCompetitors(item).filter(name => brandKey(name) !== ownKey);
     return { ...item, competitors };
 }
-function activeHistory() {
-    return historyForActiveBrand().filter(item => ['completed', 'partial'].includes(item.status)).filter(hasCurrentAnalysis).map(item => {
+function activeHistory(records = historyForActiveBrand()) {
+    return records.filter(item => ['completed', 'partial'].includes(item.status)).filter(hasCurrentAnalysis).map(item => {
         const canonical = canonicalBrand(item.brand); const identity = { canonicalId: canonical.id, canonicalName: canonical.name, aliases: canonical.aliases, domains: canonical.domains };
         if (item.provider !== 'all') return selectedProviders.has(item.provider) ? enrichCompetitors({ ...item, ...canonicalizeProviderResult(item, identity), brand: canonical.name }) : null;
         const results = selectedResults(item);
@@ -234,11 +292,14 @@ function setActiveBrand(value, syncInput = true, resetResult = true) {
     renderAllForActiveBrand();
 }
 function renderAllForActiveBrand() {
+    if (reportPrinting) return;
+    syncAnalyticsFilters();
     renderHistory();
     renderAiAnswers();
     renderCompetitors();
     renderSources();
     renderMetricsDashboard();
+    renderReport();
     renderGrowth();
     renderBrandSettings();
     bindAvatarFallbacks();
@@ -256,6 +317,7 @@ function closeAccountMenu(focusTrigger = false) {
 function selectView(view, checkId = null) {
     if (view === 'admin' && accountState?.role !== 'admin') return selectSettingsTab('profile');
     closeAccountMenu();
+    document.body.classList.toggle('report-view', view === 'reports');
     if (view === 'answers') answerCheckId = checkId;
     if (view === 'reports') renderReportContext(checkId);
     $(`#view-${view}`)?.setAttribute('data-check-id', checkId || '');
@@ -267,7 +329,7 @@ function selectView(view, checkId = null) {
     if (view === 'competitors') renderCompetitors();
     if (view === 'answers') renderAiAnswers();
     if (view === 'settings') { renderAccountProfile(); renderAccountAccess(); renderBrandSettings(); }
-    if (view === 'admin' && !$('#adminClientList').children.length) loadAdminClients();
+    if (view === 'admin' && !$('#adminClientList').children.length) { loadAdminClients(); loadAdminTariffs(); }
 }
 const SETTINGS_META = {
     project: ['Проект', 'Название, варианты написания и домены активного проекта.'],
@@ -370,6 +432,8 @@ function apiErrorMessage(data, status) {
         access_suspended: 'Доступ приостановлен. Сохранённые данные доступны только для просмотра.',
         access_expired: 'Срок доступа истёк. Сохранённые данные доступны только для просмотра.',
         quota_exceeded: 'Лимит исчерпан. Проверьте доступные квоты в разделе «Аккаунт».',
+        voucher_invalid: 'Код неверный, уже использован или отозван. Проверьте ваучер или обратитесь к администратору.',
+        voucher_not_allowed: 'Ваучер доступен только для первой активации аккаунта. Дальнейший доступ меняет администратор.',
         brand_identity_cooldown: 'Название и домены бренда можно изменять не чаще одного раза в 14 дней.'
     };
     if (messages[code]) {
@@ -400,7 +464,7 @@ function normalizeQuota(value = {}) {
     return { limit, used, remaining, unlimited, periodStart: value.period_start || value.periodStart || null, periodEnd: value.period_end || value.periodEnd || null };
 }
 function normalizeAccess(value = {}) {
-    return { status: value.status || value.effective_status || 'pending', administrativeStatus: value.administrative_status || value.administrativeStatus || value.status || 'pending', plan: value.plan || 'custom', activatedAt: value.activated_at || value.activatedAt || null, expiresAt: value.expires_at || value.expiresAt || null, checks: normalizeQuota(value.checks), brands: normalizeQuota(value.brands), capabilities: { workspace_write: Boolean(value.capabilities?.workspace_write ?? value.capabilities?.workspaceWrite), run_checks: Boolean(value.capabilities?.run_checks ?? value.capabilities?.runChecks), create_brands: Boolean(value.capabilities?.create_brands ?? value.capabilities?.createBrands), manage_existing_brands: Boolean(value.capabilities?.manage_existing_brands ?? value.capabilities?.manageExistingBrands) } };
+    return { status: value.status || value.effective_status || 'pending', administrativeStatus: value.administrative_status || value.administrativeStatus || value.status || 'pending', plan: value.plan || 'custom', activatedAt: value.activated_at || value.activatedAt || null, expiresAt: value.expires_at || value.expiresAt || null, canRedeemVoucher: Boolean(value.can_redeem_voucher), voucherRedeemed: Boolean(value.voucher_redeemed), checks: normalizeQuota(value.checks), brands: normalizeQuota(value.brands), capabilities: { workspace_write: Boolean(value.capabilities?.workspace_write ?? value.capabilities?.workspaceWrite), run_checks: Boolean(value.capabilities?.run_checks ?? value.capabilities?.runChecks), create_brands: Boolean(value.capabilities?.create_brands ?? value.capabilities?.createBrands), manage_existing_brands: Boolean(value.capabilities?.manage_existing_brands ?? value.capabilities?.manageExistingBrands) } };
 }
 function statusLabelAccess(status) { return ({ pending: 'Ожидает активации', active: 'Активен', expired: 'Срок истёк', suspended: 'Приостановлен' })[status] || status || 'Неизвестно'; }
 function planLabel(plan) { return ({ basic: 'Basic', pro: 'Pro', business: 'Business', custom: 'Custom' })[plan] || plan || '—'; }
@@ -446,6 +510,64 @@ function renderAccountAccess() {
     $('#accountBrandsQuota').textContent = quotaText(accessState.brands);
     $('#accountBrandsPeriod').textContent = quotaPeriodText(accessState.brands);
     $('#accountBrandsProgress').style.width = `${quotaProgress(accessState.brands)}%`;
+    renderVoucherActivation();
+}
+function renderVoucherActivation() {
+    const root = $('#voucherActivation');
+    const slot = $(needsOnboarding() ? '#onboardingVoucherSlot' : '#accountVoucherSlot');
+    if (root.parentElement !== slot) slot.append(root);
+    const eligible = Boolean(accessState?.status === 'pending' && accessState.canRedeemVoucher && !accessState.voucherRedeemed && accountState?.role === 'client');
+    root.hidden = !eligible && !voucherActivationSucceeded;
+    $('#voucherActivationForm').hidden = !eligible;
+    $('#voucherRefreshAccess').hidden = !eligible || !voucherActivationOutcomeUnknown;
+    $('#voucherCode').readOnly = voucherActivating || voucherActivationOutcomeUnknown;
+    $('#voucherActivate').disabled = voucherActivating || voucherActivationOutcomeUnknown;
+    $('#voucherActivate').textContent = voucherActivating ? 'Активируем…' : 'Активировать';
+    if (!eligible) $('#voucherCode').value = '';
+}
+function completeVoucherActivation() {
+    voucherActivationSucceeded = true;
+    voucherActivationOutcomeUnknown = false;
+    $('#voucherActivationForm').reset();
+    setFormStatus('#voucherActivationStatus', `Доступ активирован: ${planLabel(accessState.plan)} до ${formatDate(accessState.expiresAt)}.`, true);
+    renderAccountAccess(); renderAccessBanner(); applyAccessGating(); renderOnboarding();
+    if (needsOnboarding()) $(activeBrandIdentity() || brandIdentities[0] ? '#onboardingQuery' : '#onboardingBrand').focus();
+}
+async function recoverVoucherActivation() {
+    const button = $('#voucherRefreshAccess'); button.disabled = true;
+    try {
+        await refreshAccess();
+        if (accessState.voucherRedeemed) completeVoucherActivation();
+        else {
+            voucherActivationOutcomeUnknown = false;
+            setFormStatus('#voucherActivationStatus', accessState.canRedeemVoucher ? 'Активация пока не подтверждена. Можно повторить ввод кода.' : 'Доступ изменён. При необходимости обратитесь к администратору.');
+        }
+    } catch { setFormStatus('#voucherActivationStatus', 'Не удалось проверить активацию. Проверьте соединение и нажмите «Проверить активацию».'); }
+    finally { button.disabled = false; renderVoucherActivation(); }
+}
+async function redeemVoucher(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (voucherActivating || voucherActivationOutcomeUnknown || !accessState?.canRedeemVoucher || !form.reportValidity()) return;
+    const code = $('#voucherCode').value.trim();
+    if (!code) return setFormStatus('#voucherActivationStatus', 'Введите код ваучера.');
+    voucherActivating = true; setFormStatus('#voucherActivationStatus', ''); renderVoucherActivation();
+    try {
+        const data = await apiRequest('/vouchers/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+        accessState = normalizeAccess(data.access || data);
+        completeVoucherActivation();
+    } catch (error) {
+        if (error instanceof ApiError && error.status < 500) {
+            setFormStatus('#voucherActivationStatus', error.message);
+            if (error.code === 'voucher_not_allowed') {
+                await refreshAccess().catch(() => {});
+                if (accessState.voucherRedeemed) completeVoucherActivation();
+            }
+        } else {
+            voucherActivationOutcomeUnknown = true;
+            await recoverVoucherActivation();
+        }
+    } finally { voucherActivating = false; renderVoucherActivation(); }
 }
 function renderAccountProfile() {
     if (!accountState) return;
@@ -500,7 +622,7 @@ $('#wsCheck').addEventListener('click', async () => {
     if (!$('#wsCheck').disabled) await runWorkspaceCheck($('#wsBrand').value, $('#wsQuery').value);
 });
 
-function needsOnboarding() { return dashboardReady && accountState?.onboarding_completed_at === null; }
+function needsOnboarding() { return dashboardReady && accountState?.role !== 'admin' && accountState?.onboarding_completed_at === null; }
 function successfulCheck(item) { return item && ['completed', 'partial'].includes(item.status); }
 function showCheckError(message) {
     const target = needsOnboarding() ? $('#onboardingError') : $('#wsError');
@@ -510,6 +632,7 @@ function renderOnboarding() {
     const visible = needsOnboarding();
     $('#onboarding').hidden = !visible;
     document.body.classList.toggle('onboarding-active', visible);
+    renderVoucherActivation();
     if (!visible) return;
     const identity = activeBrandIdentity() || brandIdentities[0];
     const step = identity ? 'check' : 'company';
@@ -716,7 +839,7 @@ function renderReportContext(id) {
     const view = $('#view-reports');
     view.dataset.checkId = reportCheckId || ''; view.dataset.brandId = reportCheckId ? item.brandId : '';
     view.dataset.canonicalId = reportCheckId ? item.canonicalId : '';
-    $('#reportCheckContext').textContent = reportCheckId ? `Выбрана проверка: ${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)}${item.status === 'partial' ? ' · частичный результат' : ''}.` : 'Откройте сохранённую проверку в истории, чтобы выбрать данные для отчёта.';
+    $('#reportCheckContext').textContent = reportCheckId ? `Выбрана проверка: ${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)}${item.status === 'partial' ? ' · частичный результат' : ''}. Отчёт охватывает весь выбранный период.` : 'Откройте сохранённую проверку в истории, чтобы вернуться к её ответам. Отчёт охватывает весь выбранный период.';
     $('#reportBackToCheck').hidden = !reportCheckId;
     window.dispatchEvent(new CustomEvent('vidno-report-context', { detail: { checkId: reportCheckId, brandId: reportCheckId ? item.brandId : null, canonicalId: reportCheckId ? item.canonicalId : null } }));
 }
@@ -1212,28 +1335,73 @@ $('#saveCanonicalBrand').addEventListener('click', async () => {
 });
 function sourceCategory(domain) { if (/(forbes|rbc|tass|ria|vedomosti|kommersant|lenta|gazeta|news|media)/.test(domain)) return 'СМИ'; if (/(vc\.ru|habr|reddit|forum|otzovik|irecommend)/.test(domain)) return 'Сообщество и отзывы'; if (/(wiki|catalog|yell|2gis|zoon)/.test(domain)) return 'Каталог и справочник'; return 'Профильный сайт'; }
 function renderSources() {
-    const counts = new Map();
-    const checkCounts = new Map();
-    activeHistory().flatMap(item => item.sources || []).forEach(source => {
-        try {
-            const value = typeof source === 'string' ? source : source.url;
-            const host = new URL(value).hostname.replace(/^www\./, '');
-            counts.set(host, (counts.get(host) || 0) + 1);
-        } catch {}
-    });
-    activeHistory().forEach(item => { const domains = new Set(); (item.sources || []).forEach(source => { try { const value = typeof source === 'string' ? source : source.url; domains.add(new URL(value).hostname.replace(/^www\./, '')); } catch {} }); domains.forEach(host => checkCounts.set(host, (checkCounts.get(host) || 0) + 1)); });
-    const rows = [...counts].sort((a, b) => b[1] - a[1]);
+    const answers = analyticsHistory().flatMap(answerRowsFor);
+    const rows = sourceRows(answers);
     const empty = '<div class="app-empty"><strong>Нет источников</strong><span>Они появятся после первой live-проверки.</span></div>';
-    const total = activeHistory().length; const visible = sourceExpanded ? rows : rows.slice(0, 10);
-    const markup = visible.length ? visible.map(([name, count], index) => rankedRow(name, checkCounts.get(name) || 0, `${count} появл. · ${percentage(checkCounts.get(name) || 0, total)}%`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
+    const total = answers.length; const visible = sourceExpanded ? rows : rows.slice(0, 10);
+    const markup = visible.length ? visible.map(({ name, count }, index) => rankedRow(name, count, `${count} ответов · ${percentage(count, total)}%`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
     $('#sourceList').innerHTML = markup;
-    $('#homeSourceList').innerHTML = rows.length ? rows.slice(0, 5).map(([name, count], index) => rankedRow(name, checkCounts.get(name) || 0, `${count} появл.`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
+    $('#homeSourceList').innerHTML = rows.length ? rows.slice(0, 5).map(({ name, count }, index) => rankedRow(name, count, `${count} ответов`, index, total, sourceCategory(name), imageAvatarMarkup(name, name, 'source'))).join('') : empty;
     setRankingToggle('#sourceToggle', sourceExpanded, rows.length); bindAvatarFallbacks();
 }
 $$('[data-ranking-toggle]').forEach(button => button.addEventListener('click', () => { if (button.dataset.rankingToggle === 'competitors') { competitorExpanded = !competitorExpanded; renderCompetitors(); } else { sourceExpanded = !sourceExpanded; renderSources(); } }));
 const dashboardCharts = {};
 function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].destroy(); }
 function percentage(value, total) { return total ? Math.round(value / total * 100) : 0; }
+function sourceRows(answers) {
+    const counts = new Map();
+    answers.forEach(answer => {
+        const domains = new Set();
+        (answer.sources || []).forEach(source => { try { const url = new URL(typeof source === 'string' ? source : source.url); if (['http:', 'https:'].includes(url.protocol)) domains.add(url.hostname.replace(/^www\./, '')); } catch {} });
+        domains.forEach(name => counts.set(name, (counts.get(name) || 0) + 1));
+    });
+    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+function analyticsSnapshot() {
+    const records = analyticsRecords(); const rowsHistory = analyticsHistory(); const answers = rowsHistory.flatMap(answerRowsFor); const brands = brandRows(rowsHistory);
+    const own = brands.find(row => row.key === activeBrandKey) || { mentions: 0, citations: 0, averagePosition: null };
+    const excluded = records.filter(item => ['completed', 'partial'].includes(item.status) && (!hasCurrentAnalysis(item) || item.provider === 'all' && !item.providerResults.some(hasCurrentAnalysis))).length;
+    const excludedAnswers = records.filter(item => ['completed', 'partial'].includes(item.status) && hasCurrentAnalysis(item)).flatMap(item => item.providerResults || []).filter(result => selectedProviders.has(result.provider) && !hasCurrentAnalysis(result)).length;
+    const errors = records.reduce((total, item) => total + (item.providerErrors || []).filter(error => selectedProviders.has(error.provider)).length, 0);
+    return { records, rowsHistory, answers, brands, own, sources: sourceRows(answers), models: [...modelGroups(answers).values()], failed: records.filter(item => item.status === 'failed').length, running: records.filter(item => item.status === 'running').length, partial: records.filter(item => item.status === 'partial').length, excluded, excludedAnswers, errors, bounds: analyticsBounds() };
+}
+function metricValues(data) {
+    return { sov: data.answers.length && data.brands.some(row => row.voiceWeight) ? `${data.own.sov}%` : '—', visibility: data.answers.length ? `${data.own.visibility}%` : '—', citation: data.answers.length && activeBrandIdentity()?.domains?.length ? `${data.own.citationRate}%` : '—', position: data.own.averagePosition ? Number(data.own.averagePosition.toFixed(2)).toString() : '—' };
+}
+function renderReport() {
+    if (reportPrinting) return;
+    const data = analyticsSnapshot(); const bounds = data.bounds;
+    const blocked = checksLoadState.loading || checksLoadState.error || bounds.error || !activeBrandKey;
+    $('#reportRefresh').disabled = checksLoadState.loading;
+    $('#reportPrint').disabled = Boolean(blocked || !data.answers.length);
+    $('#reportDocument').hidden = Boolean(blocked);
+    $('#reportStatus').textContent = checksLoadState.loading ? 'Обновляем сохранённые проверки…' : checksLoadState.error ? `Не удалось обновить данные: ${checksLoadState.error}. Повторите загрузку кнопкой «Обновить данные».` : bounds.error || (!activeBrandKey ? 'Выберите проект, чтобы увидеть отчёт.' : '');
+    if (blocked) return;
+    const metrics = metricValues(data);
+    $('#reportBrandName').textContent = currentBrand();
+    $('#reportPeriodLabel').textContent = bounds.label;
+    $('#reportProvidersLabel').textContent = `AI-модели: ${CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).map(provider => PROVIDERS[provider]).join(', ')}`;
+    $('#reportGeneratedAt').textContent = `Сформирован ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} МСК`;
+    const coverage = [`Запусков проверок: ${data.records.length}`, `Получено ответов для расчёта: ${data.answers.length}`, ...[['Частичных проверок', data.partial], ['Ошибок моделей', data.errors], ['Проверок с ошибкой', data.failed], ['В процессе', data.running], ['Исключено проверок', data.excluded], ['Ответов прежнего анализа', data.excludedAnswers]].filter(([, count]) => count).map(([label, count]) => `${label}: ${count}`)].join(' · ');
+    $('#reportCoverage').textContent = coverage;
+    if (!data.answers.length) $('#reportStatus').textContent = data.records.length ? 'В выбранном срезе нет пригодных ответов. Проверьте модели, период и статусы проверок.' : 'За выбранный период нет проверок.';
+    else if (data.errors || data.failed || data.running || data.partial || data.excluded || data.excludedAnswers) $('#reportStatus').textContent = 'Отчёт сформирован по доступным ответам. Неполные и исключённые данные отмечены в объёме выборки.';
+    $$('[data-report-metric]').forEach(element => { element.textContent = metrics[element.dataset.reportMetric]; });
+    $('#reportVisibilityNote').textContent = `${data.own.mentions} из ${data.answers.length} ответов`;
+    $('#reportCitationNote').textContent = activeBrandIdentity()?.domains?.length ? `${data.own.citations} из ${data.answers.length} ответов` : 'Домены бренда не указаны';
+    const empty = (columns, text) => `<tr><td colspan="${columns}">${escapeHtml(text)}</td></tr>`;
+    $('#reportModelBody').innerHTML = CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).map(provider => { const row = data.models.find(item => item.provider === provider); return `<tr><th scope="row">${escapeHtml(PROVIDERS[provider])}</th><td>${row?.total || 0}</td><td>${row?.mentioned || 0}</td><td>${row?.total ? `${percentage(row.mentioned, row.total)}%` : '—'}</td></tr>`; }).join('');
+    const brands = data.answers.length ? [data.own, ...data.brands.filter(row => row.key !== activeBrandKey).slice(0, 5)] : [];
+    $('#reportBrandBody').innerHTML = brands.length ? brands.map(row => `<tr class="${row.key === activeBrandKey ? 'report-own-brand' : ''}"><th scope="row">${escapeHtml(row.name)}${row.key === activeBrandKey ? ' · ваш бренд' : ''}</th><td>${data.brands.some(item => item.voiceWeight) ? `${row.sov}%` : '—'}</td><td>${row.visibility}%</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td></tr>`).join('') : empty(4, 'Нет пригодных ответов для сравнения брендов.');
+    $('#reportSourceBody').innerHTML = data.sources.length ? data.sources.slice(0, 5).map(row => `<tr><th scope="row">${escapeHtml(row.name)}</th><td>${row.count}</td><td>${percentage(row.count, data.answers.length)}%</td></tr>`).join('') : empty(3, 'В выбранных ответах нет источников.');
+}
+async function refreshReport() {
+    try { await refreshChecks(); } catch { renderReport(); }
+}
+$('#reportRefresh').addEventListener('click', refreshReport);
+$('#reportPrint').addEventListener('click', () => { if (!$('#reportPrint').disabled) window.print(); });
+window.addEventListener('beforeprint', () => { if (document.body.classList.contains('report-view')) { renderReport(); reportPrinting = true; } });
+window.addEventListener('afterprint', () => { reportPrinting = false; renderAllForActiveBrand(); });
 function answerRowsFor(item) {
     const results = selectedResults(item);
     const identity = activeBrandIdentity() || identityFor(item.brand);
@@ -1252,29 +1420,27 @@ function orderedMentionsFor(item) {
     const seen = new Set();
     return canonicalizeMentionList(names.filter(name => { const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true; }).map((name, index) => ({ name, observed_name: name, position: index + 1, role: brandKey(name) === brandKey(item.brand) ? item.role || 'упоминание' : 'упоминание' })));
 }
-function brandRows() {
-    const rowsHistory = activeHistory();
+function brandRows(rowsHistory = analyticsHistory()) {
     const answerRows = rowsHistory.flatMap(answerRowsFor);
     const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { key: activeBrandKey, name: ownName, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map([[ownName, { count: 1, order: 0 }]]) }]]); let order = 1;
     answerRows.forEach(item => {
-        const own = rows.get(activeBrandKey); if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || []));
-        orderedMentionsFor(item).forEach(mention => { const key = brandKey(mention.name); if (!rows.has(key)) rows.set(key, { key, name: mention.name, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(key); row.mentions++; row.voiceWeight += 1 / mention.position; row.positions.push(mention.position); const variant = row.variants.get(mention.name) || { count: 0, order: order++ }; variant.count++; row.variants.set(mention.name, variant); });
+        const own = rows.get(activeBrandKey); if (item.mentioned) own.mentions++; if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || []));
+        orderedMentionsFor(item).forEach(mention => { const key = brandKey(mention.name); if (!rows.has(key)) rows.set(key, { key, name: mention.name, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(key); if (key !== activeBrandKey) row.mentions++; row.voiceWeight += 1 / mention.position; row.positions.push(mention.position); const variant = row.variants.get(mention.name) || { count: 0, order: order++ }; variant.count++; row.variants.set(mention.name, variant); });
     });
     const totalWeight = [...rows.values()].reduce((sum, row) => sum + row.voiceWeight, 0);
     return [...rows.values()].map(row => ({ ...row, name: row.key === activeBrandKey ? ownName : preferredVariant(row.variants), sov: percentage(row.voiceWeight, totalWeight), visibility: percentage(row.mentions, answerRows.length), citationRate: percentage(row.citations, answerRows.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null, answerCount: answerRows.length })).sort((a, b) => b.voiceWeight - a.voiceWeight || b.mentions - a.mentions);
 }
 function dominantSentiment(values) { const counts = values.reduce((result, value) => ({ ...result, [value]: (result[value] || 0) + 1 }), {}); return Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || 'Нет данных'; }
 function renderMetricsDashboard() {
-    const rowsHistory = activeHistory();
-    const own = brandRows().find(row => brandKey(row.name) === activeBrandKey) || brandRows()[0] || { sov: 0, visibility: 0, citationRate: 0, averagePosition: null };
-    $('#metricSov').textContent = `${own.sov}%`; $('#metricSovNote').textContent = rowsHistory.length ? `${own.mentions || 0} упоминаний среди брендов` : 'Нет проверок';
-    $('#metricVisibility').textContent = `${own.visibility}%`; $('#metricVisibilityNote').textContent = rowsHistory.length ? `в ${own.mentions || 0} из ${own.answerCount || rowsHistory.length} ответов` : 'Нет проверок';
-    $('#metricCitation').textContent = `${own.citationRate}%`; $('#metricCitationNote').textContent = rowsHistory.length ? `${own.citations || 0} ответов со ссылкой` : 'Нет проверок';
-    $('#metricPosition').textContent = own.averagePosition ? Number(own.averagePosition.toFixed(2)).toString() : '—'; $('#metricPositionNote').textContent = own.averagePosition ? 'в списочных рекомендациях' : 'Нет позиций';
+    const data = analyticsSnapshot(); const own = data.own; const metrics = metricValues(data);
+    $('#metricSov').textContent = metrics.sov; $('#metricSovNote').textContent = data.answers.length ? `${own.mentions} упоминаний среди брендов` : 'Нет пригодных ответов';
+    $('#metricVisibility').textContent = metrics.visibility; $('#metricVisibilityNote').textContent = data.answers.length ? `в ${own.mentions} из ${data.answers.length} ответов` : 'Нет пригодных ответов';
+    $('#metricCitation').textContent = metrics.citation; $('#metricCitationNote').textContent = !activeBrandIdentity()?.domains?.length ? 'Укажите домены бренда' : data.answers.length ? `${own.citations} ответов со ссылкой` : 'Нет пригодных ответов';
+    $('#metricPosition').textContent = metrics.position; $('#metricPositionNote').textContent = own.averagePosition ? 'в извлечённых списках брендов' : 'Нет позиций';
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
-function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = activeHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
-function modelGroups() { const groups = new Map(); activeHistory().forEach(item => { const modelResults = selectedResults(item); (modelResults.length ? modelResults : [item]).forEach(result => { const provider = result.provider || ''; const name = PROVIDERS[provider] || result.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (result.mentioned) row.mentioned++; }); }); return groups; }
+function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = analyticsHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
+function modelGroups(answers = analyticsHistory().flatMap(answerRowsFor)) { const groups = new Map(); answers.forEach(result => { const provider = result.provider || ''; const name = PROVIDERS[provider] || result.model || provider; const key = provider || brandKey(name); if (!groups.has(key)) groups.set(key, { provider, name, total: 0, mentioned: 0 }); const row = groups.get(key); row.total++; if (result.mentioned) row.mentioned++; }); return groups; }
 function modelRow(row, index, compact = false) { return `<div class="model-row${row.total < 2 ? ' low-sample' : ''}"><span class="model-rank">${index + 1}</span><div class="model-name">${modelAvatarMarkup(row.provider, row.name)}<div><strong>${escapeHtml(row.name)}</strong><small>${row.total < 2 ? 'Мало данных' : `${row.total} проверок`}</small></div></div><div class="model-score"><strong>${row.value}%</strong><span>${row.mentioned} из ${row.total}</span></div><div class="model-meter"><i style="width:${row.value}%"></i></div>${compact ? '' : `<span class="model-verdict">${row.value >= 60 ? 'Высокая видимость' : row.value >= 30 ? 'Есть потенциал' : 'Требует внимания'}</span>`}</div>`; }
 function renderModelMetrics() { const groups = [...modelGroups().values()].map(row => ({ ...row, value: percentage(row.mentioned, row.total) })).sort((a, b) => b.value - a.value || b.total - a.total); const empty = '<div class="app-empty"><strong>Нет данных по моделям</strong><span>Запустите проверки в нужных AI-моделях.</span></div>'; $('#modelMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index, true)).join('') : empty; $('#visibilityMetrics').innerHTML = groups.length ? groups.map((row, index) => modelRow(row, index)).join('') : ''; $('#visibilityEmpty').hidden = Boolean(groups.length); const best = groups[0]; $('#visibilityInsight').textContent = best ? `Лидер: ${best.name} · ${best.value}%` : 'Нужны проверки'; }
 function renderExclusivity() { const mentioned = activeHistory().filter(item => item.mentioned); const exclusive = mentioned.filter(item => !(item.competitors || []).length).length; const compared = mentioned.length - exclusive; $('#exclusivityMetrics').innerHTML = `<div class="app-data-row"><strong>Эксклюзивное упоминание</strong><span>${percentage(exclusive, mentioned.length)}% · ${exclusive} ответов</span></div><div class="app-data-row"><strong>В сравнении с конкурентами</strong><span>${percentage(compared, mentioned.length)}% · ${compared} ответов</span></div>`; }
@@ -1284,7 +1450,7 @@ function chartTheme() {
 }
 function chartDate(item, index) {
     if (!item?.createdAt) return `Проверка ${index + 1}`;
-    return new Date(item.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(item.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 function sovTimeline(rowsHistory, brandKeys) {
     const weights = new Map();
@@ -1308,7 +1474,7 @@ function lineGradient(chart, color) {
 const centerLabelPlugin = { id: 'centerLabel', beforeDatasetsDraw(chart, args, options) { if (!options?.label) return; const { ctx, chartArea } = chart; const x = (chartArea.left + chartArea.right) / 2; const y = (chartArea.top + chartArea.bottom) / 2; ctx.save(); ctx.textAlign = 'center'; ctx.fillStyle = options.color; ctx.font = '800 26px Inter'; ctx.fillText(options.label, x, y - 2); ctx.fillStyle = options.muted; ctx.font = '600 11px Inter'; ctx.fillText(options.caption, x, y + 17); ctx.restore(); } };
 function renderDashboardCharts() {
     if (!window.Chart) return;
-    const rowsHistory = activeHistory(); const theme = chartTheme(); const allRows = brandRows(); const own = allRows.find(row => row.key === activeBrandKey) || allRows[0]; const rows = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 4)].filter(Boolean);
+    const rowsHistory = analyticsHistory(); const theme = chartTheme(); const allRows = brandRows(rowsHistory); const own = allRows.find(row => row.key === activeBrandKey) || allRows[0]; const rows = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 4)].filter(Boolean);
     destroyChart('trend'); destroyChart('sov');
     const hasHistory = rowsHistory.length > 0;
     const hasTrend = rowsHistory.length > 1;
@@ -1335,7 +1501,7 @@ function renderDashboardCharts() {
             const comparisonColor = [theme.accent2, theme.ok, theme.warn, theme.muted][datasetIndex - 1] || theme.muted;
             return { label: row.name, data: trendSeries.get(row.key) || [], borderColor: isOwn ? theme.accent : comparisonColor, backgroundColor: isOwn ? theme.accent : comparisonColor, borderWidth: isOwn ? 3 : 1.5, borderDash: isOwn ? [] : [5, 5], tension: .28, cubicInterpolationMode: 'monotone', fill: false, pointRadius: context => isOwn || context.dataIndex === rowsHistory.length - 1 ? 3 : 0, pointHoverRadius: 6, pointBorderWidth: 2, pointBorderColor: theme.surface, pointBackgroundColor: isOwn ? theme.accent : comparisonColor };
         }) },
-        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.surface, titleColor: theme.text, bodyColor: theme.text, borderColor: theme.border, borderWidth: 1, cornerRadius: 8, padding: 10, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.surface, titleColor: theme.text, bodyColor: theme.text, borderColor: theme.border, borderWidth: 1, cornerRadius: 8, padding: 10, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
     });
     const ownRank = own ? allRows.findIndex(row => row.key === activeBrandKey) + 1 : 0;
     $('#sovInsight').textContent = own ? `#${ownRank} в нише · ${own.sov}% SoV` : 'Нужны проверки';
@@ -1347,9 +1513,14 @@ function renderDashboardCharts() {
     });
 }
 async function refreshChecks(render = true) {
-    const data = await apiRequest('/checks');
-    history = (Array.isArray(data.checks) ? data.checks : []).map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
-    if (render) renderAllForActiveBrand();
+    checksLoadState.loading = true; checksLoadState.error = ''; renderReport();
+    try {
+        const data = await apiRequest('/checks');
+        if (!Array.isArray(data.checks)) throw new Error('История проверок получена в неверном формате');
+        history = data.checks.map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
+        checksLoadState.updatedAt = Date.now();
+    } catch (error) { checksLoadState.error = error.message; throw error; }
+    finally { checksLoadState.loading = false; if (render) renderAllForActiveBrand(); else renderReport(); }
 }
 async function deleteCheck(id) {
     const item = history.find(row => row.id === id); if (!item || !confirm(`Удалить проверку «${item.query}» навсегда?`)) return;
@@ -1459,12 +1630,14 @@ async function loadAdminClients(page = adminPage) {
     } catch (error) { list.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
 }
 async function loadAdminClient(id) {
-    selectedAdminClientId = String(id); $('#adminClientEditor').innerHTML = '<div class="admin-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Загружаем профиль…</div>';
+    const clientId = String(id);
+    selectedAdminClientId = clientId; $('#adminClientEditor').innerHTML = '<div class="admin-loading"><i class="fa-solid fa-circle-notch fa-spin"></i> Загружаем профиль…</div>';
     try {
         const data = await apiRequest(`/admin/clients/${encodeURIComponent(id)}`);
+        if (selectedAdminClientId !== clientId) return;
         renderAdminClient(data.account || data.client || data, data.access || data);
         $$('[data-admin-client]').forEach(button => button.classList.toggle('active', button.dataset.adminClient === selectedAdminClientId));
-    } catch (error) { $('#adminClientEditor').innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
+    } catch (error) { if (selectedAdminClientId === clientId) $('#adminClientEditor').innerHTML = `<div class="admin-error">${escapeHtml(error.message)}</div>`; }
 }
 function nullableLimitValue(quota) { return quota.limit === null ? '' : String(quota.limit); }
 function renderAdminClient(accountValue, accessValue) {
@@ -1473,15 +1646,136 @@ function renderAdminClient(accountValue, accessValue) {
     $('#adminAccessStatus').value = access.administrativeStatus === 'suspended' ? 'suspended' : access.administrativeStatus === 'active' ? 'active' : 'pending'; $('#adminAccessPlan').value = access.plan;
     const syncUnlimited = (checkbox, input) => { $(input).disabled = $(checkbox).checked; $(checkbox).addEventListener('change', () => { $(input).disabled = $(checkbox).checked; if (!$(checkbox).checked && !$(input).value) $(input).value = '0'; }); };
     syncUnlimited('#adminChecksUnlimited', '#adminChecksLimit'); syncUnlimited('#adminBrandsUnlimited', '#adminBrandsLimit');
+    $('#adminAccessPlan').addEventListener('change', async event => {
+        const form = $('#adminAccessForm'); const clientId = selectedAdminClientId;
+        if (!adminTariffs.length || adminTariffSaves.size) await loadAdminTariffs();
+        if (form !== $('#adminAccessForm') || clientId !== selectedAdminClientId) return;
+        const tariff = adminTariffs.find(item => item.plan === event.target.value);
+        if (!tariff) return;
+        $('#adminChecksUnlimited').checked = false; $('#adminChecksLimit').disabled = false; $('#adminChecksLimit').value = String(tariff.checks_limit);
+        $('#adminBrandsUnlimited').checked = false; $('#adminBrandsLimit').disabled = false; $('#adminBrandsLimit').value = String(tariff.brands_limit);
+        setFormStatus('#adminAccessStatusMessage', 'Подставлены квоты тарифа. Проверьте условия и нажмите «Сохранить доступ».', true);
+    });
     $('#adminAccessForm').addEventListener('submit', saveAdminAccess);
 }
 async function saveAdminAccess(event) {
     event.preventDefault(); const form = event.currentTarget; if (!form.reportValidity() || !selectedAdminClientId) return;
+    const clientId = selectedAdminClientId;
     const expiresDate = $('#adminAccessExpires').value;
     const body = { status: $('#adminAccessStatus').value, plan: $('#adminAccessPlan').value, expires_at: expiresDate ? `${expiresDate}T23:59:59.999Z` : null, checks_limit: $('#adminChecksUnlimited').checked ? null : Number($('#adminChecksLimit').value), brands_limit: $('#adminBrandsUnlimited').checked ? null : Number($('#adminBrandsLimit').value), reset_usage: $('#adminResetUsage').checked };
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#adminAccessStatusMessage', '');
-    try { const data = await apiRequest(`/admin/clients/${encodeURIComponent(selectedAdminClientId)}/access`, { method: 'PATCH', body: JSON.stringify(body) }); renderAdminClient(data.account || data.client || data, data.access || data); setFormStatus('#adminAccessStatusMessage', 'Настройки доступа сохранены.', true); await loadAdminClients(adminPage); }
-    catch (error) { setFormStatus('#adminAccessStatusMessage', error.message); button.disabled = false; }
+    try { const data = await apiRequest(`/admin/clients/${encodeURIComponent(clientId)}/access`, { method: 'PATCH', body: JSON.stringify(body) }); if (clientId !== selectedAdminClientId || form !== $('#adminAccessForm')) return; renderAdminClient(data.account || data.client || data, data.access || data); setFormStatus('#adminAccessStatusMessage', 'Настройки доступа сохранены.', true); await loadAdminClients(adminPage); }
+    catch (error) { if (clientId === selectedAdminClientId && form === $('#adminAccessForm')) { setFormStatus('#adminAccessStatusMessage', error.message); button.disabled = false; } }
+}
+function selectAdminTab(tab) {
+    if (accountState?.role !== 'admin') return;
+    $$('[data-admin-panel]').forEach(panel => { panel.hidden = panel.dataset.adminPanel !== tab; });
+    $$('[data-admin-tab]').forEach(button => {
+        const active = button.dataset.adminTab === tab;
+        button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1;
+    });
+    if (tab === 'tariffs') loadAdminTariffs();
+    if (tab === 'vouchers') { loadAdminTariffs(); loadVoucherBatches(); }
+}
+async function loadAdminTariffs() {
+    if (accountState?.role !== 'admin') return;
+    if (adminTariffsLoad) return adminTariffsLoad;
+    if (adminTariffSaves.size) { await Promise.allSettled([...adminTariffSaves]); return loadAdminTariffs(); }
+    $('#adminTariffRetry').hidden = true; setFormStatus('#adminTariffStatus', '');
+    $('#adminTariffList').innerHTML = '<div class="admin-loading">Загружаем тарифы…</div>';
+    adminTariffsLoad = (async () => { try {
+        const data = await apiRequest('/admin/tariffs');
+        adminTariffs = Array.isArray(data.items) ? data.items : [];
+        if (adminTariffs.length !== 3) throw new Error('Не удалось загрузить настройки всех тарифов.');
+        $('#adminTariffList').innerHTML = adminTariffs.map(tariff => `<form class="account-form admin-tariff-form" data-tariff="${escapeHtml(tariff.plan)}"><h3>${escapeHtml(planLabel(tariff.plan))}</h3><label>Проверок в месяц<input name="checks_limit" type="number" min="0" max="2147483647" step="1" value="${escapeHtml(tariff.checks_limit)}" required></label><label>Одновременно сохранённых брендов<input name="brands_limit" type="number" min="0" max="2147483647" step="1" value="${escapeHtml(tariff.brands_limit)}" required></label><p class="account-form-status" role="status"></p><button class="btn btn-primary btn-sm" type="submit">Сохранить</button></form>`).join('');
+        $$('[data-tariff]').forEach(form => form.addEventListener('submit', saveAdminTariff));
+    } catch (error) {
+        adminTariffs = []; $('#adminTariffList').innerHTML = '';
+        setFormStatus('#adminTariffStatus', error.message); $('#adminTariffRetry').hidden = false;
+    } finally { adminTariffsLoad = null; renderVoucherBatchSummary(); }
+    return adminTariffs;
+    })();
+    renderVoucherBatchSummary();
+    return adminTariffsLoad;
+}
+async function saveAdminTariff(event) {
+    event.preventDefault(); const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]'); const status = form.querySelector('[role="status"]');
+    let request = null;
+    button.disabled = true; status.textContent = ''; status.className = 'account-form-status';
+    try {
+        const body = { checks_limit: Number(form.elements.checks_limit.value), brands_limit: Number(form.elements.brands_limit.value) };
+        request = apiRequest(`/admin/tariffs/${encodeURIComponent(form.dataset.tariff)}`, { method: 'PATCH', body: JSON.stringify(body) });
+        adminTariffSaves.add(request); renderVoucherBatchSummary();
+        const tariff = await request;
+        adminTariffs = adminTariffs.map(item => item.plan === tariff.plan ? tariff : item);
+        status.textContent = 'Сохранено. Выпущенные ваучеры и аккаунты не изменены.'; status.className = 'account-form-status success';
+        renderVoucherBatchSummary();
+    } catch (error) { status.textContent = error.message; status.className = 'account-form-status error'; }
+    finally { adminTariffSaves.delete(request); button.disabled = false; renderVoucherBatchSummary(); }
+}
+function renderVoucherBatchSummary() {
+    const tariff = adminTariffs.find(item => item.plan === $('#voucherBatchPlan').value);
+    $('#voucherBatchSummary').textContent = tariff ? `${planLabel(tariff.plan)}: ${tariff.checks_limit} проверок в месяц, брендов — ${tariff.brands_limit}. Срок начнётся при активации. Условия партии будут зафиксированы при выпуске.` : 'Настройки тарифов недоступны. Откройте «Тарифы» и повторите загрузку.';
+    $('#voucherBatchCreate').disabled = voucherBatchCreating || Boolean(adminTariffsLoad) || Boolean(adminTariffSaves.size) || !tariff;
+}
+async function createVoucherBatch(event) {
+    event.preventDefault(); const form = event.currentTarget;
+    if (voucherBatchCreating || adminTariffsLoad || adminTariffSaves.size || !form.reportValidity() || !adminTariffs.length) return;
+    if ($('#voucherIssuedCodes').value && !confirm('Вы сохранили коды предыдущей партии? Новая партия заменит показанный список.')) return;
+    voucherBatchCreating = true; renderVoucherBatchSummary(); setFormStatus('#voucherBatchStatus', '');
+    try {
+        const body = { plan: $('#voucherBatchPlan').value, quantity: Number($('#voucherBatchQuantity').value), duration_days: Number($('#voucherBatchDuration').value) };
+        const data = await apiRequest('/admin/voucher-batches', { method: 'POST', body: JSON.stringify(body) });
+        const codes = (data.vouchers || []).map(item => item.code).filter(code => typeof code === 'string' && code);
+        if (codes.length !== body.quantity) throw new Error('Полные коды партии не получены. Проверьте список партий перед новым выпуском.');
+        $('#voucherIssuedCodes').value = codes.join('\n'); $('#voucherIssued').hidden = false;
+        setFormStatus('#voucherCopyStatus', ''); setFormStatus('#voucherBatchStatus', `Партия №${data.batch.id} создана. Сохраните ${codes.length} кодов.`, true);
+        selectedVoucherBatchId = String(data.batch.id);
+        await loadVoucherBatches(); await loadVoucherBatch(selectedVoucherBatchId);
+    } catch (error) {
+        const uncertain = !(error instanceof ApiError) || error.status >= 500;
+        setFormStatus('#voucherBatchStatus', uncertain ? 'Не удалось получить коды. Партия могла быть создана: обновите список и проверьте её перед новым выпуском.' : error.message);
+    } finally { voucherBatchCreating = false; renderVoucherBatchSummary(); }
+}
+async function copyVoucherCodes() {
+    const field = $('#voucherIssuedCodes');
+    if (!field.value) return;
+    try { await navigator.clipboard.writeText(field.value); setFormStatus('#voucherCopyStatus', 'Коды скопированы.', true); }
+    catch { field.focus(); field.select(); setFormStatus('#voucherCopyStatus', 'Коды выделены. Нажмите Ctrl+C, чтобы скопировать их.'); }
+}
+async function loadVoucherBatches() {
+    if (accountState?.role !== 'admin') return;
+    const list = $('#voucherBatchList'); const button = $('#voucherRefreshBatches'); button.disabled = true;
+    list.innerHTML = '<div class="admin-loading">Загружаем партии…</div>';
+    try {
+        const data = await apiRequest('/admin/voucher-batches'); const batches = Array.isArray(data.items) ? data.items : [];
+        list.innerHTML = batches.length ? batches.map(batch => `<button class="voucher-batch-item${String(batch.id) === selectedVoucherBatchId ? ' active' : ''}" type="button" data-voucher-batch="${escapeHtml(batch.id)}"><span><strong>№${escapeHtml(batch.id)} · ${escapeHtml(planLabel(batch.plan))}</strong><small>${escapeHtml(formatDateTime(batch.created_at))} · ${escapeHtml(batch.duration_days)} дней · ${escapeHtml(batch.checks_limit)} проверок/мес. · ${escapeHtml(batch.brands_limit)} брендов</small></span><span><strong>${escapeHtml(batch.quantity)} кодов</strong><small>Доступны: ${escapeHtml(batch.available_count)} · Использованы: ${escapeHtml(batch.redeemed_count)} · Отозваны: ${escapeHtml(batch.revoked_count)}</small></span></button>`).join('') : '<div class="app-empty"><strong>Пока нет ваучеров</strong><span>Выберите тариф и создайте первую партию.</span></div>';
+        $$('[data-voucher-batch]').forEach(item => item.addEventListener('click', () => loadVoucherBatch(item.dataset.voucherBatch)));
+    } catch (error) { list.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}. Нажмите «Обновить», чтобы повторить.</div>`; }
+    finally { button.disabled = false; }
+}
+async function loadVoucherBatch(id) {
+    selectedVoucherBatchId = String(id); const detail = $('#voucherBatchDetail'); detail.hidden = false;
+    detail.innerHTML = '<div class="admin-loading">Загружаем ваучеры…</div>';
+    try {
+        const data = await apiRequest(`/admin/voucher-batches/${encodeURIComponent(id)}`);
+        if (selectedVoucherBatchId !== String(id)) return;
+        const labels = { available: 'Доступен', redeemed: 'Использован', revoked: 'Отозван' };
+        detail.innerHTML = `<h3>Ваучеры партии №${escapeHtml(data.batch.id)}</h3><p class="voucher-help">Полные коды здесь не отображаются. Отзыв доступен только до активации.</p><div class="voucher-list">${(data.vouchers || []).map(item => `<article class="voucher-row"><code>${escapeHtml(item.code_mask)}</code><div><strong>${escapeHtml(labels[item.status] || item.status)}</strong>${item.redeemed_at ? `<small>${escapeHtml(formatDateTime(item.redeemed_at))}</small>${item.redeemed_by ? `<button class="app-text-action" type="button" data-voucher-recipient="${escapeHtml(item.redeemed_by)}">Пользователь №${escapeHtml(item.redeemed_by)}</button>` : '<small>Аккаунт получателя удалён</small>'}` : item.revoked_at ? `<small>${escapeHtml(formatDateTime(item.revoked_at))}</small>` : ''}</div>${item.status === 'available' ? `<button class="btn btn-ghost btn-sm" type="button" data-revoke-voucher="${escapeHtml(item.id)}">Отозвать</button>` : ''}</article>`).join('')}</div><p class="account-form-status" id="voucherRevokeStatus" role="status"></p>`;
+        $$('[data-voucher-batch]').forEach(item => item.classList.toggle('active', item.dataset.voucherBatch === selectedVoucherBatchId));
+        $$('[data-revoke-voucher]').forEach(button => button.addEventListener('click', () => revokeVoucher(button.dataset.revokeVoucher, button)));
+        $$('[data-voucher-recipient]').forEach(button => button.addEventListener('click', () => { selectAdminTab('clients'); loadAdminClient(button.dataset.voucherRecipient); }));
+    } catch (error) { if (selectedVoucherBatchId === String(id)) detail.innerHTML = `<div class="admin-error">${escapeHtml(error.message)}. Выберите партию, чтобы повторить.</div>`; }
+}
+async function revokeVoucher(id, button) {
+    if (!confirm('Отозвать этот ваучер? Активировать его больше не получится.')) return;
+    button.disabled = true; const batchId = selectedVoucherBatchId;
+    try {
+        await apiRequest(`/admin/vouchers/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+        await loadVoucherBatches(); if (selectedVoucherBatchId === batchId) await loadVoucherBatch(batchId);
+    } catch (error) { if ($('#voucherRevokeStatus')) setFormStatus('#voucherRevokeStatus', error.message); button.disabled = false; }
 }
 async function initializeDashboard() {
     if (dashboardInitializing) return;
@@ -1503,6 +1797,7 @@ async function initializeDashboard() {
         activeBrandKey = loadActiveBrandKey();
         const [checkData, taskData, dismissedData] = await Promise.all([apiRequest('/checks'), apiRequest('/growth-tasks'), apiRequest('/dismissed-opportunities')]);
         history = (Array.isArray(checkData.checks) ? checkData.checks : []).map(normalizeStoredCheck).sort((a, b) => a.createdAt - b.createdAt);
+        checksLoadState.error = ''; checksLoadState.updatedAt = Date.now();
         growthTasks = (Array.isArray(taskData.tasks) ? taskData.tasks : []).map(normalizeGrowthTask);
         dismissedOpportunities = new Set(Array.isArray(dismissedData.items) ? dismissedData.items : []);
         $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
@@ -1575,4 +1870,20 @@ $('#deleteAccountForm').addEventListener('submit', deleteAccount);
 $('#adminFilters').addEventListener('submit', event => { event.preventDefault(); loadAdminClients(1); });
 $('#adminPrevPage').addEventListener('click', () => loadAdminClients(adminPage - 1));
 $('#adminNextPage').addEventListener('click', () => loadAdminClients(adminPage + 1));
+$('#voucherActivationForm').addEventListener('submit', redeemVoucher);
+$('#voucherRefreshAccess').addEventListener('click', recoverVoucherActivation);
+$('#voucherCode').addEventListener('input', () => setFormStatus('#voucherActivationStatus', ''));
+$$('[data-admin-tab]').forEach(button => button.addEventListener('click', () => selectAdminTab(button.dataset.adminTab)));
+$('.admin-section-tabs').addEventListener('keydown', event => {
+    const tabs = $$('[data-admin-tab]'); const index = tabs.indexOf(document.activeElement);
+    if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    selectAdminTab(tabs[next].dataset.adminTab); tabs[next].focus();
+});
+$('#adminTariffRetry').addEventListener('click', loadAdminTariffs);
+$('#voucherBatchPlan').addEventListener('change', renderVoucherBatchSummary);
+$('#voucherBatchForm').addEventListener('submit', createVoucherBatch);
+$('#voucherRefreshBatches').addEventListener('click', loadVoucherBatches);
+$('#voucherCopyCodes').addEventListener('click', copyVoucherCodes);
 initializeDashboard();

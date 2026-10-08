@@ -33,6 +33,7 @@ from cache import get_search_cache, set_search_cache, get_result_cache, set_resu
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
 from auth import authenticate, create_session, create_user, delete_session, delete_user_verified, get_account, initialize_auth, update_account, user_for_session
 from storage import AccessControlError, create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, get_access, get_admin_client, list_admin_clients, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, require_workspace_access, restore_opportunity, start_check, update_admin_access, update_brand, update_growth_task
+from vouchers import create_voucher_batch, get_voucher_batch, list_tariffs, list_voucher_batches, redeem_voucher, revoke_voucher, update_tariff
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -312,6 +313,73 @@ class AdminAccessPatchRequest(BaseModel):
     checks_limit: int | None = Field(default=None, ge=0)
     brands_limit: int | None = Field(default=None, ge=0)
     reset_usage: bool = False
+
+
+class TariffPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    checks_limit: int = Field(ge=0, le=2147483647, strict=True)
+    brands_limit: int = Field(ge=0, le=2147483647, strict=True)
+
+
+class VoucherBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: Literal["basic", "pro", "business"]
+    quantity: int = Field(default=10, ge=1, le=100, strict=True)
+    duration_days: int = Field(default=30, ge=1, le=365, strict=True)
+
+
+class VoucherRedeemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=200, repr=False)
+
+
+@app.get("/api/admin/tariffs")
+def admin_tariffs(_admin: dict = Depends(_admin_user)):
+    return {"items": list_tariffs()}
+
+
+@app.patch("/api/admin/tariffs/{plan}")
+def patch_admin_tariff(plan: Literal["basic", "pro", "business"], req: TariffPatchRequest, _admin: dict = Depends(_admin_user)):
+    result = update_tariff(plan, req.model_dump())
+    if not result:
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+    return result
+
+
+@app.post("/api/admin/voucher-batches", status_code=201)
+def post_admin_voucher_batch(req: VoucherBatchRequest, response: Response, admin: dict = Depends(_admin_user)):
+    response.headers["Cache-Control"] = "no-store"
+    return create_voucher_batch(admin["id"], req.plan, req.quantity, req.duration_days)
+
+
+@app.get("/api/admin/voucher-batches")
+def admin_voucher_batches(_admin: dict = Depends(_admin_user)):
+    return {"items": list_voucher_batches()}
+
+
+@app.get("/api/admin/voucher-batches/{batch_id}")
+def admin_voucher_batch(batch_id: int, _admin: dict = Depends(_admin_user)):
+    result = get_voucher_batch(batch_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Партия не найдена")
+    return result
+
+
+@app.post("/api/admin/vouchers/{voucher_id}/revoke")
+def post_admin_revoke_voucher(voucher_id: int, _admin: dict = Depends(_admin_user)):
+    result = revoke_voucher(voucher_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Ваучер не найден")
+    return {"voucher": result}
+
+
+@app.post("/api/vouchers/redeem")
+def post_redeem_voucher(req: VoucherRedeemRequest, user: dict = Depends(_current_user)):
+    _enforce_rate_limit(f"voucher:{user['id']}")
+    return {"access": redeem_voucher(user["id"], req.code)}
 
 
 @app.get("/api/admin/clients")
