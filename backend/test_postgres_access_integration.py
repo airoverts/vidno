@@ -193,6 +193,7 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         self.assertEqual(single.status_code, 200, single.text)
         self.assertEqual(combined.status_code, 200, combined.text)
         rows = client.get("/api/checks").json()["checks"]
+        self.assertNotIn(self.main.ANSWER_FORMAT_INSTRUCTION, json.dumps(rows, ensure_ascii=False))
         self.assertEqual(next(item["result"] for item in rows if item["id"] == old_id), legacy)
         for item in rows:
             if item["id"] == old_id:

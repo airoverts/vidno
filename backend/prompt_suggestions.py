@@ -81,13 +81,11 @@ def _has_named_shortlist(prompt: str) -> bool:
     return False
 
 
-def _clarify_recommendation(prompt: str) -> str:
-    concrete = re.search(r"\b(?:назови|назовите|перечисли|перечислите|предложи|предложите|порекомендуй|порекомендуйте|конкретн\w*)\b|\b[3-5]\s*[–—-]\s*[3-5]\b", prompt, re.IGNORECASE)
-    rationale = re.search(r"\b(?:объясни\w*|обосн\w*|почему\s+(?:кажд\w*|они)|чем\s+(?:кажд\w*|они)|плюс\w*\s+кажд\w*)\b", prompt, re.IGNORECASE)
-    if concrete and rationale:
-        return prompt
-    ending = "" if prompt.endswith(("?", ".", "!")) else "?"
-    return f"{prompt}{ending} Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый."
+def _visible_recommendation(prompt: str) -> str:
+    prompt = re.sub(r"(?<=[?.!])\s+Назови\s+(?:3\s*[–—-]\s*5|(?:ровно\s+)?5|пять)\s+конкретных вариантов и кратко объясни, чем подходит каждый\.?$", "", prompt, flags=re.IGNORECASE).strip()
+    if re.search(r"\b(?:\d+(?:\s*[–—-]\s*\d+)?|три|четыре|пять)\s+(?:конкретн\w*\s+)?(?:вариант\w*|предложени\w*|рекомендаци\w*|банков|компани\w*|сервис\w*|производител\w*|решени\w*|бренд\w*)\b", prompt, re.IGNORECASE):
+        return ""
+    return prompt
 
 
 def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_brand_intent: bool = True, *, clarify_recommendations: bool = False, excluded_names=None) -> list[str]:
@@ -105,6 +103,8 @@ def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_bra
         if not isinstance(value, str):
             continue
         prompt = " ".join(value.strip().strip("«»\"'").split())
+        if clarify_recommendations:
+            prompt = _visible_recommendation(prompt)
         key = prompt.casefold()
         if not 10 <= len(prompt) <= 240 or not any(char.isalpha() for char in prompt):
             continue
@@ -112,9 +112,6 @@ def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_bra
             continue
         if clarify_recommendations:
             if instruction_only.search(prompt) or _mentions_excluded_name(prompt, [brand, *(excluded_names or [])]) or _has_named_shortlist(prompt):
-                continue
-            prompt = _clarify_recommendation(prompt)
-            if len(prompt) > 320:
                 continue
         key = prompt.casefold()
         if key in seen:

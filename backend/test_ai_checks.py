@@ -26,7 +26,7 @@ class AiCheckApiTests(unittest.TestCase):
         self.records = {}
         self.generated = {}
         self.providers = {}
-        for provider in ("gigachat", "yandex", "openai", "gemini", "perplexity"):
+        for provider in ("gigachat", "deepseek", "yandex", "openai", "gemini", "perplexity"):
             generate = Mock(side_effect=lambda query, *args, name=provider: self.generated_answer(name, query))
             self.generated[provider] = generate
             self.providers[provider] = {"generate": generate, "configured": lambda: True, "model": lambda name=provider: f"model:{name}"}
@@ -84,11 +84,11 @@ class AiCheckApiTests(unittest.TestCase):
         self.assert_tagged_calls([self.records[41]["result"]], 41)
 
     def test_check_all_uses_owned_identity_and_identical_common_query(self):
-        response = self.post("/api/check-all", providers=["gigachat", "openai", "perplexity"])
+        response = self.post("/api/check-all", providers=list(main.CHECK_ALL_PROVIDERS))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.analyze.call_count, 3)
-        for provider in ("gigachat", "openai", "perplexity"):
-            self.assertEqual(self.generated[provider].call_args.args[0], self.query)
+        self.assertEqual(self.analyze.call_count, 5)
+        for provider in main.CHECK_ALL_PROVIDERS:
+            self.assertEqual(self.generated[provider].call_args.args[0], self.query + "\n\n" + main.ANSWER_FORMAT_INSTRUCTION)
         for call in self.analyze.call_args_list:
             self.assertEqual(call.args[1], self.query)
             self.assertEqual(call.args[3:5], ("bank-owned-17", "СберБанк"))
@@ -96,6 +96,21 @@ class AiCheckApiTests(unittest.TestCase):
         self.assertEqual(saved["canonical_id"], "bank-owned-17")
         self.assertEqual(saved["canonical_name"], "СберБанк")
         self.assert_tagged_calls(saved["provider_results"], 41)
+        self.assertEqual(self.records[41]["query"], self.query)
+        self.assertTrue(all(item["query"] == self.query for item in saved["provider_results"]))
+        self.assertNotIn(main.ANSWER_FORMAT_INSTRUCTION, response.text)
+
+    def test_hidden_exact_five_instruction_is_only_sent_to_generation(self):
+        for provider in self.providers:
+            with self.subTest(provider=provider):
+                response = self.post(provider=provider)
+                self.assertEqual(response.status_code, 200)
+                sent = self.generated[provider].call_args.args[0]
+                self.assertIn("ровно 5 конкретных вариантов", sent)
+                self.assertNotIn("3–5", sent)
+                self.assertEqual(self.analyze.call_args.args[1], self.query)
+                self.assertEqual(response.json()["query"], self.query)
+                self.assertNotIn(main.ANSWER_FORMAT_INSTRUCTION, response.text)
 
     def test_generation_model_mismatch_saves_raw_answer_without_metrics(self):
         call = self.metadata("perplexity")
@@ -183,6 +198,7 @@ class AiCheckApiTests(unittest.TestCase):
         current_identity = self.cache_get.call_args.args[-1]
         self.assertIn("company-options-v1", current_identity)
         self.assertIn("confirmed-sonar-v1", current_identity)
+        self.assertIn("answer-options-5-v1", current_identity)
         self.assertNotEqual(current_identity, legacy_identity)
         self.generated["openai"].assert_called_once()
         self.assertEqual(cache[legacy_identity], legacy)
@@ -197,7 +213,8 @@ class AiCheckApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["provider_calls"], metadata)
         self.assertEqual(len(payload["prompts"]), 3)
-        self.assertTrue(all("Назови 3–5 конкретных вариантов" in prompt and "кратко объясни" in prompt for prompt in payload["prompts"]))
+        self.assertEqual(payload["prompts"], prompts)
+        self.assertNotIn(main.ANSWER_FORMAT_INSTRUCTION, response.text)
         self.assertTrue(all("Сбер" not in prompt for prompt in payload["prompts"]))
         self.assertTrue(generate.call_args.kwargs["require_web_search"])
         research = json.loads(generate.call_args.args[0][1]["content"])

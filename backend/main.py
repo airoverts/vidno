@@ -90,6 +90,7 @@ PROVIDERS = {
     },
 }
 CHECK_ALL_PROVIDERS = ("gigachat", "yandex", "openai", "gemini", "perplexity")
+ANSWER_FORMAT_INSTRUCTION = "Предложи ровно 5 конкретных вариантов, подходящих под запрос пользователя, и кратко объясни, чем подходит каждый. Не ограничивайся общими критериями выбора. Не упоминай эти требования к формату ответа."
 
 
 def _normalized_hostname(value: str, require_http: bool = False) -> str:
@@ -809,7 +810,7 @@ def prompt_suggestions(req: PromptSuggestionsRequest, user: dict = Depends(_curr
     generation_messages = [
         {"role": "system", "content": """Ты создаёшь ровно 3 естественных пользовательских запроса для проверки AI-видимости компании. Сначала через Web Search установи, какие продукты или услуги являются основным коммерческим бизнесом исследуемой компании. Приоритетны официальный сайт и надёжные актуальные источники. Никогда не принимай сувениры, мерч, футболки, свитшоты, подарочную продукцию, вакансии, благотворительность и другие побочные активности за основной бизнес компании.
 
-Каждый итоговый пользовательский запрос должен явно просить назвать 3–5 конкретных подходящих компаний, сервисов, банков, производителей или решений и кратко объяснить, чем подходит каждый вариант. Например: «Какие банки в России стоит рассмотреть для повседневных переводов и управления деньгами через приложение? Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый». Слова «бренд», «марка» и «производитель» не обязательны. Не включай название исследуемой компании, её другие названия и названия конкурентов. Не создавай сравнение заранее заданных компаний и не подсказывай желаемый вариант ответа. Не используй «купить», адреса, наличие, SEO, мониторинг или вопросы только о критериях и характеристиках без запроса конкретных рекомендаций. Все три запроса должны относиться только к ключевым коммерческим направлениям компании, покрывать разные реальные пользовательские задачи и не повторять предыдущие запросы. Верни JSON с единственным полем prompts — массивом ровно из 3 строк."""},
+Каждый итоговый пользовательский запрос должен быть естественным вопросом о выборе подходящих компаний, сервисов, банков, производителей или решений. Например: «Какие банки в России стоит рассмотреть для повседневных переводов и управления деньгами через приложение?». Не указывай количество вариантов ответа и не добавляй инструкции о формате ответа: приложение передаст их модели отдельно. Слова «бренд», «марка» и «производитель» не обязательны. Не включай название исследуемой компании, её другие названия и названия конкурентов. Не создавай сравнение заранее заданных компаний и не подсказывай желаемый вариант ответа. Не используй «купить», адреса, наличие, SEO, мониторинг или вопросы только о критериях и характеристиках без запроса конкретных рекомендаций. Все три запроса должны относиться только к ключевым коммерческим направлениям компании, покрывать разные реальные пользовательские задачи и не повторять предыдущие запросы. Верни JSON с единственным полем prompts — массивом ровно из 3 строк."""},
         {"role": "user", "content": json.dumps({"company_for_research_only": brand, "other_company_names_to_exclude": aliases, "official_domains": domains, "previous_user_queries": existing_queries[-12:], "excluded_topics_from_product_feedback": rejected_topics}, ensure_ascii=False)},
     ]
     try:
@@ -837,7 +838,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
     identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
-    cache_version = f"{get_analysis_cache_identity()}|{IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|brand-citations-v1:{identity_cache}"
+    cache_version = f"{get_analysis_cache_identity()}|{IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|answer-options-5-v1|brand-citations-v1:{identity_cache}"
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
@@ -879,7 +880,8 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
         return JSONResponse(status_code=502, content={"error": "Не удалось собрать данные по запросу"})
     
     try:
-        generated = provider_config["generate"](query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](query)
+        generation_query = f"{query}\n\n{ANSWER_FORMAT_INSTRUCTION}"
+        generated = provider_config["generate"](generation_query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](generation_query)
     except PerplexityModelError as error:
         return _provider_failure(provider, str(error), error=error)
     except httpx.HTTPStatusError as error:

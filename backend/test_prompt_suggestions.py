@@ -76,10 +76,10 @@ class PromptSuggestionTests(unittest.TestCase):
         self.assertEqual(len(prompts), 3)
         self.assertEqual(normalize_suggested_prompts(prompts, "Demix", limit=3), prompts)
 
-    def test_clarifies_user_bank_example_without_inserting_companies(self):
+    def test_keeps_user_bank_example_without_visible_format_instructions(self):
         query = "Какой банк выбрать для повседневных переводов и удобного управления деньгами через приложение?"
         prompts = normalize_suggested_prompts([query], "СберБанк", require_brand_intent=False, clarify_recommendations=True)
-        self.assertEqual(prompts, [query + " Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый."])
+        self.assertEqual(prompts, [query])
         self.assertEqual(query, "Какой банк выбрать для повседневных переводов и удобного управления деньгами через приложение?")
 
     def test_recommendation_mode_rejects_how_to_and_preset_named_choices(self):
@@ -116,10 +116,20 @@ class PromptSuggestionTests(unittest.TestCase):
         self.assertEqual(len(prompts), 4)
         self.assertTrue(all(result.startswith(original) for result, original in zip(prompts, values)))
 
-    def test_recommendation_mode_keeps_explicit_options_and_rationale_once(self):
+    def test_recommendation_mode_rejects_visible_option_counts(self):
         query = "Назови 3–5 банков для повседневных переводов и кратко объясни, чем подходит каждый."
-        prompts = normalize_suggested_prompts([query, query], "Газпромбанк", require_brand_intent=False, clarify_recommendations=True)
-        self.assertEqual(prompts, [query])
+        values = [query, "Какие 5 банков подходят для ежедневных платежей?", "Назови ровно пять сервисов для управления финансами.", "Какие 10 сервисов подходят для переводов?"]
+        prompts = normalize_suggested_prompts(values, "Газпромбанк", require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(prompts, [])
+
+    def test_recommendation_mode_removes_old_appended_format_and_deduplicates(self):
+        query = "Какой банк выбрать для повседневных переводов?"
+        values = [query, query + " Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый.", query + " Назови ровно 5 конкретных вариантов и кратко объясни, чем подходит каждый."]
+        self.assertEqual(normalize_suggested_prompts(values, "Газпромбанк", require_brand_intent=False, clarify_recommendations=True), [query])
+
+    def test_recommendation_mode_preserves_numeric_user_requirements(self):
+        query = "Какой банк выбрать для команды из 5 человек с переводами до 3000–5000 рублей?"
+        self.assertEqual(normalize_suggested_prompts([query], "Газпромбанк", require_brand_intent=False, clarify_recommendations=True), [query])
 
     def test_recommendation_mode_is_opt_in_for_generated_suggestions(self):
         query = "Какой банк выбрать для повседневных переводов?"
