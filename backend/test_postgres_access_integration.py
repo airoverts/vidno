@@ -179,12 +179,12 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         outsider, _other_user, _other_email = self._register("ai-outsider")
         self._set_access(admin, user["id"], status="active", checks_limit=None, brands_limit=None)
         names = ["Т-Банк", "Альфа-Банк", "Точка Банк", "ВТБ", "СберБанк", "СберБизнес"]
-        raw = "\n".join(f"{name} — подходит для переводов." for name in names)
+        raw = "\n".join(f"**{name}** — подходит для переводов." for name in names)
         legacy = {"brand": "Т-Банк", "query": "Прежний вопрос", "provider": "yandex", "analysis_version": "perplexity-direct-v1", "raw_answer": raw, "competitors": names[1:], "ordered_mentions": [{"name": name, "position": index} for index, name in enumerate(names, 1)]}
         saved = client.post("/api/checks", json=legacy)
         self.assertEqual(saved.status_code, 201, saved.text)
         old_id = saved.json()["check"]["id"]
-        extracted = {"mentioned": True, "position": 1, "weighted_position": None, "role": "рекомендация", "reasoning": "Самостоятельные варианты", "quotes": [], "mentioned_brands": names[1:], "competitors": names[1:], "ordered_mentions": [{"name": name, "position": index, "role": "рекомендация", "evidence": f"{name} — подходит для переводов."} for index, name in enumerate(names, 1)], "source_analysis": [], "sources_count": 0, "total_sources": 0}
+        extracted = {"ordered_mentions": [{"name": name, "role": "рекомендация", "evidence": f"{name} — подходит для переводов."} for name in names]}
         response = httpx.Response(200, json={"id": "isolated-analysis", "status": "completed", "model": "perplexity/sonar", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(extracted)}]}]}, request=httpx.Request("POST", perplexity_client.API_URL))
         provider = {"generate": lambda query: {"raw_answer": raw, "sources": []}, "configured": lambda: True, "model": lambda: "test-answer"}
         with patch.dict(self.main.PROVIDERS, {"yandex": provider, "openai": provider}), patch.object(perplexity_client, "API_KEY", "fixture"), patch.object(perplexity_client, "MODEL_NAME", "perplexity/sonar"), patch.object(perplexity_client, "ANALYSIS_MODEL_NAME", "perplexity/sonar"), patch.object(perplexity_client, "_post_with_retry", return_value=response):

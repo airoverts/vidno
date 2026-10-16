@@ -173,15 +173,18 @@ Hostkey предлагает выделенные серверы на AMD."""
         self.assertEqual(caught.exception.raw_answer, "answer")
         self.assertNotIn("private timeout", json.dumps(caught.exception.provider_calls))
 
-    def test_inconsistent_competitors_are_not_silently_repaired(self):
+    def test_metrics_are_derived_from_verified_options_instead_of_redundant_fields(self):
         raw_answer = "1. Hostkey — серверы.\n2. Selectel — серверы."
         analysis = {"mentioned": False, "position": None, "weighted_position": None, "role": "не упомянут", "reasoning": "Нет", "quotes": [], "mentioned_brands": ["Hostkey"], "competitors": ["Hostkey"], "ordered_mentions": [{"name": "Hostkey", "position": 1, "role": "рекомендация", "evidence": "1. Hostkey — серверы."}, {"name": "Selectel", "position": 2, "role": "рекомендация", "evidence": "2. Selectel — серверы."}], "source_analysis": [], "sources_count": 0, "total_sources": 0}
         with patch.object(perplexity_client, "API_KEY", "test-key"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(json.dumps(analysis), with_search=False))) as post:
-            with self.assertRaisesRegex(ValueError, "конкуренты") as caught:
-                perplexity_client.analyze_answer("Vidno", "серверы", raw_answer)
+            absent = perplexity_client.analyze_answer("Vidno", "серверы", raw_answer)
+            present = perplexity_client.analyze_answer("Selectel", "серверы", raw_answer)
         self.assertEqual(post.call_count, 2)
-        self.assertEqual(caught.exception.raw_answer, raw_answer)
-        self.assertEqual(len(caught.exception.provider_calls), 2)
+        self.assertFalse(absent["mentioned"])
+        self.assertEqual(absent["competitors"], ["Hostkey", "Selectel"])
+        self.assertTrue(present["mentioned"])
+        self.assertEqual(present["position"], 2)
+        self.assertEqual(present["competitors"], ["Hostkey"])
 
     def test_validated_company_products_merge_after_extraction(self):
         names = ["Т-Банк", "Альфа-Банк", "Точка Банк", "ВТБ", "СберБанк", "СберБизнес"]
@@ -219,6 +222,53 @@ Hostkey предлагает выделенные серверы на AMD."""
             result = perplexity_client.analyze_answer("Т-Банк", "Какой банк выбрать?", raw_answer)
         self.assertEqual(result["competitors"], ["СберБанк"])
         self.assertEqual(result["position"], 2)
+
+    def test_minimal_options_accept_presentational_changes_and_derive_target(self):
+        raw = "1. **Timeweb** Cloud — аренда\n  серверов.\n2. **Selectel** — облачные серверы."
+        payload = {"ordered_mentions": [
+            {"name": "Timeweb Cloud", "role": "рекомендация", "evidence": "Timeweb Cloud - аренда серверов."},
+            {"name": "Selectel", "role": "рекомендация", "evidence": "Selectel — облачные серверы."},
+        ]}
+        with patch.object(perplexity_client, "API_KEY", "fixture"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(json.dumps(payload), with_search=False))) as post:
+            result = perplexity_client.analyze_answer("Selectel", "Где арендовать сервер?", raw)
+        self.assertTrue(result["mentioned"])
+        self.assertEqual(result["position"], 2)
+        self.assertEqual(result["competitors"], ["Timeweb Cloud"])
+        self.assertEqual(result["ordered_mentions"][0]["evidence"], "**Timeweb** Cloud — аренда\n  серверов.")
+        schema = post.call_args.args[0]["response_format"]["json_schema"]["schema"]
+        self.assertEqual(set(schema["properties"]), {"ordered_mentions"})
+        request_data = json.loads(post.call_args.args[0]["input"][1]["content"])
+        self.assertEqual(set(request_data), {"query", "assistant_answer"})
+        self.assertEqual(result["analysis_method"], perplexity_client.ANALYSIS_METHOD)
+
+    def test_invalid_evidence_retry_receives_safe_reason_and_preserves_original(self):
+        bad = {"ordered_mentions": [{"name": "Hostkey", "role": "рекомендация", "evidence": "Hostkey — выдуманная цитата."}]}
+        good = {"ordered_mentions": [{"name": "Hostkey", "role": "рекомендация", "evidence": "Hostkey — серверы."}]}
+        replies = [mocked_response(response_payload(json.dumps(value), with_search=False)) for value in (bad, good)]
+        with patch.object(perplexity_client, "API_KEY", "fixture"), patch.object(perplexity_client, "_post_with_retry", side_effect=replies) as post:
+            result = perplexity_client.analyze_answer("Selectel", "Серверы?", "Hostkey — серверы.")
+        reason = result["provider_calls"][0]["validation_error"]
+        self.assertEqual(reason, "evidence_not_found")
+        self.assertIn(reason, post.call_args_list[1].args[0]["input"][-1]["content"])
+        self.assertFalse(result["mentioned"])
+        self.assertEqual(result["competitors"], ["Hostkey"])
+
+    def test_persistent_invalid_evidence_keeps_diagnostic_code_and_raw_answer(self):
+        bad = {"ordered_mentions": [{"name": "Invented", "role": "рекомендация", "evidence": "Invented — серверы."}]}
+        with patch.object(perplexity_client, "API_KEY", "fixture"), patch.object(perplexity_client, "_post_with_retry", return_value=mocked_response(response_payload(json.dumps(bad), with_search=False))):
+            with self.assertRaises(ValueError) as caught:
+                perplexity_client.analyze_answer("Selectel", "Серверы?", "Hostkey — серверы.")
+        self.assertEqual(caught.exception.raw_answer, "Hostkey — серверы.")
+        self.assertTrue(all(call["validation_error"] == "evidence_not_found" for call in caught.exception.provider_calls))
+        self.assertNotIn("Invented", json.dumps(caught.exception.provider_calls))
+
+    def test_rate_limit_respects_retry_after(self):
+        limited = mocked_response({}, 429)
+        limited.headers["Retry-After"] = "3"
+        with patch("perplexity_client.httpx.post", side_effect=[limited, mocked_response(response_payload())]), patch("perplexity_client.time.sleep") as sleep:
+            result = perplexity_client._post_with_retry({"model": "perplexity/sonar"})
+        self.assertEqual(result.status_code, 200)
+        sleep.assert_called_once_with(3.0)
 
 
 if __name__ == "__main__":

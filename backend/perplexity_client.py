@@ -2,13 +2,14 @@ import logging
 import json
 import os
 import time
+import threading
 from datetime import datetime, timezone
 
 import httpx
 from dotenv import load_dotenv
 
-from brand_identity import canonicalize_analysis, identity_values, normalize_domain, safe_key
-from rag_analysis import DIRECT_ANALYSIS_RESPONSE_SCHEMA, build_answer_analysis_messages, parse_analysis_response
+from brand_identity import canonicalize_analysis
+from answer_options import AnswerOptionError, OPTION_EXTRACTION_SCHEMA, build_option_messages, parse_answer_options
 
 load_dotenv()
 
@@ -20,6 +21,8 @@ ANALYSIS_MODEL_NAME = os.getenv("PERPLEXITY_ANALYSIS_MODEL", MODEL_NAME).strip()
 API_URL = "https://api.perplexity.ai/v1/agent"
 ANALYSIS_VERSION = "perplexity-direct-v1"
 EXPECTED_MODEL_NAME = "perplexity/sonar"
+ANALYSIS_METHOD = "verified-answer-options-v2"
+_analysis_lock = threading.Lock()
 
 
 class PerplexityModelError(ValueError):
@@ -107,13 +110,14 @@ def get_cache_identity() -> str:
 
 
 def get_analysis_cache_identity() -> str:
-    return f"{ANALYSIS_MODEL_NAME}|{ANALYSIS_VERSION}"
+    return f"{ANALYSIS_MODEL_NAME}|{ANALYSIS_VERSION}|{ANALYSIS_METHOD}"
 
 
 def _post_with_retry(payload: dict) -> httpx.Response:
     attempts = []
     for attempt in range(3):
         started_at = _timestamp()
+        response = None
         try:
             response = httpx.post(
                 API_URL,
@@ -136,7 +140,13 @@ def _post_with_retry(payload: dict) -> httpx.Response:
             if attempt == 2:
                 raise
             logger.warning("[Perplexity] Ошибка соединения, повтор %s/2: %s", attempt + 1, type(error).__name__)
-        time.sleep(0.5 * (2 ** attempt))
+        delay = 0.5 * (2 ** attempt)
+        if response is not None and response.status_code == 429:
+            try:
+                delay = min(30.0, max(2.0 * (2 ** attempt), float(response.headers.get("Retry-After", "0"))))
+            except ValueError:
+                delay = 2.0 * (2 ** attempt)
+        time.sleep(delay)
     raise RuntimeError("Не удалось выполнить запрос к Perplexity")
 
 
@@ -215,11 +225,7 @@ def generate_answer(query: str) -> dict:
 
 
 def _analysis_messages(brand: str, query: str, raw_answer: str, aliases: list[str] | None, domains: list[str] | None) -> list[dict]:
-    return build_answer_analysis_messages(brand, query, raw_answer, aliases, domains)
-
-
-def _normalized_names(values: list[str]) -> list[str]:
-    return sorted(values)
+    return build_option_messages(query, raw_answer)
 
 
 def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
@@ -228,43 +234,39 @@ def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = 
     analysis_brand = canonical_name or brand
     messages = _analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
     previous_answer = ""
+    validation_error = "invalid_options"
     calls = []
     for attempt in range(2):
         request_messages = list(messages)
         if previous_answer:
             request_messages.extend([
                 {"role": "assistant", "content": previous_answer},
-                {"role": "user", "content": "Исправь JSON: оставь только прямые варианты ответа, включай целевой бренд в ordered_mentions только если он самостоятельный вариант, а competitors не должен содержать целевой бренд. Все названия должны дословно быть в исходном ответе."},
+                {"role": "user", "content": f"Исправь JSON по схеме ordered_mentions. Причина отклонения: {validation_error}. Верни только самостоятельные варианты с их названиями, ролью и дословным evidence из исходного ответа. Не добавляй вычисляемые позиции и списки конкурентов."},
             ])
         try:
-            data, attempt_calls = _call_agent({
-                "model": ANALYSIS_MODEL_NAME,
-                "input": request_messages,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {"name": "brand_visibility_analysis", "schema": DIRECT_ANALYSIS_RESPONSE_SCHEMA},
-                },
-                "max_output_tokens": 4000,
-                "store": False,
-            }, "analysis", raw_answer)
+            with _analysis_lock:
+                data, attempt_calls = _call_agent({
+                    "model": ANALYSIS_MODEL_NAME,
+                    "input": request_messages,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {"name": "answer_options", "schema": OPTION_EXTRACTION_SCHEMA},
+                    },
+                    "max_output_tokens": 2000,
+                    "store": False,
+                }, "analysis", raw_answer)
         except Exception as error:
             raise _attach_failure(error, calls + getattr(error, "provider_calls", []), raw_answer)
         for call in attempt_calls:
             call["analysis_attempt"] = attempt + 1
+            call["analysis_method"] = ANALYSIS_METHOD
         calls.extend(attempt_calls)
         try:
             previous_answer = _response_text(data)
-            analysis = parse_analysis_response(previous_answer, raw_answer, target_brand=analysis_brand, strict_direct_options=True)
-            extracted = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True, normalize_companies=False)
-            target_keys = {safe_key(value) for value in identity_values(analysis_brand, aliases, domains)}
-            target_options = [item for item in analysis["ordered_mentions"] if {safe_key(item["name"]), safe_key(normalize_domain(item["name"]))}.intersection(target_keys)]
-            target_position = target_options[0]["position"] if target_options else None
-            competitors = [item["name"] for item in analysis["ordered_mentions"] if item not in target_options]
-            if bool(analysis["mentioned"]) != bool(extracted["mentioned"]) or analysis["position"] != target_position:
-                raise ValueError("целевая компания не согласована со списком вариантов")
-            if _normalized_names(analysis["competitors"]) != _normalized_names(competitors):
-                raise ValueError("конкуренты должны дословно встречаться в ответе")
+            analysis = parse_answer_options(previous_answer, raw_answer)
             canonical = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True, normalize_companies=True)
+            canonical["reasoning"] = f"Бренд предложен как самостоятельный вариант на позиции {canonical['position']}." if canonical["mentioned"] else "Бренд не предложен как самостоятельный вариант ответа."
+            canonical["analysis_method"] = ANALYSIS_METHOD
             canonical["analysis_provider"] = "perplexity"
             canonical["analysis_version"] = ANALYSIS_VERSION
             canonical["source_analysis"] = []
@@ -274,7 +276,10 @@ def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = 
             canonical["provider_calls"] = calls
             return canonical
         except ValueError as error:
+            validation_error = error.code if isinstance(error, AnswerOptionError) else "invalid_provider_response"
             calls[-1]["status"] = "analysis_validation_failed"
+            calls[-1]["validation_error"] = validation_error
+            logger.warning("[Perplexity] analysis_validation_error=%s analysis_attempt=%s", validation_error, attempt + 1)
             if attempt:
                 raise _attach_failure(error, calls, raw_answer)
     raise ValueError("Perplexity не вернул корректный анализ")

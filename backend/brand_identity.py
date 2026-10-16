@@ -93,9 +93,10 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
             continue
         if observed_match:
             observed_name = observed_match
-        company = confirmed_company(observed_name) if normalize_companies else None
+        display_observed = clean_name(item.get("display_name") or observed_name) if normalize_companies else observed_name
+        company = confirmed_company(display_observed) if normalize_companies else None
         mention_id = identity_id if is_target else company["canonical_id"] if company else f"auto:{safe_key(observed_name)}" if normalize_companies else safe_key(observed_name)
-        mention_name = display_name if is_target else company["canonical_name"] if company else observed_name
+        mention_name = display_name if is_target else company["canonical_name"] if company else display_observed
         key = f"canonical:{identity_id}" if is_target else f"observed:{mention_id}"
         if key in mention_keys:
             if normalize_companies:
