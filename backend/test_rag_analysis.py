@@ -53,5 +53,62 @@ class AnalysisNormalizationTests(unittest.TestCase):
         self.assertEqual(result["mentioned_brands"], ["Nike", "Adidas"])
 
 
+class DirectOptionTests(unittest.TestCase):
+    def direct(self, **overrides):
+        return response(competitors=["Hostkey"], mentioned_brands=["Hostkey"], ordered_mentions=[{"name": "Hostkey", "position": 1, "role": "рекомендация", "evidence": "Hostkey — аренда серверов."}], **overrides)
+
+    def test_preserves_literal_evidence(self):
+        result = parse_analysis_response(self.direct(), "Hostkey — аренда серверов. В описании упомянут Intel.", strict_direct_options=True)
+        self.assertEqual(result["ordered_mentions"][0]["evidence"], "Hostkey — аренда серверов.")
+        self.assertEqual(result["competitors"], ["Hostkey"])
+
+    def test_rejects_competitors_absent_from_explicit_options(self):
+        value = json.loads(self.direct())
+        value["ordered_mentions"] = []
+        with self.assertRaisesRegex(ValueError, "не извлечён"):
+            parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+
+    def test_rejects_missing_or_invented_evidence(self):
+        for evidence in (None, "Hostkey — чужая цитата.", "аренда серверов."):
+            value = json.loads(self.direct())
+            value["ordered_mentions"][0]["evidence"] = evidence
+            with self.subTest(evidence=evidence), self.assertRaisesRegex(ValueError, "фрагментом"):
+                parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+
+    def test_rejects_duplicates_and_repeated_positions(self):
+        value = json.loads(self.direct())
+        value["ordered_mentions"].append(dict(value["ordered_mentions"][0]))
+        with self.assertRaisesRegex(ValueError, "повторяющиеся"):
+            parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+        value["ordered_mentions"][0]["position"] = 2
+        value["ordered_mentions"].pop()
+        with self.assertRaisesRegex(ValueError, "подряд"):
+            parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+
+    def test_legacy_parser_still_supports_fallback(self):
+        result = parse_analysis_response(response(mentioned_brands=["Hostkey"]), "Hostkey")
+        self.assertEqual(result["ordered_mentions"][0]["name"], "Hostkey")
+
+    def test_rejects_incidental_mention_role(self):
+        value = json.loads(self.direct())
+        value["ordered_mentions"][0]["role"] = "упоминание"
+        with self.assertRaisesRegex(ValueError, "случайное упоминание"):
+            parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+
+    def test_rejects_partial_names_inside_another_brand(self):
+        for fragment in ("SuperHostkey — сервис.", "HostkeyCloud — сервис."):
+            value = json.loads(self.direct())
+            value["ordered_mentions"][0]["evidence"] = fragment
+            with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "фрагментом"):
+                parse_analysis_response(json.dumps(value), fragment, strict_direct_options=True)
+
+    def test_competitor_names_must_match_observed_option_names_exactly(self):
+        value = json.loads(self.direct())
+        value["competitors"] = ["hostkey"]
+        value["mentioned_brands"] = ["hostkey"]
+        with self.assertRaisesRegex(ValueError, "не извлечён"):
+            parse_analysis_response(json.dumps(value), "Hostkey — аренда серверов.", strict_direct_options=True)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api
 localStorage.removeItem('vidno-session-token');
 
 function applyTheme() {
-    const theme = localStorage.getItem('vidno-theme') || 'light';
+    const theme = window.VIDNO_DARK_THEME_ENABLED && localStorage.getItem('vidno-theme') === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
     const button = $('#themeToggle');
     if (button) {
@@ -31,6 +31,7 @@ function applyTheme() {
     }
 }
 function toggleTheme() {
+    if (!window.VIDNO_DARK_THEME_ENABLED) return;
     localStorage.setItem('vidno-theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
     applyTheme();
 }

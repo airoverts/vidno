@@ -4,8 +4,9 @@ const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api
 localStorage.removeItem('vidno-session-token');
 
 function applyTheme() {
-    const theme = localStorage.getItem('vidno-theme') || 'light';
+    const theme = window.VIDNO_DARK_THEME_ENABLED && localStorage.getItem('vidno-theme') === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
+    document.querySelectorAll('[data-settings-tab="appearance"]').forEach(button => { button.hidden = !window.VIDNO_DARK_THEME_ENABLED; });
     document.querySelectorAll('[data-theme-choice]').forEach(button => {
         const selected = button.dataset.themeChoice === theme;
         button.classList.toggle('active', selected);
@@ -16,14 +17,14 @@ function applyTheme() {
 applyTheme();
 document.addEventListener('click', event => {
     const choice = event.target.closest('[data-theme-choice]');
-    if (!choice) return;
+    if (!window.VIDNO_DARK_THEME_ENABLED || !choice) return;
     localStorage.setItem('vidno-theme', choice.dataset.themeChoice);
     applyTheme();
     window.dispatchEvent(new CustomEvent('vidno-theme-change'));
 });
 document.addEventListener('keydown', event => {
     const choice = event.target.closest('[data-theme-choice]');
-    if (!choice || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    if (!window.VIDNO_DARK_THEME_ENABLED || !choice || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
     const choices = [...document.querySelectorAll('[data-theme-choice]')];
     const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1;

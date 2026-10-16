@@ -1,5 +1,17 @@
 import re
+from copy import deepcopy
 from urllib.parse import urlsplit
+
+
+IDENTITY_NORMALIZATION_VERSION = "company-options-v1"
+CONFIRMED_COMPANY_IDENTITIES = (
+    {
+        "canonical_id": "auto:сбербанк",
+        "canonical_name": "СберБанк",
+        "aliases": ["СберБанк", "Сбер Банк", "СберБизнес", "Сбер Бизнес"],
+        "relation": "confirmed_company_product",
+    },
+)
 
 
 def clean_name(value: str) -> str:
@@ -7,7 +19,7 @@ def clean_name(value: str) -> str:
 
 
 def safe_key(value: str) -> str:
-    normalized = clean_name(value).casefold()
+    normalized = clean_name(value).casefold().replace("ё", "е")
     normalized = re.sub(r"^https?://", "", normalized)
     normalized = re.sub(r"^www\.", "", normalized)
     normalized = re.sub(r"[/?#].*$", "", normalized)
@@ -50,11 +62,21 @@ def find_observed_alias(text: str, values: list[str]) -> tuple[str | None, int]:
     return best
 
 
-def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None, strict_direct_options: bool = False) -> dict:
+def confirmed_company(value: str) -> dict | None:
+    key = safe_key(value)
+    return next((company for company in CONFIRMED_COMPANY_IDENTITIES if key in {safe_key(alias) for alias in company["aliases"]}), None)
+
+
+def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None, strict_direct_options: bool = False, normalize_companies: bool = False) -> dict:
+    analysis = deepcopy(analysis)
     display_name = clean_name(canonical_name) or clean_name(brand)
     identity_id = clean_name(canonical_id) or safe_key(display_name)
     values = identity_values(display_name, aliases, domains)
     target_keys = {safe_key(value) for value in values}
+    target_company = confirmed_company(display_name) if normalize_companies else None
+    if target_company:
+        values = identity_values(display_name, [*(aliases or []), *target_company["aliases"]], domains)
+        target_keys = {safe_key(value) for value in values}
     observed_alias, target_index = find_observed_alias(raw_answer, values)
     normalized_mentions = []
     mention_keys = set()
@@ -71,17 +93,33 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
             continue
         if observed_match:
             observed_name = observed_match
-        key = f"canonical:{identity_id}" if is_target else f"observed:{safe_key(observed_name)}"
+        company = confirmed_company(observed_name) if normalize_companies else None
+        mention_id = identity_id if is_target else company["canonical_id"] if company else f"auto:{safe_key(observed_name)}" if normalize_companies else safe_key(observed_name)
+        mention_name = display_name if is_target else company["canonical_name"] if company else observed_name
+        key = f"canonical:{identity_id}" if is_target else f"observed:{mention_id}"
         if key in mention_keys:
+            if normalize_companies:
+                existing = next(mention for mention in normalized_mentions if mention["canonical_id"] == mention_id)
+                if observed_name not in existing["observed_names"]:
+                    existing["observed_names"].append(observed_name)
+                if item.get("evidence") and item["evidence"] not in existing["evidence_spans"]:
+                    existing["evidence_spans"].append(item["evidence"])
             continue
         mention_keys.add(key)
         normalized_mentions.append({
-            "name": display_name if is_target else observed_name,
+            "name": mention_name,
             "position": len(normalized_mentions) + 1,
             "role": clean_name(item.get("role")) or "упоминание",
             "observed_name": observed_name,
-            "canonical_id": identity_id if is_target else safe_key(observed_name),
-            "canonical_name": display_name if is_target else observed_name,
+            "canonical_id": mention_id,
+            "canonical_name": mention_name,
+            **({"evidence": item["evidence"]} if item.get("evidence") else {}),
+            **({
+                "identity_normalization_version": IDENTITY_NORMALIZATION_VERSION,
+                "observed_names": [observed_name],
+                "evidence_spans": [item["evidence"]] if item.get("evidence") else [],
+                "identity_relation": company["relation"] if company else "exact_name",
+            } if normalize_companies else {}),
         })
 
     target_key = f"canonical:{identity_id}"
@@ -113,6 +151,8 @@ def canonicalize_analysis(analysis: dict, raw_answer: str, brand: str, canonical
     analysis["canonical_name"] = display_name
     analysis["mentioned_brands"] = [item["canonical_name"] for item in normalized_mentions if item["canonical_id"] != identity_id]
     analysis["competitors"] = list(analysis["mentioned_brands"])
+    if normalize_companies:
+        analysis["identity_normalization_version"] = IDENTITY_NORMALIZATION_VERSION
     if not matching:
         analysis["role"] = "не упомянут"
     elif analysis.get("role") == "не упомянут":

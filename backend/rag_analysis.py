@@ -1,5 +1,6 @@
 import json
 import re
+from copy import deepcopy
 from typing import Literal, Optional
 
 from pydantic import BaseModel, StrictBool, ValidationError, conint
@@ -93,6 +94,13 @@ ANALYSIS_RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
+DIRECT_ANALYSIS_RESPONSE_SCHEMA = deepcopy(ANALYSIS_RESPONSE_SCHEMA)
+DIRECT_ANALYSIS_RESPONSE_SCHEMA["required"].append("competitors")
+DIRECT_ANALYSIS_RESPONSE_SCHEMA["properties"]["ordered_mentions"]["items"]["properties"]["evidence"] = {"type": "string", "minLength": 1}
+DIRECT_ANALYSIS_RESPONSE_SCHEMA["properties"]["ordered_mentions"]["items"]["required"].append("evidence")
+DIRECT_ANALYSIS_RESPONSE_SCHEMA["properties"]["ordered_mentions"]["items"]["properties"]["role"]["enum"].remove("упоминание")
+DIRECT_ANALYSIS_RESPONSE_SCHEMA["properties"]["role"]["enum"].remove("упоминание")
+
 
 SYSTEM_PROMPT_ANALYZE = """Ты — аналитик видимости бренда в AI-поиске. Твоя задача — проанализировать предоставленный контекст и определить, как в нём представлен указанный пользователем бренд.
 
@@ -142,7 +150,7 @@ def build_answer_analysis_messages(brand: str, query: str, answer: str, aliases:
 
 Конкурент — это только компания или сервис, который ответ предлагает пользователю как самостоятельный вариант решения его запроса. Не считай конкурентами производителей оборудования и комплектующих, технологии, платформы, партнёров, клиентов, страны, источники, ссылки и бренды, упомянутые лишь внутри описания другого варианта.
 
-Определи, является ли целевой бренд самостоятельным вариантом ответа. В ordered_mentions включай только целевой бренд (если он самостоятельный вариант) и прямых конкурентов в порядке появления как вариантов ответа. В competitors перечисли только прямых конкурентов без целевого бренда. В name пиши дословное название без номера и маркера списка. Позиции начинаются с 1 и не повторяются. Не включай сущности, которых нет в тексте. quotes всегда верни пустым массивом, source_analysis — пустым массивом, sources_count и total_sources — нулём. Верни только JSON по заданной схеме."""},
+Определи, является ли целевой бренд самостоятельным вариантом ответа. В ordered_mentions включай только целевой бренд (если он самостоятельный вариант) и прямых конкурентов в порядке появления как вариантов ответа. В competitors и mentioned_brands перечисли только прямых конкурентов без целевого бренда. В name пиши дословное название без номера и маркера списка. Для каждого варианта в evidence приведи дословный непрерывный фрагмент ответа с его названием, подтверждающий самостоятельную рекомендацию или сравнение. Повтор одного названия считай одним вариантом. На этом этапе сохраняй различные названия и продукты одной компании отдельно, не объединяй их и не заменяй названия: объединение выполнит приложение после проверки извлечения. Позиции начинаются с 1, идут подряд и не повторяются. Не включай сущности, которых нет в тексте. quotes всегда верни пустым массивом, source_analysis — пустым массивом, sources_count и total_sources — нулём. Верни только JSON по заданной схеме."""},
         {"role": "user", "content": f"Параметры проверки: {request_data}\n\n<assistant_answer>\n{answer}\n</assistant_answer>"},
     ]
 
@@ -230,10 +238,68 @@ def _ordered_mentions(value, fallback_names: list[str]) -> list[dict]:
     return mentions
 
 
-def parse_analysis_response(answer: str, context: str, normalize_source_indexes: bool = False, target_brand: str = "") -> dict:
+def _parse_direct_analysis(parsed: dict, context: str) -> dict:
+    if any(field not in parsed for field in DIRECT_ANALYSIS_RESPONSE_SCHEMA["required"]):
+        raise ValueError("анализ самостоятельных вариантов содержит не все поля")
+    for field in ("competitors", "mentioned_brands", "ordered_mentions"):
+        if not isinstance(parsed[field], list):
+            raise ValueError("варианты ответа должны быть массивами")
+    for field in ("competitors", "mentioned_brands"):
+        names = parsed[field]
+        if any(not isinstance(name, str) or not name.strip() for name in names):
+            raise ValueError("варианты ответа должны содержать названия")
+        if len({name.casefold() for name in names}) != len(names):
+            raise ValueError("повторяющиеся названия вариантов ответа")
+    if parsed["mentioned_brands"] != parsed["competitors"]:
+        raise ValueError("списки конкурентов противоречат друг другу")
+    names = set()
+    observed_names = set()
+    evidence = []
+    for position, item in enumerate(parsed["ordered_mentions"], start=1):
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise ValueError("вариант ответа не содержит дословного названия")
+        name = item["name"]
+        if item.get("role") not in {"рекомендация", "сравнение", "упоминание в списке"}:
+            raise ValueError("случайное упоминание не является самостоятельным вариантом")
+        if name.casefold() in names:
+            raise ValueError("повторяющиеся самостоятельные варианты ответа")
+        names.add(name.casefold())
+        observed_names.add(name)
+        if type(item.get("position")) is not int or item["position"] != position:
+            raise ValueError("позиции самостоятельных вариантов должны идти подряд")
+        quote = item.get("evidence")
+        if not isinstance(quote, str) or not quote.strip() or quote not in context or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", quote):
+            raise ValueError("самостоятельный вариант не подтверждён дословным фрагментом ответа")
+        evidence.append(quote)
+    if any(name not in observed_names for name in parsed["competitors"]):
+        raise ValueError("конкурент не извлечён как самостоятельный вариант")
+    if parsed["quotes"] or parsed["source_analysis"] or parsed["sources_count"] != 0 or parsed["total_sources"] != 0:
+        raise ValueError("анализ готового ответа не должен добавлять источники")
+    try:
+        if hasattr(BrandAnalysis, "model_validate"):
+            validated = BrandAnalysis.model_validate(parsed).model_dump()
+        else:
+            validated = BrandAnalysis.parse_obj(parsed).dict()
+    except ValidationError as error:
+        raise ValueError("ответ не прошёл проверку структуры самостоятельных вариантов") from error
+    for item, quote in zip(validated["ordered_mentions"], evidence):
+        item["evidence"] = quote
+    if not validated["mentioned"] and (validated["position"] is not None or validated["role"] != "не упомянут"):
+        raise ValueError("противоречивое отсутствие целевого бренда")
+    if validated["mentioned"] and (validated["position"] is None or validated["role"] == "не упомянут"):
+        raise ValueError("противоречивое присутствие целевого бренда")
+    if validated["role"] == "упоминание":
+        raise ValueError("случайное упоминание целевого бренда не является самостоятельным вариантом")
+    validated["total_sentences"] = None
+    return validated
+
+
+def parse_analysis_response(answer: str, context: str, normalize_source_indexes: bool = False, target_brand: str = "", strict_direct_options: bool = False) -> dict:
     parsed = _extract_json(answer)
     if not parsed:
         raise ValueError("модель вернула ответ в неверном формате")
+    if strict_direct_options:
+        return _parse_direct_analysis(parsed, context)
 
     if "mentioned" not in parsed:
         for alias in ("brand_mentioned", "target_brand_mentioned"):

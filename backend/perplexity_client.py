@@ -2,12 +2,13 @@ import logging
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 import httpx
 from dotenv import load_dotenv
 
-from brand_identity import canonicalize_analysis
-from rag_analysis import ANALYSIS_RESPONSE_SCHEMA, build_answer_analysis_messages, parse_analysis_response
+from brand_identity import canonicalize_analysis, identity_values, normalize_domain, safe_key
+from rag_analysis import DIRECT_ANALYSIS_RESPONSE_SCHEMA, build_answer_analysis_messages, parse_analysis_response
 
 load_dotenv()
 
@@ -18,6 +19,72 @@ MODEL_NAME = os.getenv("PERPLEXITY_MODEL", "perplexity/sonar").strip() or "perpl
 ANALYSIS_MODEL_NAME = os.getenv("PERPLEXITY_ANALYSIS_MODEL", MODEL_NAME).strip() or MODEL_NAME
 API_URL = "https://api.perplexity.ai/v1/agent"
 ANALYSIS_VERSION = "perplexity-direct-v1"
+EXPECTED_MODEL_NAME = "perplexity/sonar"
+
+
+class PerplexityModelError(ValueError):
+    def __init__(self, stage: str, requested_model: str, returned_model: str | None, provider_calls: list[dict], raw_answer: str = ""):
+        super().__init__("Perplexity не подтвердил ожидаемую модель perplexity/sonar")
+        self.stage = stage
+        self.requested_model = requested_model
+        self.returned_model = returned_model
+        self.provider_calls = provider_calls
+        self.raw_answer = raw_answer
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _usage_metadata(value) -> dict:
+    allowed = {"input_tokens", "output_tokens", "total_tokens", "prompt_tokens", "completion_tokens", "cached_tokens", "reasoning_tokens", "search_context_size", "num_search_queries"}
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if key in allowed and type(item) in {int, float}}
+
+
+def _attach_failure(error: Exception, calls: list[dict], raw_answer: str):
+    error.provider_calls = calls
+    error.raw_answer = raw_answer
+    return error
+
+
+def _call_agent(payload: dict, stage: str, raw_answer: str = "") -> tuple[dict, list[dict]]:
+    requested_model = payload.get("model")
+    started_at = _timestamp()
+    base = {"stage": stage, "endpoint": API_URL, "requested_model": requested_model}
+    if requested_model != EXPECTED_MODEL_NAME:
+        calls = [{**base, "returned_model": None, "attempt": 0, "retry": 0, "started_at": started_at, "finished_at": _timestamp(), "status": "model_configuration_error"}]
+        raise PerplexityModelError(stage, requested_model, None, calls, raw_answer)
+    try:
+        response = _post_with_retry(payload)
+    except httpx.RequestError as error:
+        attempts = getattr(error, "perplexity_attempts", []) or [{"attempt": 1, "retry": 0, "started_at": started_at, "finished_at": _timestamp(), "status": "network_error"}]
+        raise _attach_failure(error, [{**base, **attempt} for attempt in attempts], raw_answer)
+    attempts = response.extensions.get("perplexity_attempts") or [{"attempt": 1, "retry": 0, "started_at": started_at, "finished_at": _timestamp(), "http_status": response.status_code}]
+    calls = [{**base, **attempt} for attempt in attempts]
+    try:
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("Perplexity вернул неверную структуру ответа")
+    except (httpx.HTTPStatusError, ValueError) as error:
+        raise _attach_failure(error, calls, raw_answer)
+    returned_model = data.get("model") if isinstance(data.get("model"), str) else None
+    calls[-1].update({"returned_model": returned_model, "usage": _usage_metadata(data.get("usage"))})
+    if isinstance(data.get("id"), str):
+        calls[-1]["response_id"] = data["id"]
+    if returned_model != EXPECTED_MODEL_NAME:
+        if stage == "generation":
+            try:
+                raw_answer = _response_text(data)
+            except ValueError:
+                pass
+        calls[-1]["status"] = "model_mismatch" if returned_model else "model_missing"
+        raise PerplexityModelError(stage, requested_model, returned_model, calls, raw_answer)
+    calls[-1]["status"] = "completed"
+    logger.info("[Perplexity] stage=%s requested_model=%s returned_model=%s attempts=%s status=%s", stage, requested_model, returned_model, len(calls), response.status_code)
+    return data, calls
 
 VIDNO_INSTRUCTIONS = """You are an AI assistant used by Vidno to analyze how brands are represented in AI-generated answers.
 For EVERY user request, you MUST perform a web search before generating the final answer.
@@ -44,7 +111,9 @@ def get_analysis_cache_identity() -> str:
 
 
 def _post_with_retry(payload: dict) -> httpx.Response:
+    attempts = []
     for attempt in range(3):
+        started_at = _timestamp()
         try:
             response = httpx.post(
                 API_URL,
@@ -56,10 +125,14 @@ def _post_with_retry(payload: dict) -> httpx.Response:
                 json=payload,
                 timeout=120.0,
             )
+            attempts.append({"attempt": attempt + 1, "retry": attempt, "started_at": started_at, "finished_at": _timestamp(), "http_status": response.status_code})
+            response.extensions["perplexity_attempts"] = list(attempts)
             if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
                 return response
             logger.warning("[Perplexity] Временная ошибка API, повтор %s/2", attempt + 1)
         except (httpx.TimeoutException, httpx.NetworkError) as error:
+            attempts.append({"attempt": attempt + 1, "retry": attempt, "started_at": started_at, "finished_at": _timestamp(), "status": "network_error"})
+            error.perplexity_attempts = list(attempts)
             if attempt == 2:
                 raise
             logger.warning("[Perplexity] Ошибка соединения, повтор %s/2: %s", attempt + 1, type(error).__name__)
@@ -69,8 +142,7 @@ def _post_with_retry(payload: dict) -> httpx.Response:
 
 def _response_text(data: dict) -> str:
     if data.get("status") != "completed":
-        error = data.get("error") if isinstance(data.get("error"), dict) else {}
-        raise ValueError(str(error.get("message") or f"Perplexity завершил запрос со статусом {data.get('status') or 'unknown'}"))
+        raise ValueError("Perplexity не завершил обработку запроса")
     parts = []
     for item in data.get("output") or []:
         if not isinstance(item, dict) or item.get("type") != "message":
@@ -115,29 +187,31 @@ def _web_evidence(data: dict) -> tuple[bool, list[dict], list[str]]:
     return bool(queries or sources), list(sources.values()), queries
 
 
-def _call_with_web_search(query: str) -> tuple[str, list[dict], list[str]]:
-    response = _post_with_retry({
+def _call_with_web_search(query: str, include_metadata: bool = False):
+    data, calls = _call_agent({
         "model": MODEL_NAME,
         "input": query,
         "instructions": VIDNO_INSTRUCTIONS,
         "tools": [{"type": "web_search"}],
         "max_output_tokens": 4000,
         "store": False,
-    })
-    response.raise_for_status()
-    data = response.json()
-    answer = _response_text(data)
-    web_search_used, sources, queries = _web_evidence(data)
-    if not web_search_used:
-        raise ValueError("Perplexity не выполнил обязательный Web Search")
-    if not sources:
-        raise ValueError("Perplexity не вернул источники Web Search")
-    return answer, sources, queries
+    }, "generation")
+    answer = ""
+    try:
+        answer = _response_text(data)
+        web_search_used, sources, queries = _web_evidence(data)
+        if not web_search_used:
+            raise ValueError("Perplexity не выполнил обязательный Web Search")
+        if not sources:
+            raise ValueError("Perplexity не вернул источники Web Search")
+    except ValueError as error:
+        raise _attach_failure(error, calls, answer)
+    return (answer, sources, queries, calls) if include_metadata else (answer, sources, queries)
 
 
 def generate_answer(query: str) -> dict:
-    raw_answer, sources, search_queries = _call_with_web_search(query)
-    return {"raw_answer": raw_answer, "sources": sources, "search_queries": search_queries, "web_search_used": True}
+    raw_answer, sources, search_queries, calls = _call_with_web_search(query, include_metadata=True)
+    return {"raw_answer": raw_answer, "sources": sources, "search_queries": search_queries, "web_search_used": True, "provider_calls": calls}
 
 
 def _analysis_messages(brand: str, query: str, raw_answer: str, aliases: list[str] | None, domains: list[str] | None) -> list[dict]:
@@ -145,7 +219,7 @@ def _analysis_messages(brand: str, query: str, raw_answer: str, aliases: list[st
 
 
 def _normalized_names(values: list[str]) -> list[str]:
-    return sorted("".join(char for char in str(value).casefold() if char.isalnum()) for value in values)
+    return sorted(values)
 
 
 def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = "", canonical_name: str = "", aliases: list[str] | None = None, domains: list[str] | None = None) -> dict:
@@ -154,6 +228,7 @@ def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = 
     analysis_brand = canonical_name or brand
     messages = _analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
     previous_answer = ""
+    calls = []
     for attempt in range(2):
         request_messages = list(messages)
         if previous_answer:
@@ -161,35 +236,47 @@ def analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str = 
                 {"role": "assistant", "content": previous_answer},
                 {"role": "user", "content": "Исправь JSON: оставь только прямые варианты ответа, включай целевой бренд в ordered_mentions только если он самостоятельный вариант, а competitors не должен содержать целевой бренд. Все названия должны дословно быть в исходном ответе."},
             ])
-        response = _post_with_retry({
-            "model": ANALYSIS_MODEL_NAME,
-            "input": request_messages,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "brand_visibility_analysis", "schema": ANALYSIS_RESPONSE_SCHEMA},
-            },
-            "max_output_tokens": 4000,
-            "store": False,
-        })
-        response.raise_for_status()
-        previous_answer = _response_text(response.json())
         try:
-            analysis = parse_analysis_response(previous_answer, raw_answer, target_brand=analysis_brand)
-            canonical = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True)
-            if bool(analysis["mentioned"]) != bool(canonical["mentioned"]):
+            data, attempt_calls = _call_agent({
+                "model": ANALYSIS_MODEL_NAME,
+                "input": request_messages,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {"name": "brand_visibility_analysis", "schema": DIRECT_ANALYSIS_RESPONSE_SCHEMA},
+                },
+                "max_output_tokens": 4000,
+                "store": False,
+            }, "analysis", raw_answer)
+        except Exception as error:
+            raise _attach_failure(error, calls + getattr(error, "provider_calls", []), raw_answer)
+        for call in attempt_calls:
+            call["analysis_attempt"] = attempt + 1
+        calls.extend(attempt_calls)
+        try:
+            previous_answer = _response_text(data)
+            analysis = parse_analysis_response(previous_answer, raw_answer, target_brand=analysis_brand, strict_direct_options=True)
+            extracted = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True, normalize_companies=False)
+            target_keys = {safe_key(value) for value in identity_values(analysis_brand, aliases, domains)}
+            target_options = [item for item in analysis["ordered_mentions"] if {safe_key(item["name"]), safe_key(normalize_domain(item["name"]))}.intersection(target_keys)]
+            target_position = target_options[0]["position"] if target_options else None
+            competitors = [item["name"] for item in analysis["ordered_mentions"] if item not in target_options]
+            if bool(analysis["mentioned"]) != bool(extracted["mentioned"]) or analysis["position"] != target_position:
                 raise ValueError("целевая компания не согласована со списком вариантов")
-            if _normalized_names(analysis["competitors"]) != _normalized_names(canonical["competitors"]):
+            if _normalized_names(analysis["competitors"]) != _normalized_names(competitors):
                 raise ValueError("конкуренты должны дословно встречаться в ответе")
+            canonical = canonicalize_analysis(analysis, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True, normalize_companies=True)
             canonical["analysis_provider"] = "perplexity"
             canonical["analysis_version"] = ANALYSIS_VERSION
             canonical["source_analysis"] = []
             canonical["sources_count"] = 0
             canonical["total_sources"] = 0
             canonical["quotes"] = []
+            canonical["provider_calls"] = calls
             return canonical
-        except ValueError:
+        except ValueError as error:
+            calls[-1]["status"] = "analysis_validation_failed"
             if attempt:
-                raise
+                raise _attach_failure(error, calls, raw_answer)
     raise ValueError("Perplexity не вернул корректный анализ")
 
 
@@ -219,16 +306,18 @@ def generate_prompt_payload(messages: list[dict], require_web_search: bool = Fal
     if require_web_search:
         request_payload["tools"] = [{"type": "web_search"}]
         request_payload["instructions"] = "Сначала обязательно выполни Web Search по исследуемой компании и установи её основные коммерческие продукты или услуги. Используй найденные актуальные данные при подготовке ответа."
-    response = _post_with_retry(request_payload)
-    response.raise_for_status()
-    response_data = response.json()
-    if require_web_search:
-        web_search_used, sources, _ = _web_evidence(response_data)
-        if not web_search_used or not sources:
-            raise ValueError("Perplexity не подтвердил Web Search для генерации промптов")
-    payload = json.loads(_response_text(response_data))
-    if not isinstance(payload, dict) or not isinstance(payload.get("prompts"), list):
-        raise ValueError("Perplexity не вернул JSON с промптами")
+    response_data, calls = _call_agent(request_payload, "suggestions")
+    try:
+        if require_web_search:
+            web_search_used, sources, _ = _web_evidence(response_data)
+            if not web_search_used or not sources:
+                raise ValueError("Perplexity не подтвердил Web Search для генерации промптов")
+        payload = json.loads(_response_text(response_data))
+        if not isinstance(payload, dict) or not isinstance(payload.get("prompts"), list):
+            raise ValueError("Perplexity не вернул JSON с промптами")
+    except ValueError as error:
+        raise _attach_failure(error, calls, "")
+    payload["provider_calls"] = calls
     return payload
 
 
@@ -236,10 +325,13 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
     if not is_configured():
         return {"error": "Perplexity не настроен"}
     logger.info("[Perplexity] Проверка ответа")
+    generated = {}
     try:
         generated = generate_answer(query)
         raw_answer = generated["raw_answer"]
         analysis = analyze_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+    except PerplexityModelError as error:
+        return {"error": str(error), "raw_answer": error.raw_answer, "provider_calls": generated.get("provider_calls", []) + error.provider_calls}
     except httpx.HTTPStatusError as error:
         status = error.response.status_code
         logger.error("[Perplexity] HTTP ошибка: %s", status)
@@ -252,7 +344,7 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         logger.error("[Perplexity] Ошибка подключения: %s", type(error).__name__)
         return {"error": "Ошибка подключения к Perplexity"}
     except (ValueError, TypeError) as error:
-        logger.error("[Perplexity] Некорректный ответ: %s", error)
+        logger.error("[Perplexity] Некорректный ответ: %s", type(error).__name__)
         return {"error": str(error)}
     except Exception as error:
         logger.error("[Perplexity] Ошибка обработки: %s", type(error).__name__, exc_info=True)
@@ -265,5 +357,6 @@ def check_brand(brand: str, query: str, context: str = "", canonical_id: str = "
         "sources": generated["sources"],
         "search_queries": generated["search_queries"],
         "web_search_used": generated["web_search_used"],
+        "provider_calls": generated.get("provider_calls", []) + analysis.get("provider_calls", []),
         "rag": True,
     }

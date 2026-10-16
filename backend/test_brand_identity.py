@@ -1,5 +1,6 @@
 import unittest
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -8,6 +9,50 @@ from brand_identity import canonicalize_analysis
 
 
 class CanonicalBrandTests(unittest.TestCase):
+    def test_company_options_only_merge_confirmed_products_for_new_results(self):
+        names = ["Т-Банк", "Альфа-Банк", "Точка Банк", "ВТБ", "СберБанк", "СберБизнес"]
+        raw = "\n".join(f"{index}. {name} — подходит для переводов." for index, name in enumerate(names, 1))
+        analysis = {"ordered_mentions": [{"name": name, "role": "рекомендация", "evidence": f"{name} — подходит для переводов."} for name in names], "role": "не упомянут"}
+        original = deepcopy(analysis)
+        legacy = canonicalize_analysis(analysis, raw, "Другой банк", strict_direct_options=True)
+        result = canonicalize_analysis(analysis, raw, "Другой банк", strict_direct_options=True, normalize_companies=True)
+        self.assertEqual(analysis, original)
+        self.assertEqual(len(legacy["ordered_mentions"]), 6)
+        self.assertNotIn("identity_normalization_version", legacy)
+        self.assertEqual(len(result["ordered_mentions"]), 5)
+        self.assertEqual(result["ordered_mentions"][-1]["observed_names"], ["СберБанк", "СберБизнес"])
+        self.assertEqual(len(result["ordered_mentions"][-1]["evidence_spans"]), 2)
+        self.assertEqual([item["position"] for item in result["ordered_mentions"]], [1, 2, 3, 4, 5])
+        self.assertTrue(all(item["identity_normalization_version"] == "company-options-v1" for item in result["ordered_mentions"]))
+
+    def test_common_prefix_does_not_merge_independent_brands(self):
+        names = ["СберМаркет", "СберМегаМаркет", "Яндекс", "Яндекс Банк"]
+        analysis = {"ordered_mentions": [{"name": name} for name in names]}
+        result = canonicalize_analysis(analysis, ", ".join(names), "Другой бренд", strict_direct_options=True, normalize_companies=True)
+        self.assertEqual(result["competitors"], names)
+
+    def test_confirmed_product_is_target_company_only_when_direct_option(self):
+        result = canonicalize_analysis({"ordered_mentions": [{"name": "СберБизнес", "evidence": "СберБизнес подходит."}]}, "СберБизнес подходит.", "СберБанк", "target", strict_direct_options=True, normalize_companies=True)
+        self.assertTrue(result["mentioned"])
+        self.assertEqual(result["ordered_mentions"][0]["canonical_id"], "target")
+        incidental = canonicalize_analysis({"ordered_mentions": []}, "Партнёр — СберБизнес.", "СберБанк", "target", strict_direct_options=True, normalize_companies=True)
+        self.assertFalse(incidental["mentioned"])
+
+    def test_normalization_returns_a_separate_object(self):
+        analysis = {"mentioned": True, "competitors": ["Не было"], "ordered_mentions": [{"name": "Не было"}]}
+        original = deepcopy(analysis)
+        result = canonicalize_analysis(analysis, "Нет названий.", "Цель", strict_direct_options=True)
+        self.assertIsNot(result, analysis)
+        self.assertEqual(analysis, original)
+        self.assertNotEqual(result["mentioned"], analysis["mentioned"])
+
+    def test_company_text_variants_keep_a_stable_frontend_key(self):
+        names = ["Ёлка", "Елка"]
+        result = canonicalize_analysis({"ordered_mentions": [{"name": name} for name in names]}, ", ".join(names), "Другой бренд", strict_direct_options=True, normalize_companies=True)
+        self.assertEqual(len(result["ordered_mentions"]), 1)
+        self.assertEqual(result["ordered_mentions"][0]["canonical_id"], "auto:елка")
+        self.assertEqual(result["ordered_mentions"][0]["observed_names"], names)
+
     def test_safe_punctuation_variants_are_automatic(self):
         for observed in ("Т-банк", "Т-Банк", "Т банк"):
             with self.subTest(observed=observed):

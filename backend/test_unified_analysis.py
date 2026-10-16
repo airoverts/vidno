@@ -56,6 +56,19 @@ class UnifiedAnalysisTests(unittest.TestCase):
         self.assertTrue(payload["analysis_error"])
         self.assertNotIn("competitors", payload)
 
+    def test_analysis_failure_preserves_collected_gigachat_sources(self):
+        provider = self._provider()
+        provider["generate"] = lambda query, context: {"raw_answer": "  Исходный ответ GigaChat.\n", "sources": []}
+        source = {"url": "https://example.test/source", "title": "Поисковая справка"}
+        request = main.CheckRequest(brand="Selectel", query="Какие варианты?", provider="gigachat", force_refresh=True)
+        with patch.dict(main.PROVIDERS, {"gigachat": provider}), patch.object(main, "is_perplexity_configured", return_value=True), patch.object(main, "collect_and_format", return_value=("Контекст", [source])), patch.object(main, "analyze_with_perplexity", side_effect=ValueError("fixture")):
+            response = main._run_check(request, use_result_cache=False)
+        payload = json.loads(response.body)
+        artifact = payload["provider_errors"][0]
+        self.assertEqual(artifact["raw_answer"], "  Исходный ответ GigaChat.\n")
+        self.assertEqual(artifact["sources"], [{**source, "cited_in_answer": False}])
+        self.assertNotIn("mentioned", payload)
+
     def test_brand_citation_requires_cited_official_domain_url(self):
         result = {
             "sources": [

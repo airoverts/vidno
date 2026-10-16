@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 import threading
@@ -168,6 +169,71 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
         response = admin.patch(f"/api/admin/clients/{user_id}/access", json=changes)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["access"]
+
+    def test_ai_company_snapshots_roundtrip_without_rewriting_legacy_checks(self):
+        import httpx
+        import perplexity_client
+
+        admin, _admin_user, _admin_email = self._make_admin()
+        client, user, _email = self._register("ai-owner")
+        outsider, _other_user, _other_email = self._register("ai-outsider")
+        self._set_access(admin, user["id"], status="active", checks_limit=None, brands_limit=None)
+        names = ["Т-Банк", "Альфа-Банк", "Точка Банк", "ВТБ", "СберБанк", "СберБизнес"]
+        raw = "\n".join(f"{name} — подходит для переводов." for name in names)
+        legacy = {"brand": "Т-Банк", "query": "Прежний вопрос", "provider": "yandex", "analysis_version": "perplexity-direct-v1", "raw_answer": raw, "competitors": names[1:], "ordered_mentions": [{"name": name, "position": index} for index, name in enumerate(names, 1)]}
+        saved = client.post("/api/checks", json=legacy)
+        self.assertEqual(saved.status_code, 201, saved.text)
+        old_id = saved.json()["check"]["id"]
+        extracted = {"mentioned": True, "position": 1, "weighted_position": None, "role": "рекомендация", "reasoning": "Самостоятельные варианты", "quotes": [], "mentioned_brands": names[1:], "competitors": names[1:], "ordered_mentions": [{"name": name, "position": index, "role": "рекомендация", "evidence": f"{name} — подходит для переводов."} for index, name in enumerate(names, 1)], "source_analysis": [], "sources_count": 0, "total_sources": 0}
+        response = httpx.Response(200, json={"id": "isolated-analysis", "status": "completed", "model": "perplexity/sonar", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(extracted)}]}]}, request=httpx.Request("POST", perplexity_client.API_URL))
+        provider = {"generate": lambda query: {"raw_answer": raw, "sources": []}, "configured": lambda: True, "model": lambda: "test-answer"}
+        with patch.dict(self.main.PROVIDERS, {"yandex": provider, "openai": provider}), patch.object(perplexity_client, "API_KEY", "fixture"), patch.object(perplexity_client, "MODEL_NAME", "perplexity/sonar"), patch.object(perplexity_client, "ANALYSIS_MODEL_NAME", "perplexity/sonar"), patch.object(perplexity_client, "_post_with_retry", return_value=response):
+            single = client.post("/api/check", json={"brand": "Т-Банк", "query": "Какие банки подходят для переводов?", "provider": "yandex", "force_refresh": True})
+            combined = client.post("/api/check-all", json={"brand": "Т-Банк", "query": "Какие банки подходят для приложения?", "providers": ["yandex", "openai"], "force_refresh": True})
+        self.assertEqual(single.status_code, 200, single.text)
+        self.assertEqual(combined.status_code, 200, combined.text)
+        rows = client.get("/api/checks").json()["checks"]
+        self.assertEqual(next(item["result"] for item in rows if item["id"] == old_id), legacy)
+        for item in rows:
+            if item["id"] == old_id:
+                continue
+            result = item["result"]
+            self.assertEqual(result["canonical_id"], item["canonical_id"])
+            self.assertEqual(result["identity_normalization_version"], "company-options-v1")
+            self.assertEqual(len(result["ordered_mentions"]), 5)
+            answers = result.get("provider_results") or [result]
+            for answer in answers:
+                self.assertEqual(answer["raw_answer"], raw)
+                self.assertEqual(answer["ordered_mentions"][-1]["observed_names"], names[-2:])
+                self.assertEqual(answer["provider_calls"][0]["check_id"], item["id"])
+                self.assertEqual(answer["provider_calls"][0]["returned_model"], "perplexity/sonar")
+        self.assertEqual(outsider.get("/api/checks").json()["checks"], [])
+
+    def test_failed_unified_analysis_keeps_all_raw_answers_in_postgres(self):
+        from brand_identity import canonicalize_analysis
+
+        admin, _admin_user, _admin_email = self._make_admin()
+        client, user, _email = self._register("ai-failure")
+        self._set_access(admin, user["id"], status="active", checks_limit=None, brands_limit=None)
+        providers = {name: {"generate": (lambda query, name=name: {"raw_answer": f"{name}: сохранённый ответ", "sources": []}), "configured": lambda: True, "model": lambda: "test-answer"} for name in ("yandex", "openai")}
+
+        def analyze(brand, query, raw, canonical_id, canonical_name, aliases, domains):
+            if raw.startswith("openai"):
+                raise ValueError("fixture analysis failure")
+            return canonicalize_analysis({"ordered_mentions": [], "analysis_version": "perplexity-direct-v1"}, raw, brand, canonical_id, canonical_name, strict_direct_options=True, normalize_companies=True)
+
+        with patch.dict(self.main.PROVIDERS, providers), patch.object(self.main, "is_perplexity_configured", return_value=True), patch.object(self.main, "analyze_with_perplexity", side_effect=analyze):
+            response = client.post("/api/check-all", json={"brand": "Банк", "query": "Какие варианты?", "providers": ["yandex", "openai"]})
+        self.assertEqual(response.status_code, 502, response.text)
+        saved = client.get("/api/checks").json()["checks"][0]
+        self.assertEqual(saved["status"], "failed")
+        self.assertNotIn("mentioned", saved["result"])
+        self.assertNotIn("ordered_mentions", saved["result"])
+        self.assertEqual({item["raw_answer"] for item in saved["result"]["provider_errors"]}, {"yandex: сохранённый ответ", "openai: сохранённый ответ"})
+        with self.database.connection() as database:
+            stored = database.execute("SELECT result, quota_state FROM checks WHERE id = %s AND user_id = %s", (saved["id"], user["id"])).fetchone()
+        self.assertEqual(stored["result"], saved["result"])
+        self.assertEqual(stored["quota_state"], "refunded")
 
     def test_migrations_are_idempotent_and_new_users_are_pending_clients(self):
         with self.database.connection() as database:

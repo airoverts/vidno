@@ -76,6 +76,84 @@ class PromptSuggestionTests(unittest.TestCase):
         self.assertEqual(len(prompts), 3)
         self.assertEqual(normalize_suggested_prompts(prompts, "Demix", limit=3), prompts)
 
+    def test_clarifies_user_bank_example_without_inserting_companies(self):
+        query = "Какой банк выбрать для повседневных переводов и удобного управления деньгами через приложение?"
+        prompts = normalize_suggested_prompts([query], "СберБанк", require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(prompts, [query + " Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый."])
+        self.assertEqual(query, "Какой банк выбрать для повседневных переводов и удобного управления деньгами через приложение?")
+
+    def test_recommendation_mode_rejects_how_to_and_preset_named_choices(self):
+        values = [
+            "Как правильно выбрать банк для повседневных платежей?",
+            "На что обратить внимание при выборе банка?",
+            "Что лучше: Сбербанк, ВТБ и Альфа-Банк для переводов?",
+            "Какой банк выбрать между Т-Банк и Альфа-Банк?",
+            "Какой банк выбрать для ежедневных платежей?",
+        ]
+        prompts = normalize_suggested_prompts(values, "Газпромбанк", require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(len(prompts), 1)
+        self.assertTrue(prompts[0].startswith(values[-1]))
+
+    def test_recommendation_mode_excludes_alias_and_domain_variants(self):
+        values = [
+            "Какие услуги тбанк подходят для ежедневных платежей?",
+            "Какие карты Тинькофф подходят для ежедневных платежей?",
+            "Какие услуги tbank.ru подходят для ежедневных платежей?",
+            "Какие сервисы подходят для международных платежей?",
+        ]
+        prompts = normalize_suggested_prompts(values, "Т-Банк", require_brand_intent=False, clarify_recommendations=True, excluded_names=["Тинькофф", "https://www.tbank.ru/"])
+        self.assertEqual(len(prompts), 1)
+        self.assertTrue(prompts[0].startswith(values[-1]))
+
+    def test_recommendation_mode_preserves_categories_and_geography(self):
+        values = [
+            "Какие CRM и ERP подходят для небольшого производства?",
+            "Какие банки работают в Москве и Санкт-Петербурге?",
+            "Какие сервисы подходят для управления финансами малого бизнеса?",
+            "Какие сервисы подходят для выхода на мировой рынок?",
+        ]
+        prompts = normalize_suggested_prompts(values, "Мир", limit=4, require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(len(prompts), 4)
+        self.assertTrue(all(result.startswith(original) for result, original in zip(prompts, values)))
+
+    def test_recommendation_mode_keeps_explicit_options_and_rationale_once(self):
+        query = "Назови 3–5 банков для повседневных переводов и кратко объясни, чем подходит каждый."
+        prompts = normalize_suggested_prompts([query, query], "Газпромбанк", require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(prompts, [query])
+
+    def test_recommendation_mode_is_opt_in_for_generated_suggestions(self):
+        query = "Какой банк выбрать для повседневных переводов?"
+        self.assertEqual(normalize_suggested_prompts([query], "Газпромбанк", require_brand_intent=False), [query])
+
+    def test_recommendation_can_ask_why_each_option_suits_the_task(self):
+        query = "Назови несколько банков для переводов и объясни, почему каждый подходит."
+        self.assertEqual(normalize_suggested_prompts([query], "Газпромбанк", require_brand_intent=False, clarify_recommendations=True), [query])
+
+    def test_recommendation_mode_rejects_single_named_comparison_or_seed(self):
+        values = [
+            "Какие банки лучше, чем ВТБ?",
+            "Какие банки подходят, например ВТБ?",
+            "Какие сервисы использовать вместо Acme?",
+            "Какие банки подходят, например: «Альфа-Банк»?",
+            "Какие сервисы подходят, такие как OpenAI?",
+        ]
+        self.assertEqual(normalize_suggested_prompts(values, "Газпромбанк", require_brand_intent=False, clarify_recommendations=True), [])
+
+    def test_recommendation_mode_keeps_categories_after_comparison_or_example(self):
+        values = [
+            "Какие сервисы использовать вместо VPN?",
+            "Какие решения подходят, например CRM?",
+            "Какие инструменты лучше, чем API для этой задачи?",
+            "Какие банки подходят для повседневных платежей в России?",
+        ]
+        prompts = normalize_suggested_prompts(values, "Газпромбанк", limit=4, require_brand_intent=False, clarify_recommendations=True)
+        self.assertEqual(len(prompts), len(values))
+        self.assertTrue(all(result.startswith(original) for result, original in zip(prompts, values)))
+
+    def test_single_named_seed_filter_does_not_modify_manual_queries(self):
+        query = "Какие банки лучше, чем ВТБ?"
+        self.assertEqual(normalize_suggested_prompts([query], "Газпромбанк", require_brand_intent=False), [query])
+
 
 if __name__ == "__main__":
     unittest.main()

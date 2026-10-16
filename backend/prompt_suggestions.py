@@ -53,12 +53,50 @@ def parse_prompt_payload(value: str) -> dict:
     raise ValueError("GigaChat не вернул JSON с промптами")
 
 
-def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_brand_intent: bool = True) -> list[str]:
+def _mentions_excluded_name(prompt: str, names) -> bool:
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        name = re.sub(r"^https?://(?:www\.)?|^www\.", "", name.strip(), flags=re.IGNORECASE).rstrip("/")
+        letters = re.sub(r"[\W_]", "", name)
+        if not letters:
+            continue
+        pattern = r"(?<!\w)" + r"[\W_]*".join(re.escape(char) for char in letters) + r"(?!\w)"
+        if re.search(pattern, prompt, flags=re.IGNORECASE):
+            return True
+    return False
+
+
+def _has_named_shortlist(prompt: str) -> bool:
+    category_acronyms = {"CRM", "ERP", "API", "SMM", "SEO", "VPN", "VPS", "VDS", "СБП", "ЖК", "ИП", "ООО", "ИИ", "AI"}
+    named = r"[A-ZА-ЯЁ][\w-]*(?:\s+[A-ZА-ЯЁ][\w-]*)*"
+    for match in re.finditer(rf"\b(?i:чем|например|вместо|наподобие|такой\s+как|такие\s+как)\s*[,:]?\s*[«\"']?({named})\b", prompt):
+        if any(part not in category_acronyms for part in match.group(1).split()):
+            return True
+    for match in re.finditer(rf"\b({named})\s*(?:,\s*|\s+(?:или|и|либо)\s+)({named})\b", prompt):
+        names = [word for part in match.groups() for word in part.split() if word not in {"Какие", "Какая", "Какой", "Что"}]
+        selection_context = re.search(r"(?:\b(?:из|между|среди|например|выбрать|лучше|подойдут)|[:,])\s*$", prompt[:match.start()], re.IGNORECASE)
+        if selection_context and any(part not in category_acronyms for part in names):
+            return True
+    return False
+
+
+def _clarify_recommendation(prompt: str) -> str:
+    concrete = re.search(r"\b(?:назови|назовите|перечисли|перечислите|предложи|предложите|порекомендуй|порекомендуйте|конкретн\w*)\b|\b[3-5]\s*[–—-]\s*[3-5]\b", prompt, re.IGNORECASE)
+    rationale = re.search(r"\b(?:объясни\w*|обосн\w*|почему\s+(?:кажд\w*|они)|чем\s+(?:кажд\w*|они)|плюс\w*\s+кажд\w*)\b", prompt, re.IGNORECASE)
+    if concrete and rationale:
+        return prompt
+    ending = "" if prompt.endswith(("?", ".", "!")) else "?"
+    return f"{prompt}{ending} Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый."
+
+
+def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_brand_intent: bool = True, *, clarify_recommendations: bool = False, excluded_names=None) -> list[str]:
     if not isinstance(values, list):
         return []
     brand_name = " ".join(brand.split()).casefold()
     blocked = re.compile(r"\b(?:сравни|сравните|сравнение|против|versus|vs|купить)\b|\bв каком магазине\b", re.IGNORECASE)
     instructional = re.compile(r"\b(?:как\s+(?:правильно\s+)?(?:выбрать|подобрать)|на\s+что\s+обратить\s+внимание|зачем|почему)\b", re.IGNORECASE)
+    instruction_only = re.compile(r"^(?:как\s+(?:правильно\s+)?(?:выбрать|подобрать)|на\s+что\s+обратить\s+внимание|зачем|почему)\b", re.IGNORECASE)
     brand_discovery = re.compile(r"\b(?:бренд\w*|производител\w*|марок|марки)\b", re.IGNORECASE)
     prompts = []
     seen = set()
@@ -70,7 +108,16 @@ def normalize_suggested_prompts(values, brand: str, limit: int = 10, require_bra
         key = prompt.casefold()
         if not 10 <= len(prompt) <= 240 or not any(char.isalpha() for char in prompt):
             continue
-        if (brand_name and brand_name in key) or blocked.search(prompt) or (require_brand_intent and (instructional.search(prompt) or not brand_discovery.search(prompt))) or any(pattern.search(prompt) for pattern in topic_exclusions) or key in seen:
+        if (not clarify_recommendations and brand_name and brand_name in key) or blocked.search(prompt) or (require_brand_intent and (instructional.search(prompt) or not brand_discovery.search(prompt))) or any(pattern.search(prompt) for pattern in topic_exclusions):
+            continue
+        if clarify_recommendations:
+            if instruction_only.search(prompt) or _mentions_excluded_name(prompt, [brand, *(excluded_names or [])]) or _has_named_shortlist(prompt):
+                continue
+            prompt = _clarify_recommendation(prompt)
+            if len(prompt) > 320:
+                continue
+        key = prompt.casefold()
+        if key in seen:
             continue
         seen.add(key)
         prompts.append(prompt)

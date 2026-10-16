@@ -255,6 +255,7 @@ img { max-width: 100%; display: block; }
 .logo-text .accent { color: var(--accent); }
 .theme-toggle { display: inline-grid; width: 36px; height: 36px; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--text-soft); background: var(--surface); transition: all var(--transition); }
 .theme-toggle:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-1px); }
+html:not([data-theme-switching="enabled"]) :is(#themeToggle, [data-settings-tab="appearance"], [data-settings-panel="appearance"]) { display: none; }
 .account-pill { display: inline-flex; max-width: 190px; align-items: center; gap: 8px; min-height: 38px; padding: 0 13px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--text); background: var(--surface); font-size: .8rem; font-weight: 700; }
 .account-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logo-mark { width: 36px; height: 36px; flex: 0 0 auto; object-fit: contain; }

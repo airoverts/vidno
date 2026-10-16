@@ -58,7 +58,7 @@ async function fixture(server = state(), width = 1440) {
             static now() { return fixed; }
         };
         localStorage.setItem('vidno_analytics_consent', 'denied');
-        localStorage.setItem('vidno-dashboard-active-brand', 'brand-101');
+        if (!localStorage.getItem('vidno-dashboard-active-brand')) localStorage.setItem('vidno-dashboard-active-brand', 'brand-101');
         window.reportPrintCalls = 0;
         window.print = () => { window.reportPrintCalls++; };
     }, Date.parse(stamp));
@@ -83,6 +83,13 @@ async function fixture(server = state(), width = 1440) {
             }
             if (endpoint === '/growth-tasks') return json({ tasks: [] });
             if (endpoint === '/dismissed-opportunities') return json({ items: [] });
+            if (endpoint === '/prompt-suggestions' && method === 'POST' && server.promptSuggestions) return json({ prompts: server.promptSuggestions });
+            if (endpoint === '/check-all' && method === 'POST' && server.checkSubmission) {
+                server.submitted = request.postDataJSON();
+                const submission = server.checkSubmission;
+                if (submission.record) server.checks.push(submission.record);
+                return json(submission.status ? { detail: submission.error } : { ...submission.record.result, check: submission.record }, submission.status || 200);
+            }
             return json({ detail: `Unexpected API ${method} ${endpoint}` }, 404);
         }
         if (url.origin !== origin) return route.fulfill({ status: 200, contentType: url.pathname.endsWith('.js') ? 'application/javascript' : 'text/css', body: '' });
@@ -359,6 +366,159 @@ test('refresh failure disables printing and successful retry replaces stale numb
 });
 
 for (const width of [1440, 390]) {
+    test(`snapshot citation survives current domain removal at ${width}px`, async () => {
+        const result = answer('openai', true, {
+            identity_normalization_version: 'company-options-v1', canonical_id: 'brand-101', canonical_name: 'Acme',
+            citation_domains: ['acme.test'], brand_cited: true,
+            sources: [{ url: 'https://acme.test/article', title: 'Acme', cited_in_answer: true }],
+            ordered_mentions: [{ name: 'Acme', canonical_name: 'Acme', canonical_id: 'brand-101', observed_names: ['Acme'], position: 1, role: 'рекомендация' }],
+        });
+        const saved = check(706, [result]);
+        Object.assign(saved.result, { identity_normalization_version: 'company-options-v1', citation_domains: ['acme.test'], brand_cited: true });
+        const f = await fixture(state({ checks: [saved] }), width);
+        try {
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'citation'), '100%');
+            f.server.brands[0].domains = [];
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'citation'), '100%');
+            assert.match(await f.page.locator('#reportCitationNote').textContent(), /1 из 1 ответ/);
+            assert.doesNotMatch(await f.page.locator('#reportCitationNote').textContent(), /Домены.*не указаны/);
+            assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
+    test(`company snapshots preserve new bank rows and legacy metrics at ${width}px`, async () => {
+        const target = brand(101, 'Т-Банк'); target.domains = [];
+        const names = ['Т-Банк', 'Альфа-Банк', 'Точка Банк', 'ВТБ', 'СберБанк', 'СберБизнес'];
+        const legacy = check(701, [answer('openai', true, {
+            name: target.canonical_name, raw_answer: names.join(', '),
+            ordered_mentions: names.map((name, index) => ({ name, position: index + 1, role: 'рекомендация' })),
+            competitors: names.slice(1),
+        })], { brand: target.canonical_name });
+        const current = structuredClone(legacy); current.id = 702;
+        const currentAnswer = current.result.provider_results[0];
+        Object.assign(currentAnswer, {
+            identity_normalization_version: 'company-options-v1', canonical_id: 'brand-101', canonical_name: target.canonical_name,
+            ordered_mentions: names.slice(0, 5).map((name, index) => ({
+                name, canonical_name: name, canonical_id: index ? `company:${index}` : 'brand-101',
+                observed_name: name, observed_names: index === 4 ? ['СберБанк', 'СберБизнес'] : [name], position: index + 1, role: 'рекомендация',
+            })), competitors: names.slice(1, 5),
+        });
+        Object.assign(current.result, { identity_normalization_version: 'company-options-v1', canonical_id: 'brand-101', canonical_name: target.canonical_name, ordered_mentions: currentAnswer.ordered_mentions, competitors: currentAnswer.competitors });
+        const f = await fixture(state({ brands: [target], checks: [legacy] }), width);
+        try {
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await f.page.locator('#reportBrandBody tr').count(), 6);
+            assert.equal(await metric(f.page, 'sov'), '41%');
+            assert.match(await f.page.locator('#reportBrandBody').textContent(), /СберБизнес/);
+            f.server.checks = [current];
+            await f.page.locator('#reportRefresh').click();
+            await f.page.waitForFunction(() => document.querySelector('[data-report-metric="sov"]').textContent.trim() === '44%');
+            assert.equal(await f.page.locator('#reportBrandBody tr').count(), 5);
+            assert.doesNotMatch(await f.page.locator('#reportBrandBody').textContent(), /СберБизнес/);
+            f.server.brands[0].aliases = ['СберБанк', 'СберБизнес'];
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'sov'), '44%');
+            assert.equal(await metric(f.page, 'position'), '1');
+            assert.equal(await f.page.locator('#reportBrandBody tr').count(), 5);
+            assert.match(await f.page.locator('#reportBrandBody').textContent(), /СберБанк/);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
+    test(`independent company brands in a saved snapshot stay separate at ${width}px`, async () => {
+        const names = ['Acme', 'СберМаркет', 'Самокат'];
+        const result = answer('openai', true, {
+            identity_normalization_version: 'company-options-v1', canonical_id: 'brand-101', canonical_name: 'Acme',
+            raw_answer: names.join(', '), competitors: names.slice(1),
+            ordered_mentions: names.map((name, index) => ({ name, canonical_name: name, canonical_id: index ? `independent:${index}` : 'brand-101', observed_names: [name], position: index + 1, role: 'рекомендация' })),
+        });
+        const saved = check(703, [result]);
+        saved.result.identity_normalization_version = 'company-options-v1';
+        const f = await fixture(state({ checks: [saved] }), width);
+        try {
+            await reports(f.page); await sameMetrics(f.page);
+            const rows = await f.page.locator('#reportBrandBody tr th').allTextContents();
+            assert.deepEqual(rows, ['Acme · ваш бренд', 'СберМаркет', 'Самокат']);
+            assert.equal(await metric(f.page, 'sov'), '55%');
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
+    test(`live success persists through API reload and errors retain active brand at ${width}px`, async () => {
+        const target = brand(102, 'SecondBrand');
+        const suggestedQuery = 'Какие сервисы стоит выбрать? Назови варианты и объясни выбор.';
+        const saved = check(704, [answer('openai', true, { name: target.canonical_name })], { brand_id: 102, brand: target.canonical_name, query: `${suggestedQuery} Для небольшой команды.` });
+        const f = await fixture(state({ brands: [brand(), target], promptSuggestions: [suggestedQuery], checkSubmission: { record: saved } }), width);
+        try {
+            await f.page.locator('#activeBrandSelect').selectOption('brand-102');
+            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await f.page.locator('#wsSuggestPrompts').click();
+            await f.page.locator('[data-suggested-prompt]').first().click();
+            assert.equal(await f.page.locator('#wsQuery').inputValue(), suggestedQuery);
+            assert.equal(f.server.requests.filter(item => item.endpoint === '/check-all').length, 0);
+            await f.page.locator('#wsQuery').fill(saved.query);
+            await f.page.locator('#wsCheck').click();
+            await f.page.locator('#wsResult').waitFor({ state: 'visible' });
+            assert.equal(f.server.submitted.query, saved.query);
+            assert.deepEqual(f.server.submitted.providers, providers);
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            assert.equal(await f.page.locator('#activeBrandSelect').inputValue(), 'brand-102');
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'visibility'), '100%');
+            f.server.checkSubmission = { status: 503, error: 'backend unavailable' };
+            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await f.page.locator('#wsQuery').fill('Какие конкретные варианты подходят для новой задачи?');
+            await f.page.locator('#wsCheck').click();
+            await f.page.waitForFunction(() => /backend unavailable/.test(document.querySelector('#wsError').textContent));
+            assert.equal(await f.page.locator('#wsResult').isVisible(), false);
+            assert.equal(await f.page.evaluate(() => localStorage.getItem('vidno-dashboard-active-brand')), 'brand-102');
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            assert.equal(await f.page.locator('#activeBrandSelect').inputValue(), 'brand-102');
+            await reports(f.page);
+            assert.equal(await metric(f.page, 'visibility'), '100%');
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
+    test(`failed provider analysis retains raw answers without metrics at ${width}px`, async () => {
+        const rawAnswer = 'Рекомендуем Acme и OtherBrand: первый удобен для отчётов, второй для интеграций.';
+        const failed = check(705, [], { status: 'failed', query: 'Какие сервисы выбрать?', error: 'provider_model_mismatch' });
+        failed.result.provider_errors = [{ provider: 'perplexity', error: 'provider_model_mismatch', analysis_error: true, raw_answer: rawAnswer, sources: [] }];
+        failed.result.requested_providers = ['perplexity'];
+        const f = await fixture(state({ checkSubmission: { status: 502, error: 'provider_model_mismatch', record: failed } }), width);
+        try {
+            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await f.page.locator('#wsQuery').fill(failed.query);
+            await f.page.locator('#wsCheck').click();
+            await f.page.waitForFunction(() => /provider_model_mismatch/.test(document.querySelector('#wsError').textContent));
+            assert.equal(await f.page.locator('#wsResult').isVisible(), false);
+            await f.page.locator('[data-check-details="705"]').click();
+            assert.match(await f.page.locator('#checkDetailsContent').textContent(), /Рекомендуем Acme и OtherBrand/);
+            assert.doesNotMatch(await f.page.locator('#checkDetailsContent').textContent(), /Бренд не упомянут|Бренд упомянут/);
+            await f.page.locator('#checkDetailsDialog [data-check-details-close]').first().click();
+            await reports(f.page); await sameMetrics(f.page);
+            for (const key of ['sov', 'visibility', 'citation', 'position']) assert.equal(await metric(f.page, key), '—');
+            assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await f.page.locator('[data-check-details="705"]').click();
+            assert.match(await f.page.locator('#checkDetailsContent').textContent(), /Рекомендуем Acme и OtherBrand/);
+            assert.equal(await f.page.evaluate(() => localStorage.getItem('vidno-dashboard-active-brand')), 'brand-101');
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
     test(`report fits ${width}px and prints only the report with a valid PDF`, async () => {
         const f = await fixture(state({ checks: [check(501, [answer('openai', true, { sources: [{ url: 'https://acme.test/article', title: 'Материал', cited_in_answer: true }] }), answer('yandex', false)])] }), width);
         try {

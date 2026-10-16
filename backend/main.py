@@ -7,6 +7,7 @@ import time
 import httpx
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,8 @@ from deepseek_client import generate_answer as generate_deepseek, get_model_name
 from yandex_client import generate_answer as generate_yandex, get_cache_identity as get_yandex_cache_identity, get_model_name as get_yandex_model, is_configured as is_yandex_configured
 from openai_client import generate_answer as generate_openai, get_cache_identity as get_openai_cache_identity, get_model_name as get_openai_model, is_configured as is_openai_configured
 from gemini_client import generate_answer as generate_gemini, get_model_name as get_gemini_model, is_configured as is_gemini_configured
-from perplexity_client import ANALYSIS_VERSION, analyze_answer as analyze_with_perplexity, generate_answer as generate_perplexity, generate_prompt_payload as generate_perplexity_prompt_payload, get_analysis_cache_identity, get_cache_identity as get_perplexity_cache_identity, get_model_name as get_perplexity_model, is_configured as is_perplexity_configured
+from perplexity_client import ANALYSIS_VERSION, PerplexityModelError, analyze_answer as analyze_with_perplexity, generate_answer as generate_perplexity, generate_prompt_payload as generate_perplexity_prompt_payload, get_analysis_cache_identity, get_cache_identity as get_perplexity_cache_identity, get_model_name as get_perplexity_model, is_configured as is_perplexity_configured
+from brand_identity import IDENTITY_NORMALIZATION_VERSION
 from search_collector import apply_brand_evidence, collect_and_format
 from cache import get_search_cache, set_search_cache, get_result_cache, set_result_cache, clear_cache, initialize_cache
 from prompt_suggestions import curated_prompts, excluded_topics, normalize_suggested_prompts, parse_prompt_payload
@@ -514,6 +516,7 @@ class PromptSuggestionsRequest(BaseModel):
     brand: str = Field(min_length=1, max_length=200)
     existing_queries: list[str] = Field(default_factory=list, max_length=20)
     domains: list[str] = Field(default_factory=list, max_length=20)
+    aliases: list[str] = Field(default_factory=list, max_length=50)
 
 
 def _check_metadata(record: dict):
@@ -523,15 +526,40 @@ def _check_metadata(record: dict):
 def _complete_check_response(user_id: int, check_id: int, response):
     if isinstance(response, JSONResponse):
         payload = json.loads(response.body)
-        record = finish_check(user_id, check_id, "failed", error=dict(payload))
+        _tag_provider_calls(payload, check_id)
+        artifacts = {key: payload[key] for key in ("provider", "provider_errors", "requested_providers") if key in payload}
+        record = finish_check(user_id, check_id, "failed", result=artifacts or None, error={key: value for key, value in payload.items() if key != "provider_errors"})
         payload["check_id"] = check_id
         return JSONResponse(status_code=response.status_code, content=payload)
+    response = deepcopy(response)
+    _tag_provider_calls(response, check_id)
     status = "partial" if response.get("provider_errors") else "completed"
     record = finish_check(user_id, check_id, status, result=response, error=response.get("provider_errors") or None)
     if not record or record["status"] not in {"completed", "partial"}:
         return JSONResponse(status_code=409, content={"error": "Проверка прервана. Запустите её повторно.", "check_id": check_id})
     saved_result = record.get("result")
     return {**(saved_result if isinstance(saved_result, dict) else response), "check": _check_metadata(record)}
+
+
+def _tag_provider_calls(payload: dict, check_id: int):
+    for call in payload.get("provider_calls", []):
+        call["check_id"] = check_id
+    for key in ("provider_results", "provider_errors"):
+        for item in payload.get(key, []):
+            _tag_provider_calls(item, check_id)
+
+
+def _provider_failure(provider: str, message: str, generated: dict | None = None, error: Exception | None = None, analysis_error: bool = False):
+    generated = generated or {}
+    artifact = {
+        "provider": provider,
+        "error": message,
+        "raw_answer": generated.get("raw_answer") or getattr(error, "raw_answer", ""),
+        "sources": generated.get("sources") or [],
+        "search_queries": generated.get("search_queries") or [],
+        "provider_calls": generated.get("provider_calls", []) + getattr(error, "provider_calls", []),
+    }
+    return JSONResponse(status_code=502, content={"error": message, "provider": provider, "analysis_error": analysis_error, "provider_errors": [artifact]})
 
 
 @app.get("/api/checks")
@@ -628,7 +656,8 @@ def check(req: CheckRequest, user: dict = Depends(_current_user)):
     record = None
     try:
         record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), req.provider, req.aliases, req.domains)
-        return _complete_check_response(user["id"], record["id"], _run_check(req, user["id"]))
+        saved_request = req.model_copy(update={"canonical_id": record.get("canonical_id") or req.canonical_id, "canonical_name": record.get("brand") or req.canonical_name or req.brand})
+        return _complete_check_response(user["id"], record["id"], _run_check(saved_request, user["id"]))
     except Exception as error:
         if record:
             finish_check(user["id"], record["id"], "failed", error={"error": type(error).__name__})
@@ -653,6 +682,7 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
         analysis_errors = []
         with ThreadPoolExecutor(max_workers=len(requested_providers)) as executor:
             request_data = req.model_dump(exclude={"providers"})
+            request_data.update({"canonical_id": record.get("canonical_id") or req.canonical_id, "canonical_name": record.get("brand") or req.canonical_name or req.brand})
             futures = {executor.submit(_run_check, CheckRequest(**request_data, provider=provider), user["id"], False): provider for provider in requested_providers}
             for future in as_completed(futures):
                 provider = futures[future]
@@ -664,15 +694,16 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
                     continue
                 if isinstance(result, JSONResponse):
                     payload = json.loads(result.body)
-                    errors.append({"provider": provider, "error": payload.get("error", "Ошибка провайдера")})
+                    errors.extend(payload.get("provider_errors") or [{"provider": provider, "error": payload.get("error", "Ошибка провайдера")}])
                     if payload.get("analysis_error"):
                         analysis_errors.append(provider)
                 else:
                     provider_results.append(result)
         if analysis_errors:
-            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider_errors": errors}))
+            errors.extend({"provider": item["provider"], "error": "Единый анализ не завершён", "raw_answer": item.get("raw_answer", ""), "sources": item.get("sources", []), "provider_calls": item.get("provider_calls", [])} for item in provider_results)
+            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Perplexity не смог завершить единый анализ ответов", "provider": "all", "analysis_error": True, "provider_errors": errors, "requested_providers": list(requested_providers)}))
         if not provider_results:
-            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider_errors": errors}))
+            return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=502, content={"error": "Не удалось получить ответы AI-моделей", "provider": "all", "provider_errors": errors, "requested_providers": list(requested_providers)}))
         return _complete_check_response(user["id"], record["id"], _aggregate_results(provider_results, errors, requested_providers))
     except Exception as error:
         if record:
@@ -697,9 +728,14 @@ def _aggregate_results(results, errors, requested_providers=None):
             key = str(mention.get("canonical_id") or name.casefold())
             mention_scores[key] = mention_scores.get(key, {"name": name, "score": 0.0, "canonical_id": key})
             mention_scores[key]["score"] += 1 / position
+            mention_scores[key].setdefault("mention", dict(mention))
+            saved_mention = mention_scores[key]["mention"]
+            for field in ("observed_names", "evidence_spans"):
+                if mention.get(field):
+                    saved_mention[field] = list(dict.fromkeys(saved_mention.get(field, []) + mention[field]))
             mention_roles.setdefault(key, mention.get("role", "упоминание"))
     ordered_mentions = [
-        {"name": item["name"], "position": index, "role": mention_roles.get(key, "упоминание"), "canonical_id": item["canonical_id"], "canonical_name": item["name"]}
+        {**item["mention"], "name": item["name"], "position": index, "role": mention_roles.get(key, "упоминание"), "canonical_id": item["canonical_id"], "canonical_name": item["name"]}
         for index, (key, item) in enumerate(sorted(mention_scores.items(), key=lambda pair: (-pair[1]["score"], pair[1]["name"].casefold())), start=1)
     ]
     target_ids = {str(item.get("canonical_id")) for item in results if item.get("canonical_id")}
@@ -731,6 +767,7 @@ def _aggregate_results(results, errors, requested_providers=None):
     detailed_reasoning = " ".join(dict.fromkeys(item.get("reasoning") for item in results if item.get("reasoning")))
     return {
         "provider": "all",
+        **({"identity_normalization_version": IDENTITY_NORMALIZATION_VERSION} if results and all(item.get("identity_normalization_version") == IDENTITY_NORMALIZATION_VERSION for item in results) else {}),
         "model": " + ".join(dict.fromkeys(str(item.get("model") or item.get("provider") or "AI") for item in results)),
         "mentioned": bool(mentioned_results),
         "position": sum(positions) / len(positions) if positions else None,
@@ -743,6 +780,7 @@ def _aggregate_results(results, errors, requested_providers=None):
         "sources": list(sources_by_url.values()),
         "brand_cited": bool(brand_citation_urls),
         "brand_citation_urls": brand_citation_urls,
+        "citation_domains": list(dict.fromkeys(domain for item in results for domain in item.get("citation_domains", []))),
         "source_analysis": [analysis for item in results for analysis in item.get("source_analysis", [])],
         "provider_results": results,
         "provider_errors": errors,
@@ -764,23 +802,24 @@ def prompt_suggestions(req: PromptSuggestionsRequest, user: dict = Depends(_curr
     brand = " ".join(req.brand.split())
     existing_queries = list(dict.fromkeys(" ".join(value.split()) for value in req.existing_queries if value and value.strip()))
     domains = list(dict.fromkeys(" ".join(value.split()) for value in req.domains if value and value.strip()))
+    aliases = list(dict.fromkeys(" ".join(value.split()) for value in req.aliases if value and value.strip()))
     rejected_topics = excluded_topics(brand)
-    if any(len(value) > 200 for value in domains):
+    if any(len(value) > 200 for value in domains + aliases):
         raise HTTPException(status_code=422, detail="Домен слишком длинный")
     generation_messages = [
         {"role": "system", "content": """Ты создаёшь ровно 3 естественных пользовательских запроса для проверки AI-видимости компании. Сначала через Web Search установи, какие продукты или услуги являются основным коммерческим бизнесом исследуемой компании. Приоритетны официальный сайт и надёжные актуальные источники. Никогда не принимай сувениры, мерч, футболки, свитшоты, подарочную продукцию, вакансии, благотворительность и другие побочные активности за основной бизнес компании.
 
-Каждый итоговый запрос должен быть таким, чтобы обычный AI-ассистент в ответе назвал несколько подходящих компаний, сервисов, банков, производителей или решений, среди которых потенциально может оказаться исследуемая компания. Слова «бренд», «марка» и «производитель» не обязательны. Допустимы естественные форматы: «Какой банк лучше выбрать для ежедневных платежей?», «Где оформить дебетовую карту с выгодным кэшбэком?», «Какие сервисы подходят для ...?», «Что лучше использовать для ...?». Не включай название исследуемой компании и названия её конкурентов. Не создавай сравнение заранее заданных компаний. Не используй «купить», адреса, наличие, SEO, мониторинг или вопросы только о характеристиках без запроса рекомендации. Все три запроса должны относиться только к ключевым коммерческим направлениям компании и покрывать разные реальные пользовательские задачи. Верни JSON с единственным полем prompts — массивом ровно из 3 строк."""},
-        {"role": "user", "content": json.dumps({"company_for_research_only": brand, "official_domains": domains, "previous_user_queries": existing_queries[-12:], "excluded_topics_from_product_feedback": rejected_topics}, ensure_ascii=False)},
+Каждый итоговый пользовательский запрос должен явно просить назвать 3–5 конкретных подходящих компаний, сервисов, банков, производителей или решений и кратко объяснить, чем подходит каждый вариант. Например: «Какие банки в России стоит рассмотреть для повседневных переводов и управления деньгами через приложение? Назови 3–5 конкретных вариантов и кратко объясни, чем подходит каждый». Слова «бренд», «марка» и «производитель» не обязательны. Не включай название исследуемой компании, её другие названия и названия конкурентов. Не создавай сравнение заранее заданных компаний и не подсказывай желаемый вариант ответа. Не используй «купить», адреса, наличие, SEO, мониторинг или вопросы только о критериях и характеристиках без запроса конкретных рекомендаций. Все три запроса должны относиться только к ключевым коммерческим направлениям компании, покрывать разные реальные пользовательские задачи и не повторять предыдущие запросы. Верни JSON с единственным полем prompts — массивом ровно из 3 строк."""},
+        {"role": "user", "content": json.dumps({"company_for_research_only": brand, "other_company_names_to_exclude": aliases, "official_domains": domains, "previous_user_queries": existing_queries[-12:], "excluded_topics_from_product_feedback": rejected_topics}, ensure_ascii=False)},
     ]
     try:
         generated = generate_perplexity_prompt_payload(generation_messages, require_web_search=True)
-        prompts = normalize_suggested_prompts(generated.get("prompts"), brand, limit=3, require_brand_intent=False)
+        prompts = normalize_suggested_prompts(generated.get("prompts"), brand, limit=3, require_brand_intent=False, clarify_recommendations=True, excluded_names=domains + aliases)
         if len(prompts) < 3:
             raise ValueError("Perplexity вернул недостаточно подходящих промптов")
-        return {"brand": brand, "prompts": prompts}
+        return {"brand": brand, "prompts": prompts, "provider_calls": generated.get("provider_calls", [])}
     except Exception as error:
-        logger.warning("[API] Не удалось предложить промпты: %s", error)
+        logger.warning("[API] Не удалось предложить промпты: %s", type(error).__name__)
         raise HTTPException(status_code=502, detail="Не удалось предложить промпты")
 
 
@@ -798,7 +837,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
     identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
-    cache_version = f"{get_analysis_cache_identity()}|canonical-brands-v1|brand-citations-v1:{identity_cache}"
+    cache_version = f"{get_analysis_cache_identity()}|{IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|brand-citations-v1:{identity_cache}"
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     
@@ -841,30 +880,37 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     
     try:
         generated = provider_config["generate"](query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](query)
+    except PerplexityModelError as error:
+        return _provider_failure(provider, str(error), error=error)
     except httpx.HTTPStatusError as error:
-        return JSONResponse(status_code=502, content={"error": f"Ошибка API {provider}: {error.response.status_code}"})
-    except httpx.RequestError:
-        return JSONResponse(status_code=502, content={"error": f"Ошибка подключения к {provider}"})
+        return _provider_failure(provider, f"Ошибка API {provider}: {error.response.status_code}", error=error)
+    except httpx.RequestError as error:
+        return _provider_failure(provider, f"Ошибка подключения к {provider}", error=error)
     except Exception as error:
-        logger.exception("[API] Ошибка генерации provider=%s", provider)
-        return JSONResponse(status_code=502, content={"error": f"Ошибка обработки ответа {provider}: {type(error).__name__}"})
+        logger.warning("[API] Ошибка генерации provider=%s type=%s", provider, type(error).__name__)
+        return _provider_failure(provider, f"Ошибка обработки ответа {provider}: {type(error).__name__}", error=error)
 
     if generated.get("error"):
-        return JSONResponse(status_code=502, content=generated)
+        return _provider_failure(provider, generated["error"], generated)
 
-    raw_answer = str(generated.get("raw_answer") or "").strip()
-    if not raw_answer:
-        return JSONResponse(status_code=502, content={"error": f"Провайдер {provider} вернул пустой ответ"})
+    if sources:
+        generated = {**generated, "sources": [{**source, "cited_in_answer": False} for source in sources]}
+
+    raw_answer = str(generated.get("raw_answer") or "")
+    if not raw_answer.strip():
+        return _provider_failure(provider, f"Провайдер {provider} вернул пустой ответ", generated)
     try:
         analysis = analyze_with_perplexity(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+    except PerplexityModelError as error:
+        return _provider_failure(provider, str(error), generated, error, analysis_error=True)
     except httpx.HTTPStatusError as error:
         logger.warning("[API] Ошибка анализа Perplexity: %s", error.response.status_code)
-        return JSONResponse(status_code=502, content={"error": f"Ошибка анализа Perplexity: {error.response.status_code}", "analysis_error": True})
-    except httpx.RequestError:
-        return JSONResponse(status_code=502, content={"error": "Ошибка подключения к Perplexity при анализе ответа", "analysis_error": True})
+        return _provider_failure(provider, f"Ошибка анализа Perplexity: {error.response.status_code}", generated, error, analysis_error=True)
+    except httpx.RequestError as error:
+        return _provider_failure(provider, "Ошибка подключения к Perplexity при анализе ответа", generated, error, analysis_error=True)
     except Exception as error:
-        logger.warning("[API] Некорректный анализ Perplexity: %s", error)
-        return JSONResponse(status_code=502, content={"error": "Perplexity не смог сформировать корректный анализ ответа", "analysis_error": True})
+        logger.warning("[API] Некорректный анализ Perplexity: %s", type(error).__name__)
+        return _provider_failure(provider, "Perplexity не смог сформировать корректный анализ ответа", generated, error, analysis_error=True)
 
     result = {
         "brand": brand,
@@ -877,6 +923,8 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
         "rag": True,
         "provider": provider,
         "model": model,
+        "provider_calls": generated.get("provider_calls", []) + analysis.get("provider_calls", []),
+        "citation_domains": domains,
     }
     
     if sources:

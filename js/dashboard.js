@@ -6,6 +6,7 @@ const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/
 const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
 const ANALYSIS_VERSION = 'perplexity-direct-v1';
+const IDENTITY_NORMALIZATION_VERSION = 'company-options-v1';
 let history = [];
 let brandIdentities = [];
 let growthTasks = [];
@@ -161,6 +162,7 @@ function domainText(value) { const raw = normalizeBrandName(value); if (!/^https
 function sourceHost(value) { try { return new URL(String(value || '')).hostname.toLocaleLowerCase('ru-RU').replace(/^www\./, '').replace(/\.$/, ''); } catch { return ''; } }
 function sourceMatchesDomain(source, domain) { const host = sourceHost(typeof source === 'string' ? source : source?.url); const official = domainText(domain); return Boolean(host && official && (host === official || host.endsWith(`.${official}`))); }
 function resultCitesIdentity(result, identity) {
+    if (hasIdentitySnapshot(result) && typeof result?.brand_cited === 'boolean') return result.brand_cited;
     if (!identity?.domains?.length) return false;
     if (typeof result?.brand_cited === 'boolean') return result.brand_cited;
     if (typeof result?.brandCited === 'boolean') return result.brandCited;
@@ -234,16 +236,20 @@ function selectedResults(item) {
 }
 function analysisVersion(item) { return item?.analysisVersion || item?.analysis_version || ''; }
 function hasCurrentAnalysis(item) { return analysisVersion(item) === ANALYSIS_VERSION; }
+function hasIdentitySnapshot(item) { return item?.identity_normalization_version === IDENTITY_NORMALIZATION_VERSION; }
+function mentionIdentityKey(mention) { return hasIdentitySnapshot(mention) ? mention.canonical_id : brandKey(mention.name); }
 function hasListedCompetitors(item) { return Array.isArray(item?.competitors) || Array.isArray(item?.mentioned_brands) || Array.isArray(item?.mentionedBrands); }
 function listedCompetitors(item) {
+    if (hasIdentitySnapshot(item)) return canonicalizeMentionList(item.ordered_mentions || item.orderedMentions || [], true).filter(mention => mention.canonical_id !== (item.canonical_id || item.canonicalId)).map(mention => mention.canonical_name);
     const values = Array.isArray(item?.competitors) ? item.competitors : Array.isArray(item?.mentioned_brands) ? item.mentioned_brands : Array.isArray(item?.mentionedBrands) ? item.mentionedBrands : [];
     const seen = new Set();
     return values.map(value => plausibleBrandName(typeof value === 'string' ? value : value?.name || value?.company || value?.brand)).filter(name => {
         const key = brandKey(name); if (!key || seen.has(key)) return false; seen.add(key); return true;
     });
 }
-function historyForActiveBrand() { return history.filter(item => brandKey(item.brand) === activeBrandKey); }
+function historyForActiveBrand() { return history.filter(item => (hasIdentitySnapshot(item) ? item.canonicalId : brandKey(item.brand)) === activeBrandKey); }
 function enrichCompetitors(item) {
+    if (hasIdentitySnapshot(item)) return { ...item, competitors: listedCompetitors(item) };
     const ownKey = brandKey(item.brand);
     const competitors = listedCompetitors(item).filter(name => brandKey(name) !== ownKey);
     return { ...item, competitors };
@@ -339,7 +345,7 @@ const SETTINGS_META = {
     security: ['Безопасность', 'Смена email, пароля и удаление аккаунта.']
 };
 function selectSettingsTab(tab) {
-    const selected = SETTINGS_META[tab] ? tab : 'profile';
+    const selected = SETTINGS_META[tab] && (tab !== 'appearance' || window.VIDNO_DARK_THEME_ENABLED) ? tab : 'profile';
     selectView('settings');
     $$('[data-settings-panel]').forEach(panel => { const active = panel.dataset.settingsPanel === selected; panel.hidden = !active; panel.classList.toggle('active', active); });
     $$('.settings-nav [data-settings-tab]').forEach(button => { const active = button.dataset.settingsTab === selected; button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
@@ -370,7 +376,7 @@ $('#accountMenu').addEventListener('keydown', event => {
 });
 $('.settings-nav').addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
+    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')].filter(tab => tab.dataset.settingsTab !== 'appearance' || window.VIDNO_DARK_THEME_ENABLED);
     const current = tabs.indexOf(document.activeElement); if (current < 0) return;
     event.preventDefault();
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
@@ -721,7 +727,7 @@ async function recoverCompanySave() {
 }
 async function requestPromptSuggestions(brand, domains) {
     const existingQueries = [...new Set(history.filter(item => brandKey(item.brand) === brandKey(brand)).map(item => normalizeBrandName(item.query)).filter(Boolean))].slice(-12);
-    const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, domains, existing_queries: existingQueries }) });
+    const data = await apiRequest('/prompt-suggestions', { method: 'POST', body: JSON.stringify({ brand, domains, aliases: identityFor(brand)?.aliases || [], existing_queries: existingQueries }) });
     const prompts = Array.isArray(data.prompts) ? data.prompts.filter(value => typeof value === 'string' && value.trim()) : [];
     if (!prompts.length) throw new Error('Не удалось получить подходящие запросы');
     return prompts;
@@ -869,9 +875,9 @@ function renderResult(data) {
     $('#wsSources').innerHTML = sources.map(source => `<div class="ws-source-card"><a class="ws-source-link" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a><span class="ws-source-auth">${escapeHtml(source.authority_label || 'не определена')}</span></div>`).join(''); $('#wsSourcesWrap').hidden = !sources.length;
     result.hidden = false;
 }
-function canonicalizeMentionList(values) {
+function canonicalizeMentionList(values, preserveIdentity = false) {
     const rows = Array.isArray(values) ? values : []; const seen = new Set();
-    return rows.map((mention, index) => { const observedName = plausibleBrandName(mention?.observed_name || mention?.name || mention?.company || mention?.brand); const identity = canonicalBrand(mention?.canonical_name || observedName); return { ...mention, name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.observed_name || !mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
+    return rows.map((mention, index) => { const observedName = plausibleBrandName(mention?.observed_name || mention?.name || mention?.company || mention?.brand); const saved = (preserveIdentity || hasIdentitySnapshot(mention)) && mention?.canonical_id && mention?.canonical_name; const identity = saved ? { id: mention.canonical_id, name: mention.canonical_name } : canonicalBrand(mention?.canonical_name || observedName); return { ...mention, ...(saved ? { identity_normalization_version: IDENTITY_NORMALIZATION_VERSION } : {}), name: identity.name, observed_name: observedName, canonical_id: identity.id, canonical_name: identity.name, position: Number(mention?.position) || index + 1, role: mention?.role || 'упоминание' }; }).sort((a, b) => a.position - b.position).filter(mention => { if (!mention.observed_name || !mention.canonical_id || seen.has(mention.canonical_id)) return false; seen.add(mention.canonical_id); return true; }).map((mention, index) => ({ ...mention, position: index + 1 }));
 }
 function normalizedAnswerText(value) { return ` ${String(value || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/[^a-zа-я0-9.]+/gi, ' ').replace(/\s+/g, ' ').trim()} `; }
 function answerContainsIdentity(answer, identity) {
@@ -879,6 +885,7 @@ function answerContainsIdentity(answer, identity) {
     return identityVariants(identity).some(alias => { const needle = normalizedAnswerText(alias); return needle.trim().length > 1 && text.includes(needle); }) || (identity.domains || []).some(domain => text.includes(` ${domainText(domain)} `));
 }
 function canonicalizeProviderResult(result, targetIdentity) {
+    if (hasIdentitySnapshot(result)) return { ...result, ordered_mentions: canonicalizeMentionList(result.ordered_mentions || [], true), competitors: listedCompetitors(result), mentioned_brands: listedCompetitors(result), cited: resultCitesIdentity(result, targetIdentity) };
     const supplied = result?.ordered_mentions || result?.orderedMentions || [];
     let ordered = canonicalizeMentionList(supplied);
     const rawAnswer = result?.raw_answer || result?.rawAnswer || '';
@@ -897,6 +904,7 @@ function canonicalizeProviderResult(result, targetIdentity) {
 }
 function canonicalizeCheckResult(data, identity) {
     if (!data || typeof data !== 'object') return data;
+    if (hasIdentitySnapshot(data)) return { ...canonicalizeProviderResult(data, identity), provider_results: (data.provider_results || []).map(result => canonicalizeProviderResult(result, identity)) };
     const providerResults = (data.provider_results || []).map(result => canonicalizeProviderResult({ ...result, analysis_version: analysisVersion(result) || analysisVersion(data) }, identity));
     if (!providerResults.length) return canonicalizeProviderResult(data, identity);
     const ordered = canonicalizeMentionList(providerResults.flatMap(result => result.ordered_mentions || []));
@@ -905,14 +913,15 @@ function canonicalizeCheckResult(data, identity) {
     return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
 function buildHistoryItem(data, brand, query, provider, record = {}) {
+    const snapshotFields = hasIdentitySnapshot(data) ? { identity_normalization_version: data.identity_normalization_version } : {};
     const sources = (data.sources || []).map(source => ({ ...source }));
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || identityFor(data.canonical_name || brand);
     const cited = resultCitesIdentity(data, identity);
     const sentiments = (data.source_analysis || []).filter(item => item.mentions_brand).map(item => item.sentiment).filter(Boolean);
-    const normalizedBrand = identity?.canonicalName || normalizeBrandName(brand);
+    const normalizedBrand = hasIdentitySnapshot(data) ? data.canonical_name || normalizeBrandName(brand) : identity?.canonicalName || normalizeBrandName(brand);
     const position = resultPosition(data);
     const storedError = record.error; const error = typeof storedError === 'string' ? storedError : Array.isArray(storedError) ? storedError.map(item => item?.error || item?.message || item).join('; ') : storedError?.error || storedError?.message || '';
-    return { id: String(record.id || data.check?.id || crypto.randomUUID()), brandId: String(record.brand_id || data.check?.brand_id || identity?.id || ''), completedAt: record.completed_at || data.check?.completed_at || null, resultData: data, providerErrors: data.provider_errors || (Array.isArray(record.error) ? record.error : []), createdAt: new Date(record.created_at || data.check?.created_at || Date.now()).getTime(), brand: normalizedBrand, brandKey: identity?.canonicalId || String(record.brand_id || ''), canonicalId: identity?.canonicalId || String(record.brand_id || ''), canonicalName: normalizedBrand, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: listedCompetitors(data).filter(name => brandKey(name) !== identity?.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [], status: record.status || data.check?.status || 'completed', error: String(error) };
+    return { ...snapshotFields, id: String(record.id || data.check?.id || crypto.randomUUID()), brandId: String(record.brand_id || data.check?.brand_id || identity?.id || ''), completedAt: record.completed_at || data.check?.completed_at || null, resultData: data, providerErrors: data.provider_errors || (Array.isArray(record.error) ? record.error : []), createdAt: new Date(record.created_at || data.check?.created_at || Date.now()).getTime(), brand: normalizedBrand, brandKey: identity?.canonicalId || String(record.brand_id || ''), canonicalId: data.canonical_id || identity?.canonicalId || String(record.brand_id || ''), canonicalName: normalizedBrand, observedName: data.observed_name || brand, query, provider: data.provider || provider, model: data.model || PROVIDERS[provider], marketScope: data.market_scope || '', rawAnswer: data.raw_answer || data.rawAnswer || '', providerResults: data.provider_results || [], orderedMentions: data.ordered_mentions || [], mentioned: Boolean(data.mentioned), position: position.value, positionKind: position.kind, role: data.role || '', analysisVersion: analysisVersion(data), competitors: hasIdentitySnapshot(data) ? listedCompetitors(data) : listedCompetitors(data).filter(name => brandKey(name) !== identity?.canonicalId), sources, cited, sentiments, reasoning: data.reasoning || '', quotes: data.quotes || [], status: record.status || data.check?.status || 'completed', error: String(error) };
 }
 function normalizeStoredCheck(record) {
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || brandIdentities.find(item => item.canonicalId === String(record.canonical_id || '')) || identityFor(record.brand);
@@ -932,10 +941,10 @@ function requestedProvidersFor(item) {
     return Array.isArray(stored) && stored.length ? [...new Set(stored.filter(provider => CHECK_PROVIDERS.includes(provider)))] : CHECK_PROVIDERS;
 }
 function checkDetailRows(item) {
-    const results = item.providerResults.length ? item.providerResults : item.provider === 'all' ? [] : [item.resultData];
+    const results = item.status === 'failed' ? [] : item.providerResults.length ? item.providerResults : item.provider === 'all' ? [] : [item.resultData];
     const rows = results.map(result => ({ ...result, error: '', provider: result.provider || item.provider }));
     item.providerErrors.forEach(error => {
-        if (!rows.some(result => result.provider === error.provider)) rows.push({ provider: error.provider, model: PROVIDERS[error.provider] || error.provider, error: error.error || 'Модель не ответила', sources: [] });
+        if (!rows.some(result => result.provider === error.provider)) rows.push({ ...error, provider: error.provider, model: PROVIDERS[error.provider] || error.provider, error: error.error || 'Модель не ответила', sources: error.sources || [] });
     });
     return rows.sort((a, b) => requestedProvidersFor(item).indexOf(a.provider) - requestedProvidersFor(item).indexOf(b.provider));
 }
@@ -944,14 +953,14 @@ function renderCheckDetails(item) {
     const status = item.status === 'partial' ? 'Частичный результат' : item.status === 'failed' ? 'Ошибка' : item.status === 'running' ? 'Выполняется' : 'Завершена';
     const modelCards = rows.map(result => {
         const providerName = PROVIDERS[result.provider] || result.model || result.provider || 'AI-модель';
-        if (result.error) return `<article class="check-detail-model check-detail-error"><div class="check-detail-model-head">${modelAvatarMarkup(result.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>Ответ недоступен</span></div></div><p>${escapeHtml(result.error)}</p></article>`;
+        if (result.error) return `<article class="check-detail-model check-detail-error"><div class="check-detail-model-head">${modelAvatarMarkup(result.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${result.raw_answer ? 'Ответ получен, анализ недоступен' : 'Ответ недоступен'}</span></div></div><p>${escapeHtml(result.error)}</p>${result.raw_answer ? `<div class="check-detail-answer">${escapeHtml(result.raw_answer)}</div>` : ''}</article>`;
         const position = resultPosition(result);
         const identity = identityFor(item.brand);
         const cited = resultCitesIdentity(result, identity);
         const sources = (result.sources || []).filter(source => source?.cited_in_answer !== false);
         return `<article class="check-detail-model"><div class="check-detail-model-head">${modelAvatarMarkup(result.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${result.mentioned ? 'Бренд упомянут' : 'Бренд не упомянут'}${position.value ? ` · ${escapeHtml(positionText(position.value, position.kind))}` : ''}${cited ? ' · есть ссылка на сайт бренда' : ''}</span></div></div><div class="check-detail-answer">${escapeHtml(result.raw_answer || result.rawAnswer || 'Полный ответ модели не сохранён.')}</div>${sources.length ? `<div class="check-detail-sources"><strong>Ссылки в ответе</strong>${sources.map(source => `<a href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">${escapeHtml(source.title || source.url)}</a>`).join('')}</div>` : ''}</article>`;
     }).join('');
-    return `<div class="check-details-head"><div><p class="app-eyebrow">Сохранённая проверка</p><h2>${escapeHtml(item.query)}</h2><p>${escapeHtml(item.brand)} · ${escapeHtml(formatDateTime(item.createdAt))} · ${escapeHtml(status)}</p></div><button class="brief-close" type="button" data-check-details-close aria-label="Закрыть">×</button></div><div class="check-details-body"><div class="check-details-summary"><strong>${item.mentioned ? 'Бренд упомянут' : 'Бренд не упомянут'}</strong><span>${rows.filter(row => !row.error).length} из ${requestedProvidersFor(item).length || 1} моделей дали результат</span></div><div class="check-detail-models">${modelCards || '<div class="app-empty"><strong>Нет сохранённых ответов</strong><span>Для этой проверки доступен только общий статус.</span></div>'}</div></div><div class="check-details-actions"><button class="btn btn-ghost" type="button" data-check-details-close>Закрыть</button><button class="btn btn-ghost" type="button" data-open-check-result="${escapeHtml(item.id)}">Открыть общий результат</button><button class="btn btn-primary" type="button" data-repeat-check="${escapeHtml(item.id)}">Повторить проверку</button></div>`;
+    return `<div class="check-details-head"><div><p class="app-eyebrow">Сохранённая проверка</p><h2>${escapeHtml(item.query)}</h2><p>${escapeHtml(item.brand)} · ${escapeHtml(formatDateTime(item.createdAt))} · ${escapeHtml(status)}</p></div><button class="brief-close" type="button" data-check-details-close aria-label="Закрыть">×</button></div><div class="check-details-body"><div class="check-details-summary"><strong>${item.status === 'failed' ? 'Анализ не завершён' : item.mentioned ? 'Бренд упомянут' : 'Бренд не упомянут'}</strong><span>${rows.filter(row => !row.error).length} из ${requestedProvidersFor(item).length || 1} моделей дали результат</span></div><div class="check-detail-models">${modelCards || '<div class="app-empty"><strong>Нет сохранённых ответов</strong><span>Для этой проверки доступен только общий статус.</span></div>'}</div></div><div class="check-details-actions"><button class="btn btn-ghost" type="button" data-check-details-close>Закрыть</button><button class="btn btn-ghost" type="button" data-open-check-result="${escapeHtml(item.id)}">Открыть общий результат</button><button class="btn btn-primary" type="button" data-repeat-check="${escapeHtml(item.id)}">Повторить проверку</button></div>`;
 }
 function openCheckDetails(id) {
     const item = history.find(record => record.id === String(id)); if (!item) return;
@@ -1251,7 +1260,8 @@ function normalizedCompetitors() {
     const rows = new Map(); let order = 0;
     activeHistory().forEach(item => {
         const inCheck = new Map();
-        (item.competitors || []).forEach(value => { const name = normalizeBrandName(value); const key = brandKey(name); if (key && key !== activeBrandKey && !inCheck.has(key)) inCheck.set(key, name); });
+        const mentions = hasIdentitySnapshot(item) ? orderedMentionsFor(item).filter(mention => mention.canonical_id !== item.canonicalId) : (item.competitors || []).map(name => ({ name }));
+        mentions.forEach(mention => { const name = normalizeBrandName(mention.name); const key = mentionIdentityKey(mention); if (key && key !== activeBrandKey && !inCheck.has(key)) inCheck.set(key, name); });
         inCheck.forEach((name, key) => { if (!rows.has(key)) rows.set(key, { key, mentions: 0, checks: 0, variants: new Map() }); const row = rows.get(key); row.mentions++; row.checks++; const variant = row.variants.get(name) || { count: 0, order: order++ }; variant.count++; row.variants.set(name, variant); });
     });
     return [...rows.values()].map(row => ({ ...row, name: preferredVariant(row.variants) })).sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name, 'ru'));
@@ -1365,8 +1375,9 @@ function analyticsSnapshot() {
     const errors = records.reduce((total, item) => total + (item.providerErrors || []).filter(error => selectedProviders.has(error.provider)).length, 0);
     return { records, rowsHistory, answers, brands, own, sources: sourceRows(answers), models: [...modelGroups(answers).values()], failed: records.filter(item => item.status === 'failed').length, running: records.filter(item => item.status === 'running').length, partial: records.filter(item => item.status === 'partial').length, excluded, excludedAnswers, errors, bounds: analyticsBounds() };
 }
+function hasCitationMeasurement(data) { return Boolean(activeBrandIdentity()?.domains?.length || data.answers.some(item => hasIdentitySnapshot(item) && (item.citation_domains?.length || item.brand_cited === true))); }
 function metricValues(data) {
-    return { sov: data.answers.length && data.brands.some(row => row.voiceWeight) ? `${data.own.sov}%` : '—', visibility: data.answers.length ? `${data.own.visibility}%` : '—', citation: data.answers.length && activeBrandIdentity()?.domains?.length ? `${data.own.citationRate}%` : '—', position: data.own.averagePosition ? Number(data.own.averagePosition.toFixed(2)).toString() : '—' };
+    return { sov: data.answers.length && data.brands.some(row => row.voiceWeight) ? `${data.own.sov}%` : '—', visibility: data.answers.length ? `${data.own.visibility}%` : '—', citation: data.answers.length && hasCitationMeasurement(data) ? `${data.own.citationRate}%` : '—', position: data.own.averagePosition ? Number(data.own.averagePosition.toFixed(2)).toString() : '—' };
 }
 function renderReport() {
     if (reportPrinting) return;
@@ -1388,7 +1399,7 @@ function renderReport() {
     else if (data.errors || data.failed || data.running || data.partial || data.excluded || data.excludedAnswers) $('#reportStatus').textContent = 'Отчёт сформирован по доступным ответам. Неполные и исключённые данные отмечены в объёме выборки.';
     $$('[data-report-metric]').forEach(element => { element.textContent = metrics[element.dataset.reportMetric]; });
     $('#reportVisibilityNote').textContent = `${data.own.mentions} из ${data.answers.length} ответов`;
-    $('#reportCitationNote').textContent = activeBrandIdentity()?.domains?.length ? `${data.own.citations} из ${data.answers.length} ответов` : 'Домены бренда не указаны';
+    $('#reportCitationNote').textContent = hasCitationMeasurement(data) ? `${data.own.citations} из ${data.answers.length} ответов` : 'Домены бренда не указаны';
     const empty = (columns, text) => `<tr><td colspan="${columns}">${escapeHtml(text)}</td></tr>`;
     $('#reportModelBody').innerHTML = CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).map(provider => { const row = data.models.find(item => item.provider === provider); return `<tr><th scope="row">${escapeHtml(PROVIDERS[provider])}</th><td>${row?.total || 0}</td><td>${row?.mentioned || 0}</td><td>${row?.total ? `${percentage(row.mentioned, row.total)}%` : '—'}</td></tr>`; }).join('');
     const brands = data.answers.length ? [data.own, ...data.brands.filter(row => row.key !== activeBrandKey).slice(0, 5)] : [];
@@ -1410,6 +1421,7 @@ function answerRowsFor(item) {
 function orderedMentionsFor(item) {
     const supplied = Array.isArray(item.orderedMentions) ? item.orderedMentions : Array.isArray(item.ordered_mentions) ? item.ordered_mentions : [];
     if (supplied.length) {
+        if (hasIdentitySnapshot(item)) return canonicalizeMentionList(supplied, true);
         const mentions = canonicalizeMentionList(supplied);
         if (!hasListedCompetitors(item)) return mentions;
         const allowed = new Set([brandKey(item.brand), ...listedCompetitors(item).map(brandKey)]);
@@ -1425,7 +1437,7 @@ function brandRows(rowsHistory = analyticsHistory()) {
     const ownName = currentBrand(); const rows = new Map([[activeBrandKey, { key: activeBrandKey, name: ownName, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map([[ownName, { count: 1, order: 0 }]]) }]]); let order = 1;
     answerRows.forEach(item => {
         const own = rows.get(activeBrandKey); if (item.mentioned) own.mentions++; if (item.cited) own.citations++; own.sentiments.push(...(item.sentiments || []));
-        orderedMentionsFor(item).forEach(mention => { const key = brandKey(mention.name); if (!rows.has(key)) rows.set(key, { key, name: mention.name, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(key); if (key !== activeBrandKey) row.mentions++; row.voiceWeight += 1 / mention.position; row.positions.push(mention.position); const variant = row.variants.get(mention.name) || { count: 0, order: order++ }; variant.count++; row.variants.set(mention.name, variant); });
+        orderedMentionsFor(item).forEach(mention => { const key = mentionIdentityKey(mention); if (!rows.has(key)) rows.set(key, { key, name: mention.name, mentions: 0, voiceWeight: 0, positions: [], citations: 0, sentiments: [], variants: new Map() }); const row = rows.get(key); if (key !== activeBrandKey) row.mentions++; row.voiceWeight += 1 / mention.position; row.positions.push(mention.position); const variant = row.variants.get(mention.name) || { count: 0, order: order++ }; variant.count++; row.variants.set(mention.name, variant); });
     });
     const totalWeight = [...rows.values()].reduce((sum, row) => sum + row.voiceWeight, 0);
     return [...rows.values()].map(row => ({ ...row, name: row.key === activeBrandKey ? ownName : preferredVariant(row.variants), sov: percentage(row.voiceWeight, totalWeight), visibility: percentage(row.mentions, answerRows.length), citationRate: percentage(row.citations, answerRows.length), averagePosition: row.positions.length ? row.positions.reduce((sum, value) => sum + value, 0) / row.positions.length : null, answerCount: answerRows.length })).sort((a, b) => b.voiceWeight - a.voiceWeight || b.mentions - a.mentions);
@@ -1435,7 +1447,7 @@ function renderMetricsDashboard() {
     const data = analyticsSnapshot(); const own = data.own; const metrics = metricValues(data);
     $('#metricSov').textContent = metrics.sov; $('#metricSovNote').textContent = data.answers.length ? `${own.mentions} упоминаний среди брендов` : 'Нет пригодных ответов';
     $('#metricVisibility').textContent = metrics.visibility; $('#metricVisibilityNote').textContent = data.answers.length ? `в ${own.mentions} из ${data.answers.length} ответов` : 'Нет пригодных ответов';
-    $('#metricCitation').textContent = metrics.citation; $('#metricCitationNote').textContent = !activeBrandIdentity()?.domains?.length ? 'Укажите домены бренда' : data.answers.length ? `${own.citations} ответов со ссылкой` : 'Нет пригодных ответов';
+    $('#metricCitation').textContent = metrics.citation; $('#metricCitationNote').textContent = !hasCitationMeasurement(data) ? 'Укажите домены бренда' : data.answers.length ? `${own.citations} ответов со ссылкой` : 'Нет пригодных ответов';
     $('#metricPosition').textContent = metrics.position; $('#metricPositionNote').textContent = own.averagePosition ? 'в извлечённых списках брендов' : 'Нет позиций';
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
