@@ -220,6 +220,23 @@ async function fixture(server = state(), width = 1440, stored = {}) {
     return { page, server, errors, close: () => context.close() };
 }
 
+async function openSidebar(page) {
+    const toggle = page.locator('#mobileNavToggle');
+    if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+}
+async function navigate(page, view) {
+    await openSidebar(page);
+    await page.locator(`.app-nav [data-view="${view}"]`).click();
+}
+async function openAccountMenu(page) {
+    await openSidebar(page);
+    await page.locator('#accountMenuTrigger').click();
+}
+async function switchProject(page, key) {
+    await openSidebar(page);
+    await page.locator('#projectPickerTrigger').click();
+    await page.locator(`#projectPickerList [data-project-key="${key}"]`).click();
+}
 async function visible(page, selector) { await page.locator(selector).waitFor({ state: 'visible' }); }
 async function hidden(page, selector) { await page.locator(selector).waitFor({ state: 'hidden' }); }
 async function enabled(page, selector) { await page.waitForFunction(selector => !document.querySelector(selector).disabled, selector); }
@@ -311,7 +328,7 @@ test('legacy pending account redeems in access settings and does not store code 
     const server = pendingVoucherState({ account: { id: 1, name: 'Клиент', email: 'legacy@example.test', role: 'client', onboarding_completed_at: stamp } });
     const f = await fixture(server, 375);
     try {
-        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click();
+        await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page);
         await f.page.locator('#accountMenu [data-settings-tab="access"]').click(); await visible(f.page, '#voucherActivationForm');
         assert.equal(await f.page.locator('#accountVoucherSlot #voucherActivationForm').count(), 1);
         await f.page.locator('#voucherCode').fill('FAKE-TEST-ONLY-VOUCHER'); await f.page.locator('#voucherActivate').click();
@@ -339,7 +356,7 @@ for (const width of [1440, 375]) {
         const server = state({ account: { id: 1, name: 'Администратор', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp } });
         const f = await fixture(server, width);
         try {
-            await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click();
+            await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page);
             await f.page.locator('#adminMenuItem').click(); await f.page.locator('#adminTabTariffs').click();
             await visible(f.page, '[data-tariff="basic"]');
             await f.page.locator('[data-tariff="basic"] [name="checks_limit"]').fill('5');
@@ -369,7 +386,7 @@ test('admin cannot issue batch while tariff settings are unavailable and can rec
     const server = state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, tariffFailure: true });
     const f = await fixture(server);
     try {
-        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
         await f.page.locator('#adminTabVouchers').click();
         assert.equal(await f.page.locator('#voucherBatchCreate').isDisabled(), true);
         await f.page.locator('#adminTabTariffs').click(); await visible(f.page, '#adminTariffRetry');
@@ -386,7 +403,7 @@ test('pending administrator can manage vouchers without completing client onboar
     try {
         await hidden(f.page, '#dashboardLoadState'); await hidden(f.page, '#onboarding');
         assert.equal(await f.page.locator('#voucherActivationForm').isVisible(), false);
-        await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
         await f.page.locator('#adminTabVouchers').click(); await enabled(f.page, '#voucherBatchCreate');
         assert.equal(count(server, '/brands'), 0); assert.equal(count(server, '/check-all'), 0); assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
@@ -404,7 +421,7 @@ function adminClientRaceState(overrides = {}) {
 test('late client profile does not overwrite another client or save limits to wrong recipient', async () => {
     const server = adminClientRaceState({ clientReadDelays: { 2: 350 } }); const f = await fixture(server);
     try {
-        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
         await visible(f.page, '[data-admin-client="2"]');
         const late = f.page.waitForResponse(response => response.url().endsWith('/admin/clients/2'));
         await f.page.locator('[data-admin-client="2"]').click(); await f.page.locator('[data-admin-client="3"]').click();
@@ -422,7 +439,7 @@ test('late client profile does not overwrite another client or save limits to wr
 test('late client save response does not replace currently selected client', async () => {
     const server = adminClientRaceState({ clientSaveDelay: 350 }); const f = await fixture(server);
     try {
-        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
         await visible(f.page, '[data-admin-client="2"]'); await f.page.locator('[data-admin-client="2"]').click();
         await visible(f.page, '#adminAccessForm');
         const late = f.page.waitForResponse(response => response.url().endsWith('/admin/clients/2/access'));
@@ -438,7 +455,7 @@ test('voucher batch waits for pending tariff save and uses updated conditions', 
     const server = state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, tariffSaveDelay: 350 });
     const f = await fixture(server);
     try {
-        await hidden(f.page, '#dashboardLoadState'); await f.page.locator('#accountMenuTrigger').click(); await f.page.locator('#adminMenuItem').click();
+        await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
         await f.page.locator('#adminTabTariffs').click(); await visible(f.page, '[data-tariff="basic"]');
         await f.page.locator('[data-tariff="basic"] [name="checks_limit"]').fill('9');
         await f.page.locator('[data-tariff="basic"] [type="submit"]').click(); await f.page.locator('#adminTabVouchers').click();
@@ -835,7 +852,7 @@ test('existing account opens history, scoped answers and report using saved IDs 
     try {
         await hidden(f.page, '#dashboardLoadState');
         await hidden(f.page, '#onboarding');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
         await visible(f.page, '#wsResult');
         assert.match(await f.page.locator('#wsResultContext').textContent(), /Какой сервис выбрать/);
@@ -843,7 +860,7 @@ test('existing account opens history, scoped answers and report using saved IDs 
         await visible(f.page, '#view-answers');
         assert.equal(await f.page.locator('.ai-answer-card').count(), 5);
         assert.doesNotMatch(await f.page.locator('#aiAnswerList').textContent(), /Другой вопрос/);
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
         await f.page.locator('#resultReport').click();
         await visible(f.page, '#view-reports');
@@ -866,17 +883,17 @@ test('switching project in reports clears saved-check context and result', async
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
         await f.page.locator('#resultReport').click();
         await visible(f.page, '#view-reports');
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-check-id'), '501');
-        await f.page.locator('#activeBrandSelect').selectOption('brand-102');
+        await switchProject(f.page, 'brand-102');
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-check-id'), '');
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-brand-id'), '');
         assert.match(await f.page.locator('#reportCheckContext').textContent(), /Откройте сохранённую проверку/);
         assert.equal(await f.page.locator('#reportBackToCheck').isVisible(), false);
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         assert.equal(await f.page.locator('#wsResult').isVisible(), false);
         assert.equal(await f.page.locator('[data-open-check="501"]').count(), 0);
         assert.deepEqual(f.errors, []);
@@ -889,11 +906,11 @@ test('deleting selected check removes result and previously selected report cont
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
         await f.page.locator('#resultReport').click();
         await visible(f.page, '#view-reports');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         f.page.once('dialog', dialog => dialog.accept());
         await f.page.locator('[data-delete-check="501"]').click();
         await hidden(f.page, '[data-open-check="501"]');
@@ -903,7 +920,7 @@ test('deleting selected check removes result and previously selected report cont
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-check-id'), '');
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-brand-id'), '');
         assert.match(await f.page.locator('#reportCheckContext').textContent(), /Откройте сохранённую проверку/);
-        await f.page.locator('.app-nav [data-view="reports"]').click();
+        await navigate(f.page, 'reports');
         assert.equal(await f.page.locator('#reportBackToCheck').isVisible(), false);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
@@ -918,7 +935,7 @@ for (const width of [1440, 375]) {
         const f = await fixture(server, width);
         try {
             await hidden(f.page, '#dashboardLoadState');
-            await f.page.locator('.app-nav [data-view="prompts"]').click();
+            await navigate(f.page, 'prompts');
             await f.page.locator('[data-check-details="501"]').click();
             await visible(f.page, '#checkDetailsDialog');
             assert.equal(await f.page.locator('.check-detail-model').count(), 5);
@@ -943,7 +960,7 @@ test('history can reveal more than ten saved checks', async () => {
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         assert.equal(await f.page.locator('.app-history-row').count(), 10);
         await f.page.locator('#historyToggle').click();
         assert.equal(await f.page.locator('.app-history-row').count(), 12);
@@ -961,7 +978,7 @@ test('single-model history repeats through the single-provider endpoint', async 
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="prompts"]').click();
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-repeat-check="501"]').click();
         await visible(f.page, '#wsResult');
         const request = server.requests.find(item => item.endpoint === '/check' && item.method === 'POST');
@@ -997,7 +1014,7 @@ test('growth control check repeats the exact prompt and provider set through che
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="growth"]').click();
+        await navigate(f.page, 'growth');
         await f.page.locator('[data-growth-tab="tasks"]').click();
         await f.page.locator('[data-measure-task="901"]').click();
         await f.page.locator('[data-growth-tab="results"]').click();
@@ -1023,7 +1040,7 @@ test('growth control check saves partial history but does not compare different 
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        await f.page.locator('.app-nav [data-view="growth"]').click();
+        await navigate(f.page, 'growth');
         await f.page.locator('[data-growth-tab="tasks"]').click();
         f.page.once('dialog', dialog => dialog.accept());
         await f.page.locator('[data-measure-task="902"]').click();

@@ -6,7 +6,7 @@ localStorage.removeItem('vidno-session-token');
 function applyTheme() {
     const theme = window.VIDNO_DARK_THEME_ENABLED && localStorage.getItem('vidno-theme') === 'dark' ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
-    document.querySelectorAll('[data-settings-tab="appearance"]').forEach(button => { button.hidden = !window.VIDNO_DARK_THEME_ENABLED; });
+    document.querySelectorAll('[data-settings-tab="appearance"]').forEach(button => { button.hidden = !window.VIDNO_DARK_THEME_ENABLED && !document.body.classList.contains('app-body'); });
     document.querySelectorAll('[data-theme-choice]').forEach(button => {
         const selected = button.dataset.themeChoice === theme;
         button.classList.toggle('active', selected);
@@ -17,7 +17,7 @@ function applyTheme() {
 applyTheme();
 document.addEventListener('click', event => {
     const choice = event.target.closest('[data-theme-choice]');
-    if (!window.VIDNO_DARK_THEME_ENABLED || !choice) return;
+    if (!window.VIDNO_DARK_THEME_ENABLED || !choice || choice.disabled || choice.getAttribute('aria-disabled') === 'true') return;
     localStorage.setItem('vidno-theme', choice.dataset.themeChoice);
     applyTheme();
     window.dispatchEvent(new CustomEvent('vidno-theme-change'));

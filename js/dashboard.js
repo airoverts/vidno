@@ -2,7 +2,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const API_BASE = AUTH_API_BASE;
 const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity' };
-const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini.svg', perplexity: 'assets/ai/perplexity.svg' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini-color.svg', perplexity: 'assets/ai/perplexity.svg' };
 const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
 const ANALYSIS_VERSION = 'perplexity-direct-v1';
@@ -50,6 +50,12 @@ let historyExpanded = false;
 const analyticsPeriod = { preset: 'all', start: '', end: '' };
 const checksLoadState = { loading: false, error: '', updatedAt: null };
 let reportPrinting = false;
+let projectDraft = null;
+let projectSaving = false;
+let pendingProjectNavigation = null;
+let bypassProjectGuard = false;
+let accountMutationBusy = false;
+let projectDeleting = false;
 
 function moscowDay(value = Date.now()) {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
@@ -284,11 +290,17 @@ function renderBrandSelector() {
     const select = $('#activeBrandSelect');
     select.innerHTML = brandOptions().map(item => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.name)}</option>`).join('');
     select.value = activeBrandKey;
-    if ($('#settingsProjectName')) $('#settingsProjectName').textContent = currentBrand() || 'Проект не выбран';
+    const identity = activeBrandIdentity();
+    if ($('#projectPickerName')) $('#projectPickerName').textContent = identity?.canonicalName || 'Выберите проект';
+    if ($('#projectPickerDomain')) $('#projectPickerDomain').textContent = identity?.domains[0] || 'Домены не указаны';
+    if ($('#projectPickerInitials')) $('#projectPickerInitials').textContent = identity ? brandInitials(identity.canonicalName) : 'V';
+    if ($('#projectPickerList')) $('#projectPickerList').innerHTML = brandIdentities.length ? brandIdentities.map(item => `<button class="project-picker-option" type="button" role="option" aria-selected="${item.canonicalId === activeBrandKey}" data-project-key="${escapeHtml(item.canonicalId)}"><span class="project-picker-initials">${escapeHtml(brandInitials(item.canonicalName))}</span><span><strong>${escapeHtml(item.canonicalName)}</strong><small>${escapeHtml(item.domains[0] || 'Домены не указаны')}</small></span><span class="project-picker-check" aria-hidden="true">${item.canonicalId === activeBrandKey ? '✓' : ''}</span></button>`).join('') : '<p class="project-picker-empty">Пока нет проектов. Создайте проект через новую проверку.</p>';
 }
 function setActiveBrand(value, syncInput = true, resetResult = true) {
     const key = brandKey(value);
-    if (!key) return;
+    if (!brandIdentities.some(item => item.canonicalId === key)) return;
+    if (key !== activeBrandKey && guardProjectNavigation(() => setActiveBrand(value, syncInput, resetResult))) { renderBrandSelector(); return; }
+    if (key !== activeBrandKey) projectDraft = null;
     activeBrandKey = key;
     localStorage.setItem(ACTIVE_BRAND_KEY, key);
     renderBrandSelector();
@@ -321,8 +333,12 @@ function closeAccountMenu(focusTrigger = false) {
     if (focusTrigger) trigger.focus();
 }
 function selectView(view, checkId = null) {
+    if (projectSaving && !bypassProjectGuard) return;
+    if (view !== 'settings' && guardProjectNavigation(() => selectView(view, checkId))) return;
     if (view === 'admin' && accountState?.role !== 'admin') return selectSettingsTab('profile');
     closeAccountMenu();
+    setProjectPicker(false);
+    closeMobileNavigation();
     document.body.classList.toggle('report-view', view === 'reports');
     if (view === 'answers') answerCheckId = checkId;
     if (view === 'reports') renderReportContext(checkId);
@@ -336,16 +352,19 @@ function selectView(view, checkId = null) {
     if (view === 'answers') renderAiAnswers();
     if (view === 'settings') { renderAccountProfile(); renderAccountAccess(); renderBrandSettings(); }
     if (view === 'admin' && !$('#adminClientList').children.length) { loadAdminClients(); loadAdminTariffs(); }
+    if (view === 'home') Object.values(dashboardCharts).forEach(chart => chart?.resize());
 }
 const SETTINGS_META = {
     project: ['Проект', 'Название, варианты написания и домены активного проекта.'],
     profile: ['Профиль', 'Личные данные вашего аккаунта.'],
-    appearance: ['Оформление', 'Светлая или тёмная тема рабочего пространства.'],
+    appearance: ['Оформление', 'Выберите оформление вашего рабочего пространства.'],
     access: ['Доступ и лимиты', 'Тариф, срок действия и текущее использование.'],
     security: ['Безопасность', 'Смена email, пароля и удаление аккаунта.']
 };
 function selectSettingsTab(tab) {
-    const selected = SETTINGS_META[tab] && (tab !== 'appearance' || window.VIDNO_DARK_THEME_ENABLED) ? tab : 'profile';
+    const selected = SETTINGS_META[tab] ? tab : 'profile';
+    if (projectSaving && !bypassProjectGuard) return;
+    if (selected !== 'project' && guardProjectNavigation(() => selectSettingsTab(selected))) return;
     selectView('settings');
     $$('[data-settings-panel]').forEach(panel => { const active = panel.dataset.settingsPanel === selected; panel.hidden = !active; panel.classList.toggle('active', active); });
     $$('.settings-nav [data-settings-tab]').forEach(button => { const active = button.dataset.settingsTab === selected; button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
@@ -375,11 +394,11 @@ $('#accountMenu').addEventListener('keydown', event => {
     items[next].focus();
 });
 $('.settings-nav').addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')].filter(tab => tab.dataset.settingsTab !== 'appearance' || window.VIDNO_DARK_THEME_ENABLED);
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
     const current = tabs.indexOf(document.activeElement); if (current < 0) return;
     event.preventDefault();
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : ['ArrowRight', 'ArrowDown'].includes(event.key) ? (current + 1) % tabs.length : (current - 1 + tabs.length) % tabs.length;
     selectSettingsTab(tabs[next].dataset.settingsTab); tabs[next].focus();
 });
 document.addEventListener('click', () => closeAccountMenu());
@@ -612,10 +631,11 @@ function applyAccessGating() {
     const projectBlocked = !projectState.canManage || !projectState.identity;
     setDisabled('#wsCheck, .app-topbar-cta, [data-empty-chart-action], [data-view="prompts"]:not(.app-nav-item), [data-measure-task], #dialogMeasureTask, [data-repeat-check]', !canCheck);
     setDisabled('#wsBrand, #wsQuery, #wsSuggestPrompts, #refreshPromptSuggestions, [data-create-task], [data-dismiss], [data-quick-status], #growthTaskForm input, #growthTaskForm select, #growthTaskForm textarea, #growthTaskForm [type="submit"], #deleteGrowthTask', !canWrite);
-    setDisabled('#addBrandAlias, #brandAliasInput, [data-merge-alias]', projectBlocked);
-    setDisabled('#saveCanonicalBrand, #addBrandDomain, #brandDomainInput, #canonicalBrandName', projectBlocked || Boolean(projectState.cooldown));
+    setDisabled('#addBrandAlias, #brandAliasInput, [data-merge-alias], [data-stage-alias]', projectBlocked || projectSaving);
+    setDisabled('#addBrandDomain, #brandDomainInput, #canonicalBrandName', projectBlocked || projectSaving || Boolean(projectState.cooldown));
     setDisabled('#deleteBrand', projectBlocked);
-    $$('[data-remove-brand-value]').forEach(button => { const disabled = projectBlocked || button.dataset.brandValueType === 'domain' && Boolean(projectState.cooldown); button.disabled = disabled; button.setAttribute('aria-disabled', String(disabled)); });
+    $$('[data-remove-brand-value]').forEach(button => { const disabled = projectBlocked || projectSaving || button.dataset.brandValueType === 'domain' && Boolean(projectState.cooldown); button.disabled = disabled; button.setAttribute('aria-disabled', String(disabled)); });
+    syncProjectSaveState();
     $$('[data-delete-check]').forEach(button => { button.disabled = !canWrite || history.find(item => item.id === button.dataset.deleteCheck)?.status === 'running'; button.setAttribute('aria-disabled', String(button.disabled)); });
     $$('[data-repeat-check]').forEach(button => { const running = history.find(item => item.id === button.dataset.repeatCheck)?.status === 'running'; button.disabled = !canCheck || running || checkInFlight || checkOutcomeUnknown || Boolean(trackedCheckId); button.setAttribute('aria-disabled', String(button.disabled)); });
     $('.app-topbar-cta')?.classList.toggle('is-access-disabled', !canCheck);
@@ -1310,39 +1330,132 @@ async function mergeAliasWithActive(value) {
     try { await addBrandAlias(identity.canonicalId, value, domainText(value) ? 'domain' : 'alias'); renderBrandSelector(); renderAllForActiveBrand(); }
     catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); }
 }
+function freshProjectDraft(identity = activeBrandIdentity()) {
+    return identity ? { ...identity, aliases: [...identity.aliases], domains: [...identity.domains] } : null;
+}
+function projectHasChanges() {
+    const identity = activeBrandIdentity();
+    if (!identity || !projectDraft || projectDraft.canonicalId !== identity.canonicalId) return false;
+    return projectDraft.canonicalName !== identity.canonicalName || JSON.stringify(projectDraft.aliases) !== JSON.stringify(identity.aliases) || JSON.stringify(projectDraft.domains) !== JSON.stringify(identity.domains) || Boolean($('#brandAliasInput')?.value.trim() || $('#brandDomainInput')?.value.trim());
+}
+function syncProjectSaveState() {
+    const button = $('#saveCanonicalBrand'); if (!button) return;
+    button.disabled = projectSaving || !capability('manage_existing_brands') || !activeBrandIdentity() || !projectHasChanges();
+    button.setAttribute('aria-disabled', String(button.disabled));
+    button.textContent = projectSaving ? 'Сохраняем…' : 'Сохранить изменения';
+    if ($('#projectLeaveSave')) $('#projectLeaveSave').disabled = projectSaving;
+    if ($('#projectLeaveDiscard')) $('#projectLeaveDiscard').disabled = projectSaving;
+    if ($('#projectLeaveCancel')) $('#projectLeaveCancel').disabled = projectSaving;
+}
+function projectStatus(message, success = false) {
+    if ($('#projectSaveStatus')) setFormStatus('#projectSaveStatus', message, success);
+    if ($('#projectLeaveDialog')?.open && $('#projectLeaveStatus')) $('#projectLeaveStatus').textContent = message;
+}
 function renderBrandSettings() {
     const identity = activeBrandIdentity(); if (!$('#canonicalBrandName')) return;
-    $('#deleteBrand').disabled = !identity;
-    if (!identity) { $('#canonicalBrandName').value = ''; $('#brandAliasList').innerHTML = '<span class="brand-settings-empty">Сначала создайте бренд через новую проверку</span>'; $('#brandDomainList').innerHTML = '<span class="brand-settings-empty">Домены пока не добавлены</span>'; $('#brandSuggestions').innerHTML = ''; return; }
-    $('#canonicalBrandName').value = identity.canonicalName;
+    if (!projectDraft || projectDraft.canonicalId !== identity?.canonicalId) {
+        projectDraft = freshProjectDraft(identity);
+        $('#brandAliasInput').value = ''; $('#brandDomainInput').value = '';
+        projectStatus('');
+    }
+    $('#canonicalBrandName').value = projectDraft?.canonicalName || '';
     const chip = (value, type) => `<span class="brand-chip">${escapeHtml(value)}<button type="button" aria-label="Удалить ${escapeHtml(value)}" data-remove-brand-value="${encodeURIComponent(value)}" data-brand-value-type="${type}">×</button></span>`;
-    $('#brandAliasList').innerHTML = identity.aliases.length ? identity.aliases.map(value => chip(value, 'alias')).join('') : '<span class="brand-settings-empty">Других названий пока нет</span>';
-    $('#brandDomainList').innerHTML = identity.domains.length ? identity.domains.map(value => chip(value, 'domain')).join('') : '<span class="brand-settings-empty">Домены пока не добавлены</span>';
-    const suggestions = normalizedCompetitors().filter(row => aliasSuggestion(row.name)).slice(0, 5);
-    $('#brandSuggestions').innerHTML = suggestions.length ? `<strong>Возможные варианты вашего бренда</strong><p>Подтвердите только те названия, которые действительно относятся к одной компании.</p><div class="brand-chip-list">${suggestions.map(row => `<button class="brand-suggestion-chip" type="button" data-merge-alias="${encodeURIComponent(row.name)}">${escapeHtml(row.name)} <i class="fa-solid fa-plus"></i></button>`).join('')}</div>` : '';
-    $$('[data-remove-brand-value]').forEach(button => button.addEventListener('click', async () => { button.disabled = true; try { await removeBrandAlias(identity.canonicalId, decodeURIComponent(button.dataset.removeBrandValue), button.dataset.brandValueType); renderAllForActiveBrand(); } catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); button.disabled = false; } }));
-    $$('#brandSuggestions [data-merge-alias]').forEach(button => button.addEventListener('click', () => mergeAliasWithActive(decodeURIComponent(button.dataset.mergeAlias))));
+    $('#brandAliasList').innerHTML = projectDraft?.aliases.length ? projectDraft.aliases.map(value => chip(value, 'alias')).join('') : '<span class="brand-settings-empty">Других названий пока нет</span>';
+    $('#brandDomainList').innerHTML = projectDraft?.domains.length ? projectDraft.domains.map(value => chip(value, 'domain')).join('') : '<span class="brand-settings-empty">Домены пока не добавлены</span>';
+    const suggestions = identity ? normalizedCompetitors().filter(row => aliasSuggestion(row.name)).slice(0, 5) : [];
+    $('#brandSuggestions').innerHTML = suggestions.length ? `<strong>Возможные варианты вашего бренда</strong><p>Подтвердите только те названия, которые действительно относятся к одной компании.</p><div class="brand-chip-list">${suggestions.map(row => `<button class="brand-suggestion-chip" type="button" data-stage-alias="${encodeURIComponent(row.name)}">${escapeHtml(row.name)} <i class="fa-solid fa-plus"></i></button>`).join('')}</div>` : '';
+    $$('[data-remove-brand-value]').forEach(button => button.addEventListener('click', () => {
+        if (!projectDraft || button.disabled) return;
+        const field = button.dataset.brandValueType === 'domain' ? 'domains' : 'aliases';
+        projectDraft[field] = projectDraft[field].filter(value => value !== decodeURIComponent(button.dataset.removeBrandValue));
+        projectStatus('Есть несохранённые изменения'); renderBrandSettings(); applyAccessGating();
+    }));
+    $$('[data-stage-alias]').forEach(button => button.addEventListener('click', () => {
+        if (stageProjectValue(decodeURIComponent(button.dataset.stageAlias), 'alias')) { renderBrandSettings(); applyAccessGating(); }
+    }));
+    syncProjectSaveState();
 }
-async function addIdentityValue(inputSelector, type) {
-    const input = $(inputSelector); const value = normalizeBrandName(input.value); const identity = activeBrandIdentity(); if (!value || !identity) return;
-    try { await addBrandAlias(identity.canonicalId, value, type); input.value = ''; renderAllForActiveBrand(); }
-    catch (error) { showError(`Не удалось обновить бренд: ${error.message}`); }
+function stageProjectValue(raw, type) {
+    if (!projectDraft || projectSaving || !capability('manage_existing_brands')) return false;
+    let value = normalizeBrandName(raw); if (!value) return true;
+    if (type === 'domain' && projectIdentityCooldown(activeBrandIdentity())) { projectStatus('Название и домены пока недоступны для изменения.'); return false; }
+    if (type === 'domain') {
+        value = domainText(value);
+        if (!value || !value.includes('.') || /[\s:@]/.test(value)) { projectStatus('Введите домен, например company.ru.'); return false; }
+    }
+    const conflict = identityFor(value);
+    if (conflict && conflict.canonicalId !== projectDraft.canonicalId) { projectStatus('Это название или домен уже относится к другому проекту.'); return false; }
+    const field = type === 'domain' ? 'domains' : 'aliases';
+    const key = type === 'domain' ? domainText : identityText;
+    if (field === 'aliases' && key(value) === key(projectDraft.canonicalName)) return true;
+    if (!projectDraft[field].some(item => key(item) === key(value))) {
+        if (projectDraft[field].length >= 50) { projectStatus('Можно добавить не более 50 значений.'); return false; }
+        projectDraft[field].push(value);
+    }
+    projectStatus('Есть несохранённые изменения');
+    return true;
+}
+function addIdentityValue(inputSelector, type) {
+    const input = $(inputSelector); if (!input || !stageProjectValue(input.value, type)) return;
+    input.value = ''; renderBrandSettings(); applyAccessGating();
 }
 $('#addBrandAlias').addEventListener('click', () => addIdentityValue('#brandAliasInput', 'alias'));
 $('#addBrandDomain').addEventListener('click', () => addIdentityValue('#brandDomainInput', 'domain'));
-$('#brandAliasInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandAliasInput', 'alias'); } });
-$('#brandDomainInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue('#brandDomainInput', 'domain'); } });
-$('#saveCanonicalBrand').addEventListener('click', async () => {
-    const identity = activeBrandIdentity(); const name = normalizeBrandName($('#canonicalBrandName').value); if (!identity || !name) return;
-    const conflict = identityFor(name); if (conflict && conflict.canonicalId !== identity.canonicalId) return showError('Это название уже относится к другому бренду. Сначала удалите его из той карточки.');
-    const next = { ...identity, aliases: [...identity.aliases], domains: [...identity.domains], canonicalName: name };
-    if (identityText(identity.canonicalName) !== identityText(name)) next.aliases.push(identity.canonicalName);
-    next.aliases = next.aliases.filter(alias => identityText(alias) !== identityText(name));
-    const button = $('#saveCanonicalBrand'); button.disabled = true;
-    try { await persistBrandIdentity(next); Object.assign(identity, next); history.filter(item => item.brandKey === identity.canonicalId).forEach(item => { item.brand = identity.canonicalName; item.canonicalName = identity.canonicalName; }); $('#wsBrand').value = name; renderBrandSelector(); renderAllForActiveBrand(); }
-    catch (error) { showError(`Не удалось переименовать бренд: ${error.message}`); }
-    finally { button.disabled = false; }
+for (const [selector, type] of [['#brandAliasInput', 'alias'], ['#brandDomainInput', 'domain']]) {
+    $(selector).addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addIdentityValue(selector, type); } });
+    $(selector).addEventListener('input', () => { projectStatus(''); syncProjectSaveState(); });
+}
+$('#canonicalBrandName').addEventListener('input', event => {
+    if (projectDraft) projectDraft.canonicalName = event.target.value;
+    projectStatus(''); syncProjectSaveState();
 });
+async function saveProjectDraft() {
+    const identity = activeBrandIdentity();
+    if (projectSaving || !identity || !projectDraft || !capability('manage_existing_brands')) return false;
+    for (const [selector, type] of [['#brandAliasInput', 'alias'], ['#brandDomainInput', 'domain']]) {
+        if (!stageProjectValue($(selector).value, type)) return false;
+        $(selector).value = '';
+    }
+    renderBrandSettings();
+    const name = normalizeBrandName(projectDraft.canonicalName);
+    if (!name || name.length > 200) { projectStatus('Укажите название проекта длиной до 200 символов.'); return false; }
+    const conflict = identityFor(name);
+    if (conflict && conflict.canonicalId !== identity.canonicalId) { projectStatus('Это название уже относится к другому проекту.'); return false; }
+    const next = { ...projectDraft, canonicalName: name, aliases: [...projectDraft.aliases], domains: [...projectDraft.domains] };
+    if (identityText(identity.canonicalName) !== identityText(name)) next.aliases.push(identity.canonicalName);
+    next.aliases = [...new Map(next.aliases.map(value => [identityText(value), value])).values()].filter(value => identityText(value) !== identityText(name));
+    if (next.aliases.length > 50) { projectStatus('Можно сохранить не более 50 других названий, включая прежнее название проекта.'); return false; }
+    projectSaving = true; projectStatus(''); applyAccessGating();
+    try {
+        await persistBrandIdentity(next);
+        Object.assign(identity, next);
+        projectDraft = freshProjectDraft(identity);
+        history.filter(item => item.brandKey === identity.canonicalId).forEach(item => { item.brand = identity.canonicalName; item.canonicalName = identity.canonicalName; });
+        $('#wsBrand').value = identity.canonicalName;
+        renderBrandSelector(); renderAllForActiveBrand(); projectStatus('Изменения сохранены.', true);
+        return true;
+    } catch (error) {
+        projectStatus(error.message);
+        const message = $('#projectLeaveStatus'); if (message) message.textContent = error.message;
+        return false;
+    } finally { projectSaving = false; applyAccessGating(); }
+}
+$('#projectSettingsForm')?.addEventListener('submit', async event => { event.preventDefault(); await saveProjectDraft(); });
+function guardProjectNavigation(action) {
+    if (bypassProjectGuard) return false;
+    if (projectSaving) return true;
+    if (!projectHasChanges()) return false;
+    pendingProjectNavigation = action;
+    if ($('#projectLeaveStatus')) $('#projectLeaveStatus').textContent = '';
+    openDashboardDialog('projectLeaveDialog');
+    return true;
+}
+function continueProjectNavigation(discard = false) {
+    const action = pendingProjectNavigation; pendingProjectNavigation = null;
+    if (discard) { projectDraft = freshProjectDraft(); $('#brandAliasInput').value = ''; $('#brandDomainInput').value = ''; renderBrandSettings(); applyAccessGating(); }
+    closeDashboardDialog('projectLeaveDialog');
+    if (action) { bypassProjectGuard = true; try { action(); } finally { bypassProjectGuard = false; } }
+}
 function sourceCategory(domain) { if (/(forbes|rbc|tass|ria|vedomosti|kommersant|lenta|gazeta|news|media)/.test(domain)) return 'СМИ'; if (/(vc\.ru|habr|reddit|forum|otzovik|irecommend)/.test(domain)) return 'Сообщество и отзывы'; if (/(wiki|catalog|yell|2gis|zoon)/.test(domain)) return 'Каталог и справочник'; return 'Профильный сайт'; }
 function renderSources() {
     const answers = analyticsHistory().flatMap(answerRowsFor);
@@ -1356,7 +1469,7 @@ function renderSources() {
 }
 $$('[data-ranking-toggle]').forEach(button => button.addEventListener('click', () => { if (button.dataset.rankingToggle === 'competitors') { competitorExpanded = !competitorExpanded; renderCompetitors(); } else { sourceExpanded = !sourceExpanded; renderSources(); } }));
 const dashboardCharts = {};
-function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].destroy(); }
+function destroyChart(key) { if (dashboardCharts[key]) dashboardCharts[key].destroy(); delete dashboardCharts[key]; }
 function percentage(value, total) { return total ? Math.round(value / total * 100) : 0; }
 function sourceRows(answers) {
     const counts = new Map();
@@ -1449,6 +1562,17 @@ function renderMetricsDashboard() {
     $('#metricVisibility').textContent = metrics.visibility; $('#metricVisibilityNote').textContent = data.answers.length ? `в ${own.mentions} из ${data.answers.length} ответов` : 'Нет пригодных ответов';
     $('#metricCitation').textContent = metrics.citation; $('#metricCitationNote').textContent = !hasCitationMeasurement(data) ? 'Укажите домены бренда' : data.answers.length ? `${own.citations} ответов со ссылкой` : 'Нет пригодных ответов';
     $('#metricPosition').textContent = metrics.position; $('#metricPositionNote').textContent = own.averagePosition ? 'в извлечённых списках брендов' : 'Нет позиций';
+    if ($('#homeBrandName')) $('#homeBrandName').textContent = currentBrand() || 'Проект не выбран';
+    const countLabel = (value, forms) => `${value} ${forms[value % 100 >= 11 && value % 100 <= 14 ? 2 : value % 10 === 1 ? 0 : value % 10 >= 2 && value % 10 <= 4 ? 1 : 2]}`;
+    if ($('#homeCheckCount')) $('#homeCheckCount').textContent = countLabel(data.records.length, ['проверка', 'проверки', 'проверок']);
+    if ($('#homeAnswerCount')) $('#homeAnswerCount').textContent = countLabel(data.answers.length, ['ответ', 'ответа', 'ответов']);
+    const latest = historyForActiveBrand().filter(successfulCheck).sort((a, b) => (parseDate(b.completedAt)?.getTime() || b.createdAt) - (parseDate(a.completedAt)?.getTime() || a.createdAt))[0];
+    const lastTime = $('#lastCheckTime');
+    if (lastTime) {
+        const stamp = latest && (parseDate(latest.completedAt) || parseDate(latest.createdAt));
+        lastTime.textContent = stamp ? stamp.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) + ' МСК' : '—';
+        if (stamp) lastTime.dateTime = stamp.toISOString(); else lastTime.removeAttribute('datetime');
+    }
     renderLeaderBoard(); renderModelMetrics(); renderDashboardCharts();
 }
 function renderLeaderBoard() { const rows = brandRows().slice(0, 5); $('#leaderboardBody').innerHTML = analyticsHistory().length ? rows.map((row, index) => `<tr class="${row.key === activeBrandKey ? 'is-current' : ''}"><td>${index + 1}</td><td><span class="identity-name">${companyAvatarMarkup(row.name)}<strong>${escapeHtml(row.name)}</strong></span></td><td>${row.sov}%</td><td>${row.visibility}%</td><td>${row.mentions}</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td><td>${row.citationRate}%</td><td>${escapeHtml(dominantSentiment(row.sentiments))}</td></tr>`).join('') : '<tr><td colspan="8" class="ws-empty-row">Запустите первую проверку — рейтинг появится здесь</td></tr>'; bindAvatarFallbacks(); }
@@ -1483,30 +1607,24 @@ function lineGradient(chart, color) {
     gradient.addColorStop(1, 'transparent');
     return gradient;
 }
-const centerLabelPlugin = { id: 'centerLabel', beforeDatasetsDraw(chart, args, options) { if (!options?.label) return; const { ctx, chartArea } = chart; const x = (chartArea.left + chartArea.right) / 2; const y = (chartArea.top + chartArea.bottom) / 2; ctx.save(); ctx.textAlign = 'center'; ctx.fillStyle = options.color; ctx.font = '800 26px Inter'; ctx.fillText(options.label, x, y - 2); ctx.fillStyle = options.muted; ctx.font = '600 11px Inter'; ctx.fillText(options.caption, x, y + 17); ctx.restore(); } };
 function renderDashboardCharts() {
-    if (!window.Chart) return;
     const rowsHistory = analyticsHistory(); const theme = chartTheme(); const allRows = brandRows(rowsHistory); const own = allRows.find(row => row.key === activeBrandKey) || allRows[0]; const rows = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 4)].filter(Boolean);
-    destroyChart('trend'); destroyChart('sov');
+    destroyChart('trend');
     const hasHistory = rowsHistory.length > 0;
     const hasTrend = rowsHistory.length > 1;
     $('#overviewChart').hidden = !hasTrend; $('#overviewEmpty').hidden = hasTrend;
-    $('#sovChart').hidden = !hasHistory; $('#sovEmpty').hidden = hasHistory; $('#sovLegend').hidden = !hasHistory;
-    $('#sovLegend').parentElement.classList.toggle('is-empty', !hasHistory);
-    if (!hasHistory) {
-        $('#overviewInsight').textContent = 'Начните с проверки';
-        $('#sovInsight').textContent = 'Данные появятся здесь';
-        return;
-    }
+    $('#overviewEmpty').querySelector('[data-empty-chart-action]').hidden = false;
+    $('#overviewEmpty').querySelector('strong').textContent = 'Начните отслеживать динамику';
+    $('#overviewEmpty').querySelector('p').textContent = 'Запустите первую проверку — здесь появится сравнение вашего бренда с конкурентами.';
+    if (!hasHistory) { $('#overviewInsight').textContent = 'Начните с проверки'; return; }
     const trendSeries = sovTimeline(rowsHistory, rows.map(row => row.key));
-    const ownTrend = own ? trendSeries.get(activeBrandKey) || [] : [];
-    const trendDelta = ownTrend.length > 1 ? ownTrend.at(-1) - ownTrend[0] : 0;
-    const leader = allRows[0]; $('#overviewInsight').textContent = own ? `${rowsHistory.length} проверок · ${trendDelta >= 0 ? '+' : ''}${trendDelta} п.п. · лидер ${leader?.name || '—'}` : 'Нужны проверки';
+    const count = rowsHistory.length;
+    const checkWord = count % 100 >= 11 && count % 100 <= 14 ? 'проверок' : count % 10 === 1 ? 'проверка' : count % 10 >= 2 && count % 10 <= 4 ? 'проверки' : 'проверок';
+    const leader = allRows[0]; $('#overviewInsight').textContent = `Лидер: ${leader?.name || '—'} · ${count} ${checkWord}`;
     if (!hasTrend) {
-        $('#overviewInsight').textContent = 'Нужна ещё 1 проверка';
         $('#overviewEmpty').querySelector('strong').textContent = 'Для динамики нужны две проверки';
         $('#overviewEmpty').querySelector('p').textContent = 'Повторите проверку позже — мы сравним изменения и покажем тренд.';
-    } else dashboardCharts.trend = new Chart($('#overviewChart'), {
+    } else if (window.Chart) dashboardCharts.trend = new Chart($('#overviewChart'), {
         type: 'line',
         data: { labels: rowsHistory.map(chartDate), datasets: rows.map((row, datasetIndex) => {
             const isOwn = brandKey(row.name) === activeBrandKey;
@@ -1515,14 +1633,12 @@ function renderDashboardCharts() {
         }) },
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'top', align: 'start', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 22, padding: 18, color: theme.text, font: { size: 10, weight: '600' } } }, tooltip: { backgroundColor: theme.surface, titleColor: theme.text, bodyColor: theme.text, borderColor: theme.border, borderWidth: 1, cornerRadius: 8, padding: 10, displayColors: true, usePointStyle: true, callbacks: { title: contexts => { const index = contexts[0]?.dataIndex || 0; const item = rowsHistory[index]; const date = item?.createdAt ? new Date(item.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна'; return `Проверка ${index + 1} · ${date}`; }, beforeBody: contexts => { const item = rowsHistory[contexts[0]?.dataIndex || 0]; return PROVIDERS[item?.provider] || item?.model || item?.provider || 'AI-модель'; }, label: context => ` ${context.dataset.label}: ${context.parsed.y}%` } } }, scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: theme.muted, maxTicksLimit: 6, font: { size: 10, weight: '600' } } }, y: { min: 0, max: 100, border: { display: false }, ticks: { stepSize: 25, color: theme.muted, callback: value => `${value}%`, font: { size: 10 } }, grid: { color: theme.border, drawTicks: false } } } }
     });
-    const ownRank = own ? allRows.findIndex(row => row.key === activeBrandKey) + 1 : 0;
-    $('#sovInsight').textContent = own ? `#${ownRank} в нише · ${own.sov}% SoV` : 'Нужны проверки';
-    const sovSelected = [own, ...allRows.filter(row => row.key !== activeBrandKey).slice(0, 3)].filter(Boolean); const selectedKeys = new Set(sovSelected.map(row => row.key)); const otherWeight = allRows.filter(row => !selectedKeys.has(row.key)).reduce((sum, row) => sum + row.voiceWeight, 0); const sovRows = otherWeight ? [...sovSelected, { key: 'other', name: 'Остальные', voiceWeight: otherWeight }] : sovSelected; const totalWeight = allRows.reduce((sum, row) => sum + row.voiceWeight, 0);
-    $('#sovLegend').innerHTML = sovRows.map((row, index) => `<div><i data-sov-color="${index}"></i><span class="identity-name">${row.key === 'other' ? monogramMarkup(row.name) : companyAvatarMarkup(row.name)}<span>${escapeHtml(row.name)}</span></span><strong>${percentage(row.voiceWeight, totalWeight)}%</strong></div>`).join(''); bindAvatarFallbacks();
-    dashboardCharts.sov = new Chart($('#sovChart'), {
-        type: 'doughnut', data: { labels: sovRows.map(row => row.name), datasets: [{ data: sovRows.map(row => row.voiceWeight), backgroundColor: sovRows.map((row, index) => row.key === activeBrandKey ? theme.accent : index === 1 ? theme.accent2 : index === 2 ? theme.muted : index === 3 ? theme.border : theme.soft), borderColor: theme.surface, borderWidth: 5, hoverOffset: 0, spacing: 2 }] },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '76%', rotation: -95, circumference: 360, layout: { padding: 2 }, plugins: { centerLabel: { label: own ? `${own.sov}%` : '—', caption: `место #${ownRank}`, color: theme.text, muted: theme.muted }, legend: { display: false }, tooltip: { displayColors: false, backgroundColor: theme.night, titleColor: theme.surface, bodyColor: theme.surface, caretPadding: 8, cornerRadius: 8, padding: 11, callbacks: { title: contexts => contexts[0]?.label || '', label: context => `${percentage(context.raw, totalWeight)}% доли голоса` } } } }, plugins: [centerLabelPlugin]
-    });
+    if (hasTrend && !window.Chart) {
+        $('#overviewChart').hidden = true; $('#overviewEmpty').hidden = false;
+        $('#overviewEmpty').querySelector('[data-empty-chart-action]').hidden = true;
+        $('#overviewEmpty').querySelector('strong').textContent = 'График временно недоступен';
+        $('#overviewEmpty').querySelector('p').textContent = 'Не удалось загрузить библиотеку графика. Данные в карточках доступны, попробуйте обновить страницу.';
+    }
 }
 async function refreshChecks(render = true) {
     checksLoadState.loading = true; checksLoadState.error = ''; renderReport();
@@ -1545,29 +1661,35 @@ async function deleteCheck(id) {
     }
     catch (error) { showError(`Не удалось удалить проверку: ${error.message}`); }
 }
-async function deleteActiveBrand() {
-    const identity = activeBrandIdentity(); if (!identity || !confirm(`Удалить бренд «${identity.canonicalName}» вместе со всеми проверками и задачами?`)) return;
-    const button = $('#deleteBrand'); button.disabled = true;
+async function deleteActiveBrand(confirmed = false) {
+    const identity = activeBrandIdentity(); if (!identity || projectDeleting || !capability('manage_existing_brands')) return;
+    if (confirmed !== true) { setFormStatus('#projectDeleteStatus', ''); openDashboardDialog('projectDeleteDialog'); return; }
+    projectDeleting = true;
+    const button = $('#confirmDeleteBrand'); button.disabled = true;
     try {
         await apiRequest(`/brands/${encodeURIComponent(identity.id)}`, { method: 'DELETE' });
         brandIdentities = brandIdentities.filter(item => item.canonicalId !== identity.canonicalId);
         history = history.filter(item => item.brandKey !== identity.canonicalId);
         growthTasks = growthTasks.filter(item => brandKey(item.brand) !== identity.canonicalId && item.brandKey !== identity.canonicalId);
         activeBrandKey = brandIdentities[0]?.canonicalId || '';
+        projectDraft = null;
         selectedCheckId = null; answerCheckId = null; $('#wsResult').hidden = true; renderReportContext(null);
         if (activeBrandKey) localStorage.setItem(ACTIVE_BRAND_KEY, activeBrandKey); else localStorage.removeItem(ACTIVE_BRAND_KEY);
         $('#wsBrand').value = currentBrand(); renderBrandSelector(); renderAllForActiveBrand();
         await refreshAccess().catch(() => {});
-    } catch (error) { showError(`Не удалось удалить бренд: ${error.message}`); button.disabled = false; }
+        closeDashboardDialog('projectDeleteDialog');
+    } catch (error) { setFormStatus('#projectDeleteStatus', `Не удалось удалить проект: ${error.message}`); }
+    finally { projectDeleting = false; button.disabled = false; }
 }
 function setFormStatus(selector, message, success = false) { const target = $(selector); target.textContent = message; target.className = `account-form-status${success ? ' success' : message ? ' error' : ''}`; }
 async function saveAccount(event) {
     event.preventDefault();
-    const form = event.currentTarget; if (!form.reportValidity() || !accountState) return;
+    const form = event.currentTarget; if (accountMutationBusy || !form.reportValidity() || !accountState) return;
     const name = $('#accountName').value.trim();
     const body = {};
     if (name !== accountState.name) body.name = name;
     if (!Object.keys(body).length) return setFormStatus('#accountProfileStatus', 'Нет изменений для сохранения.', true);
+    accountMutationBusy = true;
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountProfileStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify(body) });
@@ -1575,14 +1697,15 @@ async function saveAccount(event) {
         renderAccountProfile();
         setFormStatus('#accountProfileStatus', 'Профиль сохранён.', true);
     } catch (error) { setFormStatus('#accountProfileStatus', error.message); }
-    finally { button.disabled = false; }
+    finally { accountMutationBusy = false; button.disabled = false; }
 }
 async function changeEmail(event) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (!form.reportValidity() || !accountState) return;
+    if (accountMutationBusy || !form.reportValidity() || !accountState) return;
     const email = $('#accountEmailNew').value.trim();
     if (email.toLocaleLowerCase('ru-RU') === String(accountState.email || '').toLocaleLowerCase('ru-RU')) return setFormStatus('#accountEmailStatus', 'Укажите новый email.');
+    accountMutationBusy = true;
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountEmailStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify({ email, current_password: $('#accountEmailCurrentPassword').value }) });
@@ -1592,29 +1715,32 @@ async function changeEmail(event) {
         if (data.reauth_required) { setFormStatus('#accountEmailStatus', 'Email изменён. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
         setFormStatus('#accountEmailStatus', 'Email изменён.', true);
     } catch (error) { setFormStatus('#accountEmailStatus', error.message); }
-    finally { button.disabled = false; }
+    finally { accountMutationBusy = false; button.disabled = false; }
 }
 async function changePassword(event) {
     event.preventDefault();
+    if (accountMutationBusy) return;
     const form = event.currentTarget; const currentPassword = $('#accountPasswordCurrent').value; const newPassword = $('#accountPasswordNew').value; const confirmation = $('#accountPasswordConfirm').value;
     $('#accountPasswordConfirm').setCustomValidity(newPassword === confirmation ? '' : 'Пароли не совпадают');
     if (!form.reportValidity()) return;
+    accountMutationBusy = true;
     const button = form.querySelector('[type="submit"]'); button.disabled = true; setFormStatus('#accountPasswordStatus', '');
     try {
         const data = await apiRequest('/account', { method: 'PATCH', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
         if (data.reauth_required) { setFormStatus('#accountPasswordStatus', 'Пароль изменён. Выполняется повторный вход…', true); setTimeout(() => window.location.replace('index.html?auth=login'), 500); return; }
         form.reset(); setFormStatus('#accountPasswordStatus', 'Пароль изменён.', true);
     } catch (error) { setFormStatus('#accountPasswordStatus', error.message); }
-    finally { button.disabled = false; }
+    finally { accountMutationBusy = false; button.disabled = false; }
 }
 async function deleteAccount(event) {
     event.preventDefault();
-    const form = event.currentTarget; if (!form.reportValidity()) return;
+    const form = event.currentTarget; if (accountMutationBusy || !form.reportValidity()) return;
     if ($('#deleteAccountConfirmation').value !== 'УДАЛИТЬ') return setFormStatus('#deleteAccountStatus', 'Введите УДАЛИТЬ без кавычек.');
-    if (!confirm('Удалить аккаунт и все данные Vidno навсегда? Это действие нельзя отменить.')) return;
+    accountMutationBusy = true;
     const button = $('#deleteAccount'); button.disabled = true; setFormStatus('#deleteAccountStatus', '');
     try { await apiRequest('/account', { method: 'DELETE', body: JSON.stringify({ current_password: $('#deleteAccountPassword').value, confirmation: 'УДАЛИТЬ' }) }); localStorage.removeItem(ACTIVE_BRAND_KEY); window.location.replace('index.html'); }
-    catch (error) { setFormStatus('#deleteAccountStatus', error.message); button.disabled = false; }
+    catch (error) { setFormStatus('#deleteAccountStatus', error.message); }
+    finally { accountMutationBusy = false; button.disabled = false; }
 }
 function normalizeAdminAccount(value = {}) { return { id: String(value.id || ''), name: value.name || '', email: value.email || '', role: value.role || 'client', createdAt: value.created_at || value.createdAt || null }; }
 function adminClientMarkup(item) {
@@ -1898,4 +2024,96 @@ $('#voucherBatchPlan').addEventListener('change', renderVoucherBatchSummary);
 $('#voucherBatchForm').addEventListener('submit', createVoucherBatch);
 $('#voucherRefreshBatches').addEventListener('click', loadVoucherBatches);
 $('#voucherCopyCodes').addEventListener('click', copyVoucherCodes);
+const dashboardDialogOpeners = new Map();
+function openDashboardDialog(id) {
+    const dialog = document.getElementById(id); if (!dialog || dialog.open) return;
+    dashboardDialogOpeners.set(id, document.activeElement);
+    dialog.showModal();
+    if (id === 'projectLeaveDialog') $('#projectLeaveCancel')?.focus();
+}
+function closeDashboardDialog(id) {
+    const dialog = document.getElementById(id); if (!dialog?.open) return;
+    dialog.close();
+}
+function setProjectPicker(open, focusOption = false) {
+    const trigger = $('#projectPickerTrigger'); const menu = $('#projectPickerMenu');
+    if (!trigger || !menu) return;
+    trigger.setAttribute('aria-expanded', String(open)); menu.hidden = !open;
+    if (open) { closeAccountMenu(); if (focusOption) (menu.querySelector('[aria-selected="true"]') || menu.querySelector('[role="option"]'))?.focus(); }
+}
+function closeMobileNavigation(restoreFocus = false) {
+    document.body.classList.remove('mobile-nav-open');
+    $('#mobileNavToggle')?.setAttribute('aria-expanded', 'false');
+    if ($('#mobileNavBackdrop')) $('#mobileNavBackdrop').hidden = true;
+    if (restoreFocus) $('#mobileNavToggle')?.focus();
+}
+function bindDashboardDesign() {
+    $('#projectPickerTrigger')?.addEventListener('click', event => { event.stopPropagation(); setProjectPicker($('#projectPickerMenu').hidden); });
+    $('#projectPickerTrigger')?.addEventListener('keydown', event => { if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); setProjectPicker(true, true); } });
+    $('#projectPickerMenu')?.addEventListener('click', event => {
+        event.stopPropagation(); const option = event.target.closest('[data-project-key]');
+        if (!option) return; setProjectPicker(false); setActiveBrand(option.dataset.projectKey); $('#projectPickerTrigger').focus();
+    });
+    $('#projectPickerMenu')?.addEventListener('keydown', event => {
+        const items = [...event.currentTarget.querySelectorAll('[role="option"]')]; const index = items.indexOf(document.activeElement);
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && items.length) {
+            event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[next].focus();
+        }
+        if (event.key === 'Tab') setProjectPicker(false);
+    });
+    $('#accountMenuTrigger').addEventListener('click', () => setProjectPicker(false));
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.app-project-control')) setProjectPicker(false);
+        if (!event.target.closest('[data-metric-help], [role="tooltip"]')) $$('[data-metric-help]').forEach(button => button.setAttribute('aria-expanded', 'false'));
+    });
+    $$('[data-metric-help]').forEach(button => {
+        button.setAttribute('aria-expanded', 'false');
+        button.addEventListener('focus', () => { delete button.dataset.tooltipDismissed; });
+        button.addEventListener('blur', () => { delete button.dataset.tooltipDismissed; });
+        button.addEventListener('pointerenter', () => { delete button.dataset.tooltipDismissed; });
+        button.addEventListener('click', event => { event.stopPropagation(); delete button.dataset.tooltipDismissed; const next = button.getAttribute('aria-expanded') !== 'true'; $$('[data-metric-help]').forEach(item => item.setAttribute('aria-expanded', 'false')); button.setAttribute('aria-expanded', String(next)); });
+    });
+    $$('[data-password-toggle]').forEach(button => button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.passwordToggle); if (!input) return;
+        const visible = input.type === 'password'; input.type = visible ? 'text' : 'password'; button.setAttribute('aria-pressed', String(visible)); button.setAttribute('aria-label', visible ? 'Скрыть пароль' : 'Показать пароль');
+    }));
+    $('#mobileNavToggle')?.addEventListener('click', () => {
+        const opening = !document.body.classList.contains('mobile-nav-open'); document.body.classList.toggle('mobile-nav-open', opening); $('#mobileNavToggle').setAttribute('aria-expanded', String(opening)); if ($('#mobileNavBackdrop')) $('#mobileNavBackdrop').hidden = !opening;
+        if (opening) $('#appSidebar .app-logo')?.focus();
+    });
+    $('#mobileNavBackdrop')?.addEventListener('click', () => closeMobileNavigation(true));
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            if ($('#projectPickerMenu') && !$('#projectPickerMenu').hidden) { setProjectPicker(false); $('#projectPickerTrigger').focus(); }
+            if (document.body.classList.contains('mobile-nav-open') && !document.querySelector('dialog[open]') && $('#accountMenu').hidden) closeMobileNavigation(true);
+            $$('[data-metric-help]').forEach(button => { button.setAttribute('aria-expanded', 'false'); button.dataset.tooltipDismissed = 'true'; });
+        }
+        if (event.key === 'Tab' && document.body.classList.contains('mobile-nav-open') && !document.querySelector('dialog[open]')) {
+            const items = [...$('#appSidebar').querySelectorAll('button:not(:disabled),a[href],select')].filter(element => element.getClientRects().length && !element.closest('[hidden]'));
+            const first = items[0], last = items.at(-1);
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
+    });
+    $$('dialog.account-dialog').forEach(dialog => {
+        dialog.addEventListener('click', event => { if (event.target.closest('[data-dialog-close]') && !projectSaving && !accountMutationBusy && !projectDeleting) dialog.close(); });
+        dialog.addEventListener('cancel', event => { if (projectSaving || accountMutationBusy || projectDeleting) event.preventDefault(); });
+        dialog.addEventListener('close', () => {
+            if (dialog.id === 'projectLeaveDialog') pendingProjectNavigation = null;
+            if (dialog.id === 'accountDeleteDialog') $('#deleteAccountForm').reset();
+            const opener = dashboardDialogOpeners.get(dialog.id); if (opener?.isConnected && opener.getClientRects().length) opener.focus();
+        });
+    });
+    $('#projectLeaveDiscard')?.addEventListener('click', () => continueProjectNavigation(true));
+    $('#projectLeaveSave')?.addEventListener('click', async () => { if (await saveProjectDraft()) continueProjectNavigation(); });
+    $('#confirmDeleteBrand')?.addEventListener('click', () => deleteActiveBrand(true));
+    $('#openDeleteAccount')?.addEventListener('click', () => { $('#deleteAccountForm').reset(); setFormStatus('#deleteAccountStatus', ''); openDashboardDialog('accountDeleteDialog'); });
+    document.addEventListener('click', event => {
+        if (bypassProjectGuard || !event.target.closest('a[href],#appLogout')) return;
+        const target = event.target.closest('a[href],#appLogout');
+        if (guardProjectNavigation(() => target.click())) { event.preventDefault(); event.stopImmediatePropagation(); }
+    }, true);
+    window.addEventListener('beforeunload', event => { if (projectHasChanges()) { event.preventDefault(); event.returnValue = ''; } });
+}
+bindDashboardDesign();
 initializeDashboard();

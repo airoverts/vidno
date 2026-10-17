@@ -107,8 +107,25 @@ async function fixture(server = state(), width = 1440) {
     return { page, server, errors, close: () => context.close() };
 }
 
+async function openSidebar(page) {
+    const toggle = page.locator('#mobileNavToggle');
+    if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+}
+async function navigate(page, view) {
+    await openSidebar(page);
+    await page.locator(`.app-nav [data-view="${view}"]`).click();
+}
+async function openAccountMenu(page) {
+    await openSidebar(page);
+    await page.locator('#accountMenuTrigger').click();
+}
+async function switchProject(page, key) {
+    await openSidebar(page);
+    await page.locator('#projectPickerTrigger').click();
+    await page.locator(`#projectPickerList [data-project-key="${key}"]`).click();
+}
 async function reports(page) {
-    await page.locator('.app-nav [data-view="reports"]').click({ force: true });
+    await navigate(page, 'reports');
     await page.locator('#view-reports').waitFor({ state: 'visible' });
 }
 
@@ -152,7 +169,7 @@ test('report and dashboard share model selection, answer denominators and source
         assert.doesNotMatch(await f.page.locator('#reportModelBody').textContent(), /Алиса/);
         assert.equal(await f.page.locator('#providerFilterMenu input[value="openai"]').isChecked(), true);
         assert.equal(await f.page.locator('#providerFilterMenu input[value="yandex"]').isChecked(), false);
-        await f.page.locator('.app-nav [data-view="home"]').click({ force: true });
+        await navigate(f.page, 'home');
         await f.page.locator('#providerFilterTrigger').click();
         await f.page.locator('#providerFilterMenu label:has(input[value="yandex"])').click();
         await f.page.locator('#providerFilterMenu label:has(input[value="openai"])').click();
@@ -327,7 +344,7 @@ test('saved-check context keeps the full report slice and clears on brand switch
         check(503, [answer('openai', true, { name: 'SecondBrand' })], { brand_id: 102, brand: 'SecondBrand' }),
     ] }));
     try {
-        await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+        await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
         await f.page.locator('#resultReport').click();
         assert.match(await f.page.locator('#reportCheckContext').textContent(), /Вопрос 501/);
@@ -335,7 +352,7 @@ test('saved-check context keeps the full report slice and clears on brand switch
         await f.page.locator('#reportBackToCheck').click();
         await f.page.locator('#wsResult').waitFor({ state: 'visible' });
         await f.page.locator('#resultReport').click();
-        await f.page.locator('#activeBrandSelect').selectOption('brand-102');
+        await switchProject(f.page, 'brand-102');
         assert.equal(await metric(f.page, 'visibility'), '100%'); await sameMetrics(f.page);
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-check-id'), '');
         assert.equal(await f.page.locator('#reportBackToCheck').isVisible(), false);
@@ -458,8 +475,8 @@ for (const width of [1440, 390]) {
         const saved = check(704, [answer('openai', true, { name: target.canonical_name })], { brand_id: 102, brand: target.canonical_name, query: `${suggestedQuery} Для небольшой команды.` });
         const f = await fixture(state({ brands: [brand(), target], promptSuggestions: [suggestedQuery], checkSubmission: { record: saved } }), width);
         try {
-            await f.page.locator('#activeBrandSelect').selectOption('brand-102');
-            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await switchProject(f.page, 'brand-102');
+            await navigate(f.page, 'prompts');
             await f.page.locator('#wsSuggestPrompts').click();
             await f.page.locator('[data-suggested-prompt]').first().click();
             assert.equal(await f.page.locator('#wsQuery').inputValue(), suggestedQuery);
@@ -475,7 +492,7 @@ for (const width of [1440, 390]) {
             await reports(f.page); await sameMetrics(f.page);
             assert.equal(await metric(f.page, 'visibility'), '100%');
             f.server.checkSubmission = { status: 503, error: 'backend unavailable' };
-            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await navigate(f.page, 'prompts');
             await f.page.locator('#wsQuery').fill('Какие конкретные варианты подходят для новой задачи?');
             await f.page.locator('#wsCheck').click();
             await f.page.waitForFunction(() => /backend unavailable/.test(document.querySelector('#wsError').textContent));
@@ -497,7 +514,7 @@ for (const width of [1440, 390]) {
         failed.result.requested_providers = ['perplexity'];
         const f = await fixture(state({ checkSubmission: { status: 502, error: 'provider_model_mismatch', record: failed } }), width);
         try {
-            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await navigate(f.page, 'prompts');
             await f.page.locator('#wsQuery').fill(failed.query);
             await f.page.locator('#wsCheck').click();
             await f.page.waitForFunction(() => /provider_model_mismatch/.test(document.querySelector('#wsError').textContent));
@@ -511,7 +528,7 @@ for (const width of [1440, 390]) {
             assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
             await f.page.reload();
             await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
-            await f.page.locator('.app-nav [data-view="prompts"]').click({ force: true });
+            await navigate(f.page, 'prompts');
             await f.page.locator('[data-check-details="705"]').click();
             assert.match(await f.page.locator('#checkDetailsContent').textContent(), /Рекомендуем Acme и OtherBrand/);
             assert.equal(await f.page.evaluate(() => localStorage.getItem('vidno-dashboard-active-brand')), 'brand-101');

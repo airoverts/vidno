@@ -9,8 +9,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <script src="js/theme.js?v=20261016-1"></script>
-    <link rel="stylesheet" href="css/style.css?v=20261016-1">
+    <script src="js/theme.js?v=20261017-design1"></script>
+    <link rel="stylesheet" href="css/style.css?v=20261017-design1">
     <script src="js/metrika.js?v=20261017-1" data-webvisor="false" data-cookie-policy="legal/cookies.html"></script>
 </head>
 <body class="app-body auth-pending">
@@ -71,49 +71,49 @@
         </aside>
     </section>
     <div class="app-shell">
-        <aside class="app-sidebar">
+        <button class="mobile-nav-backdrop" id="mobileNavBackdrop" type="button" aria-label="Закрыть навигацию" hidden></button>
+        <aside class="app-sidebar" id="appSidebar">
             <a class="app-logo" href="index.html"><img class="logo-mark" src="assets/vidno-logo.png" alt=""><span>Vidno</span></a>
+            <div class="project-picker app-project-control">
+                <button class="project-picker-trigger" id="projectPickerTrigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="projectPickerMenu"><span class="project-picker-initials" id="projectPickerInitials">—</span><span class="project-picker-copy"><strong id="projectPickerName">Выберите проект</strong><small id="projectPickerDomain">Настройки проекта</small></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <select id="activeBrandSelect" aria-label="Активный проект" hidden></select>
+                <div class="project-picker-menu" id="projectPickerMenu" hidden><span class="project-picker-label">Ваши проекты</span><div id="projectPickerList" role="listbox" aria-label="Ваши проекты"></div><button class="project-picker-settings" id="projectSettingsButton" type="button" data-settings-tab="project">Настройки проекта</button></div>
+            </div>
             <nav class="app-nav" aria-label="Рабочая навигация">
-                <span class="app-nav-label">Обзор</span>
-                <button class="app-nav-item active" data-view="home"><i class="fa-solid fa-house"></i>Главная</button>
+                <button class="app-nav-item active" data-view="home" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></svg><span>Главная</span></button>
                 <span class="app-nav-label">Аналитика</span>
-                <button class="app-nav-item" data-view="prompts"><i class="fa-solid fa-wand-magic-sparkles"></i>Промпты и интенты</button>
-                <button class="app-nav-item" data-view="answers"><i class="fa-solid fa-message"></i>Ответы AI</button>
-                <button class="app-nav-item" data-view="visibility"><i class="fa-solid fa-chart-line"></i>AI-видимость</button>
-                <button class="app-nav-item" data-view="competitors"><i class="fa-solid fa-scale-balanced"></i>Конкуренты</button>
-                <button class="app-nav-item" data-view="sources"><i class="fa-solid fa-link"></i>Источники</button>
-                <span class="app-nav-label">Рост</span>
-                <button class="app-nav-item" data-view="growth"><i class="fa-solid fa-bolt"></i>План роста</button>
-                <button class="app-nav-item" data-view="reports"><i class="fa-solid fa-file-lines"></i>Отчёты</button>
+                <button class="app-nav-item" data-view="prompts" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg><span>Промпты и интенты</span></button>
+                <button class="app-nav-item" data-view="answers" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 4H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h3v3l5-3h8a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1Z"/><path d="M7 9h10M7 13h6"/></svg><span>Ответы AI</span></button>
+                <button class="app-nav-item" data-view="visibility" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>AI-видимость</span></button>
+                <button class="app-nav-item" data-view="competitors" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v3"/></svg><span>Конкуренты</span></button>
+                <button class="app-nav-item" data-view="sources" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg><span>Источники</span></button>
+                <span class="app-nav-label">Развитие</span>
+                <button class="app-nav-item" data-view="growth" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 6-6 4 4 8-10M15 5h6v6"/></svg><span>План роста</span></button>
+                <button class="app-nav-item" data-view="reports" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5M8 12h8M8 16h6"/></svg><span>Отчёты</span></button>
             </nav>
-        </aside>
-        <main class="app-main">
-            <div class="app-topbar">
-                <span id="appBreadcrumb">Главная</span>
-                <div class="app-topbar-actions">
-                    <div class="app-project-control">
-                        <label class="app-brand-switcher"><span>Проект</span><select id="activeBrandSelect" aria-label="Активный проект"></select></label>
-                        <button class="app-icon-button" id="projectSettingsButton" type="button" data-settings-tab="project" aria-label="Настройки проекта" title="Настройки проекта"><i class="fa-solid fa-gear"></i></button>
-                    </div>
-                    <button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts"><i class="fa-solid fa-play"></i>Новая проверка</button>
-                    <div class="app-account-menu" id="accountMenuRoot">
-                        <button class="app-account-trigger" id="accountMenuTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="app-user-avatar" id="appUserInitials">—</span><span class="app-user-copy"><strong id="appUserName"></strong><small id="appUserAccessCompact">Аккаунт</small></span><i class="fa-solid fa-chevron-down"></i></button>
+            <div class="app-sidebar-bottom"><a class="app-nav-item" href="index.html#section-contacts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-1 .8-1.7 1.2-1.7 2.7M12 17h.01"/></svg><span>Помощь</span></a><button class="app-nav-item" type="button" data-settings-tab="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg><span>Настройки</span></button>
+            <div class="app-account-menu" id="accountMenuRoot">
+                        <button class="app-account-trigger" id="accountMenuTrigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="accountMenu"><span class="app-user-avatar" id="appUserInitials">—</span><span class="app-user-copy"><strong id="appUserName"></strong><small id="appUserAccessCompact">Аккаунт</small></span></button>
                         <div class="app-account-popover" id="accountMenu" role="menu" hidden>
                             <div class="app-account-summary"><span class="app-user-avatar" id="accountMenuInitials">—</span><span><strong id="accountMenuName"></strong><small id="accountMenuEmail"></small><i class="access-status-badge" id="accountMenuAccess">—</i></span></div>
                             <div class="app-account-links">
                                 <button type="button" role="menuitem" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Имя и email</small></span></button>
-                                <button type="button" role="menuitem" data-settings-tab="appearance"><i class="fa-solid fa-palette"></i><span><strong>Оформление</strong><small>Светлая и тёмная тема</small></span></button>
                                 <button type="button" role="menuitem" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ и лимиты</strong><small>Статус и использование</small></span></button>
-                                <button type="button" role="menuitem" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                                 <button type="button" role="menuitem" data-view="admin" id="adminMenuItem" hidden><i class="fa-solid fa-user-shield"></i><span><strong>Администрирование</strong><small>Клиенты и доступ</small></span></button>
                             </div>
-                            <div class="app-account-footer"><a href="index.html" role="menuitem"><i class="fa-solid fa-arrow-up-right-from-square"></i>На лендинг</a><button id="appLogout" type="button" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i>Выйти</button></div>
+                            <div class="app-account-footer"><a href="index.html" role="menuitem"><i class="fa-solid fa-arrow-up-right-from-square"></i>На сайт Vidno</a><button id="appLogout" type="button" role="menuitem"><i class="fa-solid fa-right-from-bracket"></i>Выйти</button></div>
                         </div>
                     </div>
-                </div>
+            </div>
+        </aside>
+        <main class="app-main">
+            <div class="app-topbar">
+                <div class="app-topbar-context"><button class="app-icon-button mobile-nav-toggle" id="mobileNavToggle" type="button" aria-label="Открыть навигацию" aria-expanded="false" aria-controls="appSidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span id="appBreadcrumb">Главная</span><span class="last-check-time">Последняя проверка: <time id="lastCheckTime">—</time></span></div>
+                <div class="app-topbar-actions"><button class="btn btn-ghost btn-sm" data-view="reports" type="button">Создать отчёт</button><button class="btn btn-primary btn-sm app-topbar-cta" data-view="prompts" type="button">Новая проверка</button></div>
             </div>
             <div class="access-banner" id="accessBanner" hidden><div><i class="fa-solid fa-circle-info"></i><span><strong id="accessBannerTitle"></strong><small id="accessBannerText"></small></span></div><button class="btn btn-ghost btn-sm" type="button" data-settings-tab="access">Подробнее</button></div>
             <section class="app-view active" id="view-home">
+                <div class="app-home-heading"><div><h1>Обзор видимости</h1><p id="homeBrandSummary"><span id="homeBrandName">Все проекты</span> · <span id="homeCheckCount">0 проверок</span> · <span id="homeAnswerCount">0 ответов</span></p></div></div>
                 <div class="app-home-toolbar">
                     <div class="analytics-period">
                         <label>Период<select data-analytics-period aria-label="Период аналитики"><option value="all">Всё время</option><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="custom">Свои даты</option></select></label>
@@ -121,7 +121,7 @@
                         <span data-analytics-error role="status" hidden></span>
                     </div>
                     <div class="provider-filter" id="providerFilter">
-                        <button class="provider-filter-trigger" id="providerFilterTrigger" type="button" aria-expanded="false" aria-controls="providerFilterMenu"><span>Провайдеры</span><strong id="providerFilterLabel">Все</strong><i class="fa-solid fa-chevron-down"></i></button>
+                        <span class="provider-filter-title" id="providerFilterTitle">Провайдеры</span><button class="provider-filter-trigger" id="providerFilterTrigger" type="button" aria-labelledby="providerFilterTitle providerFilterLabel" aria-expanded="false" aria-controls="providerFilterMenu"><strong id="providerFilterLabel">Все</strong><i class="fa-solid fa-chevron-down"></i></button>
                         <div class="provider-filter-menu" id="providerFilterMenu" hidden>
                             <div class="provider-filter-head"><strong>Выбрать провайдеры</strong><span id="providerFilterCount">5/5</span></div>
                             <button class="provider-filter-all" id="providerFilterAll" type="button">Выбрать все</button>
@@ -134,17 +134,18 @@
                     </div>
                 </div>
                 <div class="app-kpis app-kpis-four">
-                    <article><span><i class="fa-solid fa-wave-square"></i>Share of Voice</span><strong id="metricSov">0%</strong><em id="metricSovNote">Нет проверок</em></article>
-                    <article><span><i class="fa-regular fa-eye"></i>Brand Visibility</span><strong id="metricVisibility">0%</strong><em id="metricVisibilityNote">Нет проверок</em></article>
-                    <article><span><i class="fa-solid fa-link"></i>Citation Rate</span><strong id="metricCitation">0%</strong><em id="metricCitationNote">Нет проверок</em></article>
-                    <article><span><i class="fa-solid fa-arrow-up-1-9"></i>Average Position</span><strong id="metricPosition">—</strong><em id="metricPositionNote">Нет позиций</em></article>
+                    <article><span>Доля голоса</span><button class="metric-help" type="button" data-metric-help aria-label="Что значит доля голоса" aria-expanded="false" aria-describedby="helpMetricSov">?</button><span class="metric-tooltip" id="helpMetricSov" role="tooltip">Доля голоса — доля веса бренда среди всех найденных брендов. Каждое появление учитывается с весом 1 / позиция.</span><strong id="metricSov">—</strong><em id="metricSovNote">Нет проверок</em></article>
+                    <article><span>Видимость</span><button class="metric-help" type="button" data-metric-help aria-label="Что значит видимость" aria-expanded="false" aria-describedby="helpMetricVisibility">?</button><span class="metric-tooltip" id="helpMetricVisibility" role="tooltip">Доля полученных ответов AI, в которых упоминается ваш бренд.</span><strong id="metricVisibility">—</strong><em id="metricVisibilityNote">Нет проверок</em></article>
+                    <article><span>Ссылки на бренд</span><button class="metric-help" type="button" data-metric-help aria-label="Что значит ссылки на бренд" aria-expanded="false" aria-describedby="helpMetricCitation">?</button><span class="metric-tooltip" id="helpMetricCitation" role="tooltip">Доля ответов AI со ссылкой на один из доменов вашего бренда. Добавьте домены в настройках проекта.</span><strong id="metricCitation">—</strong><em id="metricCitationNote">Нет проверок</em></article>
+                    <article><span>Средняя позиция</span><button class="metric-help" type="button" data-metric-help aria-label="Что значит средняя позиция" aria-expanded="false" aria-describedby="helpMetricPosition">?</button><span class="metric-tooltip" id="helpMetricPosition" role="tooltip">Среднее место бренда в извлечённых списках рекомендаций. Учитываются только ответы с определённой позицией.</span><strong id="metricPosition">—</strong><em id="metricPositionNote">Нет проверок</em></article>
                 </div>
-                <div class="app-analytics-grid">
-                    <div class="app-card app-card-trend"><div class="app-card-head"><div><h2>Динамика доли голоса</h2><span>Накопительная SoV бренда и конкурентов по проверкам</span></div><div class="chart-callout" id="overviewInsight"></div></div><div class="chart-stage"><canvas id="overviewChart" height="150"></canvas><div class="chart-empty" id="overviewEmpty" hidden><strong>Начните отслеживать динамику</strong><p>Запустите первую проверку — здесь появится сравнение вашего бренда с конкурентами.</p><button class="btn btn-primary btn-sm" data-empty-chart-action>Запустить проверку</button></div></div></div>
-                    <div class="app-card app-card-sov"><div class="app-card-head"><div><h2>Доля голоса</h2><span>Активный бренд и лидеры ниши</span></div><div class="chart-callout" id="sovInsight"></div></div><div class="sov-layout"><div class="chart-stage"><canvas id="sovChart" height="150"></canvas><div class="chart-empty" id="sovEmpty" hidden><strong>Пока нет доли голоса</strong><p>После первой проверки здесь появится позиция бренда в нише.</p><button class="btn btn-primary btn-sm" data-empty-chart-action>Запустить проверку</button></div></div><div id="sovLegend" class="sov-legend"></div></div></div>
+                <div class="app-dashboard-grid">
+                    <div class="app-card app-card-trend"><div class="app-card-head"><div><h2>Динамика доли голоса</h2><span>Накопительная доля голоса бренда и конкурентов по проверкам</span></div><div class="chart-callout" id="overviewInsight"></div></div><div class="chart-stage"><canvas id="overviewChart" height="150"></canvas><div class="chart-empty" id="overviewEmpty" hidden><strong>Начните отслеживать динамику</strong><p>Запустите первую проверку — здесь появится сравнение вашего бренда с конкурентами.</p><button class="btn btn-primary btn-sm" data-empty-chart-action>Запустить проверку</button></div></div></div>
+                    <div class="app-card app-card-models"><div class="app-card-head"><div><h2>Видимость по AI-моделям</h2><span>Доля ответов с упоминанием бренда</span></div></div><div id="modelMetrics" class="app-data-list app-ranked-list"></div><div id="exclusivityMetrics" hidden></div></div>
+                    <div class="app-card app-card-ranking"><div class="app-card-head"><div><h2>Рейтинг брендов</h2><span>Сравнение по накопленным проверкам</span></div><button class="app-text-action" data-view="competitors">Все конкуренты <i class="fa-solid fa-arrow-right"></i></button></div><div class="table-wrap"><table class="data-table app-leaderboard"><thead><tr><th>№</th><th>Бренд</th><th>Доля голоса</th><th>Видимость</th><th>Упоминания</th><th>Средняя позиция</th><th>Ссылки на бренд</th><th>Тональность</th></tr></thead><tbody id="leaderboardBody"></tbody></table></div></div>
+                    <div class="app-card app-card-sources"><div class="app-card-head"><div><h2>Источники ответов</h2><span>Источники, которые AI использует чаще</span></div><button class="app-text-action" data-view="sources" type="button">Все источники <i class="fa-solid fa-arrow-right"></i></button></div><div id="homeSourceList" class="app-data-list app-ranked-list"></div></div>
                 </div>
-                <div class="app-card"><div class="app-card-head"><div><h2>Рейтинг брендов</h2><span>Сравнение по накопленным проверкам</span></div><button class="app-text-action" data-view="competitors">Все конкуренты <i class="fa-solid fa-arrow-right"></i></button></div><div class="table-wrap"><table class="data-table app-leaderboard"><thead><tr><th>#</th><th>Бренд</th><th>SoV</th><th>Видимость</th><th>Упоминания</th><th>Ср. позиция</th><th>Citation Rate</th><th>Тональность</th></tr></thead><tbody id="leaderboardBody"></tbody></table></div></div>
-                <div class="app-grid-two app-secondary-grid"><div class="app-card"><div class="app-card-head"><div><h2>Видимость по AI-моделям</h2><span>Доля ответов с упоминанием бренда</span></div></div><div id="modelMetrics" class="app-data-list app-ranked-list"></div><div id="exclusivityMetrics" hidden></div></div><div class="app-card"><div class="app-card-head"><div><h2>Цитируемые домены</h2><span>Источники, которые AI использует чаще</span></div><button class="app-text-action" data-view="sources">Все источники <i class="fa-solid fa-arrow-right"></i></button></div><div id="homeSourceList" class="app-data-list app-ranked-list"></div></div></div>
+                <div class="app-dashboard-footer"><span>Данные по выбранному проекту и фильтрам</span><span><button class="app-text-action" id="addMetricButton" type="button" disabled>Добавить метрику</button><small>Скоро</small></span></div>
             </section>
             <section class="app-view" id="view-prompts">
                 <div class="app-card app-check-form"><label>Бренд<input id="wsBrand" maxlength="200"></label><label class="app-field-grow">Промпт<input id="wsQuery" placeholder="Например: лучший сервис для мониторинга AI-видимости" maxlength="2000"></label><button class="btn btn-ghost" id="wsSuggestPrompts"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Предложить промпты</span></button><button class="btn btn-primary" id="wsCheck"><i class="fa-solid fa-magnifying-glass"></i><span id="wsCheckText">Сделать проверку</span></button></div>
@@ -198,26 +199,27 @@
                 </article>
             </section>
             <section class="app-view" id="view-settings">
-                <div class="settings-heading app-view-first-card"><div><span>Настройки</span><h1 id="settingsTitle">Проект</h1><p id="settingsDescription">Название, варианты написания и домены активного проекта.</p></div><span class="settings-project-context" id="settingsProjectName">—</span></div>
                 <div class="settings-layout">
-                    <nav class="settings-nav" aria-label="Разделы настроек" role="tablist">
-                        <button class="active" id="settingsTabProject" type="button" role="tab" aria-selected="true" aria-controls="settings-project" data-settings-tab="project"><i class="fa-solid fa-sliders"></i><span><strong>Проект</strong><small>Бренд и домены</small></span></button>
-                        <button id="settingsTabProfile" type="button" role="tab" aria-selected="false" aria-controls="settings-profile" data-settings-tab="profile"><i class="fa-regular fa-user"></i><span><strong>Профиль</strong><small>Личные данные</small></span></button>
-                        <button id="settingsTabAppearance" type="button" role="tab" aria-selected="false" aria-controls="settings-appearance" data-settings-tab="appearance"><i class="fa-solid fa-palette"></i><span><strong>Оформление</strong><small>Цветовая тема</small></span></button>
-                        <button id="settingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="settings-access" data-settings-tab="access"><i class="fa-solid fa-chart-pie"></i><span><strong>Доступ</strong><small>Тариф и лимиты</small></span></button>
-                        <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><i class="fa-solid fa-shield-halved"></i><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
+                    <nav class="settings-nav" aria-label="Разделы настроек" role="tablist" aria-orientation="vertical"><div class="settings-nav-heading">Настройки</div>
+                        <button class="active" id="settingsTabProject" type="button" role="tab" aria-selected="true" aria-controls="settings-project" data-settings-tab="project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg><span><strong>Проект</strong><small>Бренд и домены</small></span></button>
+                        <span class="settings-nav-label">Аккаунт</span>
+                        <button id="settingsTabProfile" type="button" role="tab" aria-selected="false" aria-controls="settings-profile" data-settings-tab="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span><strong>Профиль</strong><small>Личные данные</small></span></button>
+                        <button id="settingsTabAppearance" type="button" role="tab" aria-selected="false" aria-controls="settings-appearance" data-settings-tab="appearance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.5-3.3 1.4 1.4 0 0 1 1-2.3H17a4 4 0 0 0 4-4A9 9 0 0 0 12 3Z"/><path d="M7.5 10h.01M10 6.5h.01M15 6.5h.01M18 10h.01"/></svg><span><strong>Оформление</strong><small>Цветовая тема</small></span></button>
+                        <button id="settingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="settings-access" data-settings-tab="access"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v9h9A9 9 0 0 0 12 3Z"/><path d="M8 3.9A9 9 0 1 0 20.1 16H8Z"/></svg><span><strong>Доступ и лимиты</strong><small>Тариф и лимиты</small></span></button>
+                        <button id="settingsTabSecurity" type="button" role="tab" aria-selected="false" aria-controls="settings-security" data-settings-tab="security"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg><span><strong>Безопасность</strong><small>Email, пароль и аккаунт</small></span></button>
                     </nav>
                     <div class="settings-content">
+                <div class="settings-heading app-view-first-card"><div><span>Настройки</span><h1 id="settingsTitle">Проект</h1><p id="settingsDescription">Название, варианты написания и домены активного проекта.</p></div></div>
                         <section class="settings-panel active" id="settings-project" role="tabpanel" aria-labelledby="settingsTabProject" data-settings-panel="project">
-                            <div class="app-card brand-settings">
+                            <div class="app-card brand-settings"><form id="projectSettingsForm">
                                 <div class="app-card-head"><div><h2>Настройки проекта</h2><span>Все варианты будут учитываться как одна компания</span></div><span class="access-status-badge" id="projectAccessStatus">—</span></div>
                                 <div class="settings-readonly-notice" id="projectAccessNotice" hidden><i class="fa-solid fa-lock"></i><span></span></div>
-                                <label class="brand-settings-field">Основное название<div><input id="canonicalBrandName" maxlength="200"><button class="btn btn-primary btn-sm" id="saveCanonicalBrand" type="button">Сохранить</button></div><small id="brandIdentityCooldown"></small></label>
+                                <label class="brand-settings-field">Основное название<div><input id="canonicalBrandName" maxlength="200" required></div><small id="brandIdentityCooldown"></small></label>
                                 <div class="brand-settings-grid">
                                     <div><h3>Другие названия</h3><p>Например: Тинькофф, Tinkoff</p><div class="brand-settings-add"><input id="brandAliasInput" maxlength="200" placeholder="Введите вариант названия"><button class="btn btn-ghost btn-sm" id="addBrandAlias" type="button">Добавить</button></div><div class="brand-chip-list" id="brandAliasList"></div></div>
                                     <div><h3>Домены</h3><p>Например: tbank.ru</p><div class="brand-settings-add"><input id="brandDomainInput" maxlength="200" placeholder="company.ru"><button class="btn btn-ghost btn-sm" id="addBrandDomain" type="button">Добавить</button></div><div class="brand-chip-list" id="brandDomainList"></div></div>
                                 </div>
-                                <div class="brand-suggestions" id="brandSuggestions"></div>
+                                <div class="brand-suggestions" id="brandSuggestions"></div><div class="project-save-actions"><button class="btn btn-primary" id="saveCanonicalBrand" type="submit" disabled>Сохранить изменения</button><p class="account-form-status" id="projectSaveStatus" role="status"></p></div></form>
                                 <div class="account-danger"><div><strong>Удалить проект</strong><span>Бренд удалится вместе с его проверками и задачами.</span></div><div><button class="btn btn-ghost btn-sm" id="deleteBrand" type="button">Удалить проект</button></div></div>
                             </div>
                         </section>
@@ -237,8 +239,8 @@
                             <div class="app-card settings-card">
                                 <div class="app-card-head"><div><h2>Цветовая тема</h2><span>Выберите оформление рабочего пространства</span></div></div>
                                 <div class="theme-options" role="radiogroup" aria-label="Цветовая тема">
-                                    <button class="theme-option" type="button" role="radio" aria-checked="false" data-theme-choice="light"><i class="fa-regular fa-lightbulb"></i><span><strong>Светлая</strong><small>Светлый фон и тёмный текст</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
-                                    <button class="theme-option" type="button" role="radio" aria-checked="false" data-theme-choice="dark"><i class="fa-solid fa-moon"></i><span><strong>Тёмная</strong><small>Тёмный фон и светлый текст</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
+                                    <button class="theme-option active" type="button" role="radio" aria-checked="true" data-theme-choice="light"><span class="theme-preview theme-preview-light" aria-hidden="true"><span></span><span><i></i><i></i></span></span><span><strong>Светлая</strong><small>Светлый фон и тёмный текст</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
+                                    <button class="theme-option" type="button" role="radio" aria-checked="false" data-theme-choice="dark" disabled><span class="theme-preview theme-preview-dark" aria-hidden="true"><span></span><span><i></i><i></i></span></span><span><strong>Тёмная</strong><small>Скоро</small></span><i class="fa-solid fa-check theme-option-check"></i></button>
                                 </div>
                             </div>
                         </section>
@@ -255,7 +257,7 @@
                                 <div class="app-card-head"><div><h2>Смена email</h2><span>После изменения потребуется войти снова</span></div></div>
                                 <form class="account-form" id="accountEmailForm">
                                     <label>Новый email<input id="accountEmailNew" type="email" maxlength="254" required autocomplete="email"></label>
-                                    <label>Текущий пароль<input id="accountEmailCurrentPassword" type="password" maxlength="128" required autocomplete="current-password"></label>
+                                    <label>Текущий пароль<span class="password-input"><input id="accountEmailCurrentPassword" type="password" maxlength="128" required autocomplete="current-password"><button type="button" class="password-toggle" data-password-toggle="accountEmailCurrentPassword" aria-label="Показать пароль" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
                                     <p class="account-form-status" id="accountEmailStatus" role="status"></p>
                                     <button class="btn btn-primary" type="submit">Изменить email</button>
                                 </form>
@@ -263,17 +265,13 @@
                             <div class="app-card settings-card">
                                 <div class="app-card-head"><div><h2>Смена пароля</h2><span>После изменения все активные сессии будут завершены</span></div></div>
                                 <form class="account-form" id="accountPasswordForm">
-                                    <label>Текущий пароль<input id="accountPasswordCurrent" type="password" maxlength="128" required autocomplete="current-password"></label>
-                                    <div class="account-password-fields"><label>Новый пароль<input id="accountPasswordNew" type="password" minlength="8" maxlength="128" required autocomplete="new-password"></label><label>Повторите новый пароль<input id="accountPasswordConfirm" type="password" minlength="8" maxlength="128" required autocomplete="new-password"></label></div>
+                                    <label>Текущий пароль<span class="password-input"><input id="accountPasswordCurrent" type="password" maxlength="128" required autocomplete="current-password"><button type="button" class="password-toggle" data-password-toggle="accountPasswordCurrent" aria-label="Показать пароль" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+                                    <div class="account-password-fields"><label>Новый пароль<span class="password-input"><input id="accountPasswordNew" type="password" minlength="8" maxlength="128" required autocomplete="new-password"><button type="button" class="password-toggle" data-password-toggle="accountPasswordNew" aria-label="Показать пароль" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label><label>Повторите новый пароль<span class="password-input"><input id="accountPasswordConfirm" type="password" minlength="8" maxlength="128" required autocomplete="new-password"><button type="button" class="password-toggle" data-password-toggle="accountPasswordConfirm" aria-label="Показать пароль" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label></div>
                                     <p class="account-form-status" id="accountPasswordStatus" role="status"></p>
                                     <button class="btn btn-primary" type="submit">Изменить пароль</button>
                                 </form>
                             </div>
-                            <div class="app-card settings-danger-card">
-                                <div class="app-card-head"><div><h2>Удаление аккаунта</h2><span>Все проекты, проверки и задачи будут удалены без возможности восстановления</span></div></div>
-                                <form id="deleteAccountForm" class="account-delete-form"><label>Текущий пароль<input id="deleteAccountPassword" type="password" maxlength="128" autocomplete="current-password" required></label><label>Подтверждение<input id="deleteAccountConfirmation" maxlength="20" placeholder="УДАЛИТЬ" required></label><button class="btn btn-ghost btn-sm" type="submit" id="deleteAccount">Удалить аккаунт</button></form>
-                                <p class="account-form-status" id="deleteAccountStatus" role="status"></p>
-                            </div>
+                            <div class="settings-danger-card"><div><h2>Удаление аккаунта</h2><p>Все проекты, проверки и задачи будут удалены без возможности восстановления.</p></div><button class="btn btn-ghost btn-sm" id="openDeleteAccount" type="button">Удалить аккаунт</button></div>
                         </section>
                     </div>
                 </div>
@@ -319,10 +317,13 @@
             </section>
         </main>
     </div>
+    <dialog class="account-dialog" id="projectLeaveDialog" aria-labelledby="projectLeaveTitle"><h2 id="projectLeaveTitle">Сохранить изменения?</h2><p>В настройках проекта есть несохранённые изменения.</p><p class="account-form-status" id="projectLeaveStatus" role="status"></p><div class="account-dialog-actions"><button class="btn btn-ghost" id="projectLeaveCancel" type="button" data-dialog-close>Остаться</button><button class="btn btn-ghost" id="projectLeaveDiscard" type="button">Не сохранять</button><button class="btn btn-primary" id="projectLeaveSave" type="button">Сохранить и перейти</button></div></dialog>
+    <dialog class="account-dialog" id="projectDeleteDialog" aria-labelledby="projectDeleteTitle"><h2 id="projectDeleteTitle">Удалить проект?</h2><p>Проект, его проверки и задачи будут удалены без возможности восстановления.</p><p class="account-form-status" id="projectDeleteStatus" role="status"></p><div class="account-dialog-actions"><button class="btn btn-ghost" type="button" data-dialog-close>Отмена</button><button class="btn btn-primary" id="confirmDeleteBrand" type="button">Удалить проект</button></div></dialog>
+    <dialog class="account-dialog" id="accountDeleteDialog" aria-labelledby="accountDeleteTitle"><h2 id="accountDeleteTitle">Удалить аккаунт?</h2><p>Все проекты, проверки и задачи будут удалены. Для подтверждения введите текущий пароль и слово «УДАЛИТЬ».</p><form id="deleteAccountForm" class="account-delete-form"><label>Текущий пароль<span class="password-input"><input id="deleteAccountPassword" type="password" maxlength="128" autocomplete="current-password" required><button type="button" class="password-toggle" data-password-toggle="deleteAccountPassword" aria-label="Показать пароль" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label><label>Подтверждение<input id="deleteAccountConfirmation" maxlength="20" placeholder="УДАЛИТЬ" required></label><button class="btn btn-ghost btn-sm" type="submit" id="deleteAccount">Удалить аккаунт</button></form><p class="account-form-status" id="deleteAccountStatus" role="status"></p><button class="btn btn-ghost" type="button" data-dialog-close>Отмена</button></dialog>
     <dialog class="brief-dialog growth-dialog fullscreen" id="briefDialog"><div id="briefContent"></div></dialog>
     <dialog class="check-details-dialog" id="checkDetailsDialog"><div id="checkDetailsContent"></div></dialog>
-    <script src="js/auth.js?v=20261016-1"></script>
+    <script src="js/auth.js?v=20261017-design1"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="js/dashboard.js?v=20261016-1"></script>
+    <script src="js/dashboard.js?v=20261017-design1"></script>
 </body>
 </html>
