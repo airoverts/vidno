@@ -28,7 +28,7 @@
             k.async = true;
             k.src = r;
             a.parentNode.insertBefore(k, a);
-        })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js', 'ym');
+        })(window, document, 'script', `https://mc.yandex.ru/metrika/tag.js?id=${counterId}`, 'ym');
         window.ym(counterId, 'init', {
             ssr: true,
             webvisor,
