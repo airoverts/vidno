@@ -2193,7 +2193,7 @@ html[data-theme="dark"] .compare-table thead .compare-accent {
 .app-body .app-user-avatar { width: 32px; height: 32px; background: var(--bg-soft); color: var(--accent); }
 .app-body .app-user-copy strong { max-width: 140px; font-size: 13px; font-weight: 500; }
 .app-body .app-user-copy small { max-width: 140px; font-size: 11px; }
-.app-body .app-account-popover { top: auto; right: 0; bottom: calc(100% + 8px); width: 260px; border-radius: 10px; }
+.app-body .app-account-popover { top: auto; right: auto; bottom: calc(100% + 8px); left: 0; width: min(260px, calc(100vw - 24px)); max-height: calc(100dvh - 108px); overflow-y: auto; overscroll-behavior: contain; border-radius: 10px; }
 .app-body .app-account-summary { padding: 12px; }
 .app-body .app-account-links button { grid-template-columns: 18px minmax(0, 1fr); gap: 10px; min-height: 38px; }
 .app-body .app-account-links strong { font-size: 12px; font-weight: 400; }

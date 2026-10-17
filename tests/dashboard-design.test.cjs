@@ -253,6 +253,30 @@ test('account menu keeps only useful shortcuts and supports keyboard focus', asy
     } finally { await a.close(); }
 });
 
+test('account menu stays inside short desktop and mobile viewports for clients and administrators', async () => {
+    for (const role of ['client', 'admin']) {
+        for (const [width, height] of [[1360, 768], [1360, 620], [1088, 600], [768, 600], [390, 640], [320, 480]]) {
+            const server = state(); server.account.role = role;
+            const f = await fixture(server, width);
+            try {
+                await f.page.setViewportSize({ width, height });
+                if (width <= 768) await f.page.locator('#mobileNavToggle').click();
+                await f.page.locator('#accountMenuTrigger').click();
+                const menu = await f.page.locator('#accountMenu').boundingBox();
+                assert.ok(menu.x >= 8, `${role} ${width}x${height}: account menu leaves the left edge`);
+                assert.ok(menu.x + menu.width <= width - 8, `${role} ${width}x${height}: account menu leaves the right edge`);
+                assert.ok(menu.y >= 8 && menu.y + menu.height <= height - 8, `${role} ${width}x${height}: account menu leaves the viewport vertically`);
+                const exit = f.page.locator('#appLogout');
+                await exit.scrollIntoViewIfNeeded();
+                const exitBox = await exit.boundingBox();
+                assert.ok(exitBox.x >= 8 && exitBox.x + exitBox.width <= width - 8);
+                assert.ok(exitBox.y >= 8 && exitBox.y + exitBox.height <= height - 8);
+                assert.deepEqual(f.errors, []);
+            } finally { await f.close(); }
+        }
+    }
+});
+
 test('profile save uses account API and updates sidebar account name', async () => {
     const f = await fixture();
     try {
