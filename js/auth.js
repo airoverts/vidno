@@ -1,7 +1,8 @@
 'use strict';
 
-const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
+const AUTH_API_BASE = location.protocol === 'file:' ? '' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
 localStorage.removeItem('vidno-session-token');
+const LOCAL_FILE_MESSAGE = 'Откройте приложение через http://localhost или http://127.0.0.1, используя одинаковый адрес для страницы и API. Вход через file:// недоступен.';
 
 function applyTheme() {
     const theme = window.VIDNO_DARK_THEME_ENABLED && localStorage.getItem('vidno-theme') === 'dark' ? 'dark' : 'light';
@@ -34,6 +35,7 @@ document.addEventListener('keydown', event => {
 });
 
 async function loadSession() {
+    if (location.protocol === 'file:') throw new Error(LOCAL_FILE_MESSAGE);
     let response;
     try { response = await fetch(`${AUTH_API_BASE}/auth/me`, { credentials: 'include' }); }
     catch { throw new Error('Нет связи с сервером. Повторите загрузку кабинета.'); }
@@ -48,6 +50,7 @@ async function loadSession() {
 }
 
 document.querySelector('#appLogout').addEventListener('click', async () => {
+    if (location.protocol === 'file:') { window.location.replace('index.html'); return; }
     const button = document.querySelector('#appLogout');
     button.disabled = true;
     try { await fetch(`${AUTH_API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }); } finally { window.location.replace('index.html'); }

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { before, after, test } = require('node:test');
 const { chromium } = require('playwright');
 
@@ -9,8 +10,16 @@ const root = path.resolve(__dirname, '..');
 const origin = 'http://127.0.0.1:8802';
 const stamp = '2026-10-09T09:00:00Z';
 const version = 'perplexity-direct-v1';
-const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
+const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity', 'deepseek'];
 let browser;
+
+function serverReport(server, url) {
+    const payload = { brand: server.brands.find(item => String(item.id) === url.searchParams.get('brand_id')), checks: server.checks, identities: server.brands, providers: url.searchParams.getAll('providers'), start: url.searchParams.get('start'), end: url.searchParams.get('end'), now: stamp };
+    const script = "import sys,json; from datetime import datetime,date; from reports import build_visibility_report; p=json.load(sys.stdin); p['now']=datetime.fromisoformat(p['now'].replace('Z','+00:00')); p['start']=date.fromisoformat(p['start']) if p['start'] else None; p['end']=date.fromisoformat(p['end']) if p['end'] else None; print(json.dumps(build_visibility_report(**p),ensure_ascii=False))";
+    const result = spawnSync(process.env.VIDNO_TEST_PYTHON || 'python', ['-X', 'utf8', '-c', script], { cwd: path.join(root, 'backend'), input: JSON.stringify(payload), encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(result.stderr || result.error?.message || 'Report fixture failed');
+    return JSON.parse(result.stdout);
+}
 
 before(async () => { browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) }); });
 after(async () => { await browser?.close(); });
@@ -81,6 +90,24 @@ async function fixture(server = state(), width = 1440) {
                 if (server.checkReadFailure) return json({ detail: 'checks unavailable' }, 503);
                 return json({ checks: server.checks });
             }
+            if (endpoint === '/reports/visibility') {
+                server.reportReads = (server.reportReads || 0) + 1;
+                const data = serverReport(server, url);
+                const gate = server.previewGate;
+                server.onPreview?.(data, url);
+                if (gate) await gate;
+                if (server.previewFailure) return json({ detail: 'Report unavailable' }, server.previewFailure);
+                return json(server.previewOverride || data);
+            }
+            if (endpoint === '/reports/visibility/export') {
+                server.exportRequests = [...(server.exportRequests || []), Object.fromEntries(url.searchParams)];
+                if (server.exportGate) await server.exportGate;
+                if (server.exportFailure) return json({ detail: 'Export unavailable' }, server.exportFailure);
+                const data = serverReport(server, url);
+                if (url.searchParams.get('revision') !== data.revision) return json({ detail: 'Report changed' }, 409);
+                const format = url.searchParams.get('format');
+                return route.fulfill({ status: 200, contentType: format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers: { 'Content-Disposition': `attachment; filename="Vidno_Acme.${format}"`, 'Access-Control-Expose-Headers': 'Content-Disposition' }, body: format === 'pdf' ? '%PDF-1.4 fixture' : 'PK spreadsheet fixture' });
+            }
             if (endpoint === '/growth-tasks') return json({ tasks: [] });
             if (endpoint === '/dismissed-opportunities') return json({ items: [] });
             if (endpoint === '/prompt-suggestions' && method === 'POST' && server.promptSuggestions) return json({ prompts: server.promptSuggestions });
@@ -124,9 +151,11 @@ async function switchProject(page, key) {
     await page.locator('#projectPickerTrigger').click();
     await page.locator(`#projectPickerList [data-project-key="${key}"]`).click();
 }
+async function reportSettled(page) { await page.waitForFunction(() => !reportState.loading); }
 async function reports(page) {
     await navigate(page, 'reports');
     await page.locator('#view-reports').waitFor({ state: 'visible' });
+    await reportSettled(page);
 }
 
 async function chooseProviders(page, chosen) {
@@ -134,8 +163,9 @@ async function chooseProviders(page, chosen) {
     for (const provider of providers.filter(item => !chosen.includes(item))) await page.locator(`[data-report-provider="${provider}"]`).uncheck();
 }
 
-async function metric(page, key) { return (await page.locator(`#reportDocument [data-report-metric="${key}"]`).textContent()).trim(); }
+async function metric(page, key) { await reportSettled(page); return (await page.locator(`#reportDocument [data-report-metric="${key}"]`).textContent()).trim(); }
 async function modelCells(page, name) {
+    await reportSettled(page);
     return page.locator('#reportModelBody tr').filter({ has: page.locator('th', { hasText: name }) }).locator('th, td').allTextContents();
 }
 async function setDate(page, selector, value) {
@@ -203,7 +233,7 @@ test('custom dates include Moscow midnight boundaries and use creation time', as
         assert.equal(await f.page.locator('#view-home [data-analytics-period]').inputValue(), 'custom');
         assert.equal(await f.page.locator('#view-home [data-analytics-start]').inputValue(), '2026-10-08');
         await setDate(f.page, '#view-reports [data-analytics-start]', '2026-10-09');
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -237,7 +267,7 @@ test('partial errors for the only selected provider are not negative answers', a
         assert.equal(await metric(f.page, 'visibility'), '—'); await sameMetrics(f.page);
         assert.match(await f.page.locator('#view-reports').textContent(), /ошиб/iu);
         assert.doesNotMatch(await f.page.locator('#reportModelBody').textContent(), /0%/);
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         await chooseProviders(f.page, ['openai']);
         assert.equal(await metric(f.page, 'visibility'), '100%');
         assert.deepEqual(f.errors, []);
@@ -257,7 +287,7 @@ test('failed, running and obsolete analysis do not enter successful answer metri
         assert.equal(await metric(f.page, 'visibility'), '0%'); await sameMetrics(f.page);
         assert.equal(await metric(f.page, 'position'), '—');
         assert.match(await f.page.locator('#reportModelBody').textContent(), /0%/);
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -273,7 +303,7 @@ test('aggregate-only current analysis cannot fabricate answers for a selected mo
         assert.match(await f.page.locator('#reportCoverage').textContent(), /Получено ответов для расчёта: 0/);
         assert.match(await f.page.locator('#reportCoverage').textContent(), /Исключено проверок: 1/);
         assert.doesNotMatch(await f.page.locator('#reportSourceBody').textContent(), /acme\.test/);
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -286,7 +316,7 @@ test('citation is undefined when the brand has no configured domains', async () 
         assert.equal(await metric(f.page, 'visibility'), '100%');
         assert.equal(await metric(f.page, 'citation'), '—');
         assert.match(await f.page.locator('#reportCitationNote').textContent(), /Домены.*не указаны/);
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -305,7 +335,7 @@ test('a current aggregate excludes individual answers from obsolete analysis', a
         assert.doesNotMatch(await f.page.locator('#reportSourceBody').textContent(), /old-only\.test/);
         await chooseProviders(f.page, ['yandex']); await sameMetrics(f.page);
         assert.equal(await metric(f.page, 'visibility'), '—');
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -329,11 +359,11 @@ test('empty report differs from real answers with zero visibility', async () => 
     try {
         await reports(f.page);
         for (const key of ['sov', 'visibility', 'citation', 'position']) assert.equal(await metric(f.page, key), '—');
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         f.server.checks = [check(501, [answer('openai', false)])];
         await f.page.locator('#reportRefresh').click();
         await f.page.waitForFunction(() => document.querySelector('[data-report-metric="visibility"]').textContent.trim() === '0%');
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
         await sameMetrics(f.page); assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
@@ -361,7 +391,7 @@ test('saved-check context keeps the full report slice and clears on brand switch
     } finally { await f.close(); }
 });
 
-test('refresh failure disables printing and successful retry replaces stale numbers', async () => {
+test('refresh failure disables export and successful retry replaces stale numbers', async () => {
     const f = await fixture(state({ checks: [check(501)] }));
     try {
         await reports(f.page);
@@ -370,12 +400,12 @@ test('refresh failure disables printing and successful retry replaces stale numb
         f.server.checkReadFailure = true;
         await f.page.locator('#reportRefresh').click();
         await f.page.waitForFunction(() => /не удалось|ошиб|unavailable/iu.test(document.querySelector('#reportStatus').textContent));
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
         f.server.checkReadFailure = false;
         f.server.checks.push(check(502, [answer('openai', false)]));
         await f.page.locator('#reportRefresh').click();
         await f.page.waitForFunction(() => document.querySelector('[data-report-metric="visibility"]').textContent.trim() === '50%');
-        assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
         assert.equal(f.server.checkReads, reads + 2);
         assert.equal(f.server.requests.filter(item => item.method !== 'GET').length, 0);
         assert.deepEqual(f.errors, []);
@@ -403,7 +433,7 @@ for (const width of [1440, 390]) {
             assert.equal(await metric(f.page, 'citation'), '100%');
             assert.match(await f.page.locator('#reportCitationNote').textContent(), /1 из 1 ответ/);
             assert.doesNotMatch(await f.page.locator('#reportCitationNote').textContent(), /Домены.*не указаны/);
-            assert.equal(await f.page.locator('#reportPrint').isDisabled(), false);
+            assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
             assert.deepEqual(f.errors, []);
         } finally { await f.close(); }
     });
@@ -472,7 +502,7 @@ for (const width of [1440, 390]) {
     test(`live success persists through API reload and errors retain active brand at ${width}px`, async () => {
         const target = brand(102, 'SecondBrand');
         const suggestedQuery = 'Какие сервисы стоит выбрать? Назови варианты и объясни выбор.';
-        const saved = check(704, [answer('openai', true, { name: target.canonical_name })], { brand_id: 102, brand: target.canonical_name, query: `${suggestedQuery} Для небольшой команды.` });
+        const saved = check(704, [answer('deepseek', true, { name: target.canonical_name })], { brand_id: 102, brand: target.canonical_name, query: `${suggestedQuery} Для небольшой команды.` });
         const f = await fixture(state({ brands: [brand(), target], promptSuggestions: [suggestedQuery], checkSubmission: { record: saved } }), width);
         try {
             await switchProject(f.page, 'brand-102');
@@ -525,7 +555,7 @@ for (const width of [1440, 390]) {
             await f.page.locator('#checkDetailsDialog [data-check-details-close]').first().click();
             await reports(f.page); await sameMetrics(f.page);
             for (const key of ['sov', 'visibility', 'citation', 'position']) assert.equal(await metric(f.page, key), '—');
-            assert.equal(await f.page.locator('#reportPrint').isDisabled(), true);
+            assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
             await f.page.reload();
             await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
             await navigate(f.page, 'prompts');
@@ -536,7 +566,7 @@ for (const width of [1440, 390]) {
         } finally { await f.close(); }
     });
 
-    test(`report fits ${width}px and prints only the report with a valid PDF`, async () => {
+    test(`report fits ${width}px and downloads PDF and Excel without printing`, async () => {
         const f = await fixture(state({ checks: [check(501, [answer('openai', true, { sources: [{ url: 'https://acme.test/article', title: 'Материал', cited_in_answer: true }] }), answer('yandex', false)])] }), width);
         try {
             await reports(f.page);
@@ -547,23 +577,240 @@ for (const width of [1440, 390]) {
             await f.page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; window.dispatchEvent(new Event('vidno-theme-change')); });
             assert.deepEqual(await f.page.locator('#reportDocument').evaluate(element => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]), paperColors);
             await f.page.screenshot({ path: path.join(directory, `report-dark-${width}.png`), fullPage: true });
-            await f.page.locator('#reportPrint').click();
-            await f.page.waitForFunction(() => window.reportPrintCalls === 1);
-            await f.page.emulateMedia({ media: 'print' });
-            assert.equal(await f.page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor), paperColors[0]);
-            assert.equal(await f.page.locator('#reportDocument').isVisible(), true);
-            assert.equal(await f.page.locator('.app-nav').isVisible(), false);
-            assert.equal(await f.page.locator('#reportPrint').isVisible(), false);
-            assert.equal(await f.page.locator('#reportRefresh').isVisible(), false);
-            assert.equal(await f.page.locator('#reportBackToCheck').isVisible(), false);
-            const exposed = await f.page.locator('.app-view:not(#view-reports)').evaluateAll(elements => elements.filter(element => getComputedStyle(element).display !== 'none').map(element => element.id));
-            assert.deepEqual(exposed, []);
-            await f.page.screenshot({ path: path.join(directory, `print-${width}.png`), fullPage: true });
-            const pdfPath = path.join(directory, `report-${width}.pdf`);
-            await f.page.pdf({ path: pdfPath, format: 'A4', printBackground: true, preferCSSPageSize: true });
-            const pdf = await fs.readFile(pdfPath);
-            assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
-            assert.ok(pdf.length > 5000);
+            for (const format of ['pdf', 'xlsx']) {
+                await f.page.locator('#reportDownload').click();
+                assert.equal(await f.page.locator('#reportDownload').getAttribute('aria-expanded'), 'true');
+                await f.page.screenshot({ path: path.join(directory, `report-menu-${width}.png`), fullPage: true });
+                const downloaded = f.page.waitForEvent('download');
+                await f.page.locator(`[data-report-format="${format}"]`).click();
+                const download = await downloaded;
+                assert.equal(download.suggestedFilename(), `Vidno_Acme.${format}`);
+                const contents = await fs.readFile(await download.path());
+                assert.equal(contents.toString().startsWith(format === 'pdf' ? '%PDF-' : 'PK'), true);
+                await f.page.waitForFunction(() => !reportState.downloading);
+            }
+            assert.equal(await f.page.evaluate(() => window.reportPrintCalls), 0);
+            assert.deepEqual(f.server.exportRequests.map(item => item.format), ['pdf', 'xlsx']);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+for (const width of [1440, 768, 375, 320]) {
+    test(`DeepSeek joins all six models, filters, answers and reports at ${width}px`, async () => {
+        const saved = check(801, providers.map(provider => answer(provider, provider === 'deepseek')));
+        const f = await fixture(state({ checks: [saved] }), width);
+        try {
+            assert.equal(await f.page.locator('#providerFilterCount').textContent(), '6/6');
+            assert.match(await f.page.locator('#modelMetrics').textContent(), /DeepSeek/);
+            const logo = f.page.locator('#modelMetrics img[src="assets/ai/deepseek.svg"]');
+            assert.equal(await logo.evaluate(element => element.complete && element.naturalWidth > 0), true);
+            await f.page.locator('#providerFilterTrigger').click();
+            assert.equal(await f.page.locator('#providerFilterMenu input:checked').count(), 6);
+            const menu = await f.page.locator('#providerFilterMenu').boundingBox();
+            assert.ok(menu.x >= 0 && menu.x + menu.width <= width);
+            const directory = path.join(os.tmpdir(), 'vidno-deepseek-qa');
+            await fs.mkdir(directory, { recursive: true });
+            await f.page.screenshot({ path: path.join(directory, `models-${width}.png`), fullPage: true });
+            await f.page.keyboard.press('Escape');
+            await reports(f.page);
+            assert.equal(await f.page.locator('#reportModelBody tr').count(), 6);
+            assert.deepEqual(await modelCells(f.page, 'DeepSeek'), ['DeepSeek', '1', '1', '100%']);
+            await chooseProviders(f.page, ['deepseek']);
+            await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'visibility'), '100%');
+            assert.match(await f.page.locator('#reportProvidersLabel').textContent(), /DeepSeek/);
+            await navigate(f.page, 'answers');
+            assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length);
+            assert.equal(await f.page.locator('.ai-answer-card').filter({ hasText: 'DeepSeek' }).count(), 1);
+            await navigate(f.page, 'visibility');
+            assert.match(await f.page.locator('#visibilityMetrics').textContent(), /DeepSeek/);
+            await f.page.reload();
+            await f.page.locator('#dashboardLoadState').waitFor({ state: 'hidden' });
+            assert.equal(await f.page.evaluate(() => localStorage.getItem('vidno-dashboard-active-brand')), 'brand-101');
+            await reports(f.page);
+            assert.deepEqual(await modelCells(f.page, 'DeepSeek'), ['DeepSeek', '1', '1', '100%']);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+for (const width of [1440, 390]) {
+    test(`report menu supports keyboard and dismissal at ${width}px`, async () => {
+        const f = await fixture(state({ checks: [check(501)] }), width);
+        try {
+            await reports(f.page);
+            await f.page.locator('#reportDownload').focus();
+            await f.page.keyboard.press('ArrowDown');
+            assert.equal(await f.page.locator('[data-report-format="pdf"]').evaluate(el => el === document.activeElement), true);
+            await f.page.keyboard.press('ArrowDown');
+            assert.equal(await f.page.locator('[data-report-format="xlsx"]').evaluate(el => el === document.activeElement), true);
+            await f.page.keyboard.press('Escape');
+            assert.equal(await f.page.locator('#reportDownloadMenu').isVisible(), false);
+            assert.equal(await f.page.locator('#reportDownload').evaluate(el => el === document.activeElement), true);
+            await f.page.locator('#reportDownload').click();
+            await f.page.locator('#view-reports h1').click();
+            assert.equal(await f.page.locator('#reportDownloadMenu').isVisible(), false);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+
+    test(`changed report refreshes preview and requires another download at ${width}px`, async () => {
+        const f = await fixture(state({ checks: [check(501)] }), width);
+        try {
+            await reports(f.page);
+            f.server.checks.push(check(502, [answer('openai', false)]));
+            await f.page.locator('#reportDownload').click();
+            await f.page.locator('[data-report-format="pdf"]').click();
+            await f.page.waitForFunction(() => !reportState.loading && !reportState.downloading && /Данные изменились/.test(document.querySelector('#reportStatus').textContent));
+            assert.equal(await metric(f.page, 'visibility'), '50%');
+            assert.equal(f.server.exportRequests.length, 1);
+            await f.page.locator('#reportDownload').click();
+            const downloaded = f.page.waitForEvent('download');
+            await f.page.locator('[data-report-format="pdf"]').click();
+            await downloaded;
+            assert.equal(f.server.exportRequests.length, 2);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+
+test('export error permits retry and busy export rejects duplicate requests', async () => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const f = await fixture(state({ checks: [check(501)], exportFailure: 503, exportGate: gate }));
+    try {
+        await reports(f.page);
+        await f.page.locator('#reportDownload').click();
+        await f.page.locator('[data-report-format="pdf"]').click();
+        await f.page.waitForFunction(() => reportState.downloading);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
+        assert.match(await f.page.locator('#reportDownloadLabel').textContent(), /Готовим/);
+        await f.page.evaluate(() => downloadReport('pdf'));
+        assert.equal(f.server.exportRequests.length, 1);
+        release();
+        await f.page.waitForFunction(() => !reportState.downloading);
+        assert.match(await f.page.locator('#reportStatus').textContent(), /Не удалось скачать/);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), false);
+        f.server.exportFailure = null;
+        await f.page.locator('#reportDownload').click();
+        const downloaded = f.page.waitForEvent('download');
+        await f.page.locator('[data-report-format="xlsx"]').click();
+        await downloaded;
+        assert.deepEqual(f.errors, []);
+    } finally { release(); await f.close(); }
+});
+
+test('switching filters aborts a pending export and prevents stale download', async () => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const f = await fixture(state({ checks: [check(501, [answer('openai', true), answer('yandex', false)])], exportGate: gate }));
+    const downloads = [];
+    f.page.on('download', value => downloads.push(value));
+    try {
+        await reports(f.page);
+        await f.page.locator('#reportDownload').click();
+        await f.page.locator('[data-report-format="pdf"]').click();
+        await f.page.waitForFunction(() => reportState.downloading);
+        await chooseProviders(f.page, ['yandex']);
+        assert.equal(await metric(f.page, 'visibility'), '0%');
+        assert.equal(await f.page.evaluate(() => reportState.downloading), false);
+        release();
+        await f.page.waitForLoadState('networkidle');
+        assert.equal(downloads.length, 0);
+        assert.deepEqual(f.errors, []);
+    } finally { release(); await f.close(); }
+});
+
+test('preview failure hides stale report and refresh retries the server request', async () => {
+    const f = await fixture(state({ checks: [check(501)], previewFailure: 503 }));
+    try {
+        await reports(f.page);
+        assert.equal(await f.page.locator('#reportDocument').isVisible(), false);
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
+        assert.match(await f.page.locator('#reportStatus').textContent(), /Не удалось подготовить/);
+        f.server.previewFailure = null;
+        await f.page.locator('#reportRefresh').click();
+        await f.page.waitForFunction(() => !!reportState.data && !reportState.loading);
+        assert.equal(await metric(f.page, 'visibility'), '100%');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('expired export session returns the user to login', async () => {
+    const f = await fixture(state({ checks: [check(501)], exportFailure: 401 }));
+    try {
+        await reports(f.page);
+        await f.page.locator('#reportDownload').click();
+        await f.page.locator('[data-report-format="pdf"]').click();
+        await f.page.waitForURL('**/index.html?auth=login');
+        assert.equal(f.server.exportRequests.length, 1);
+    } finally { await f.close(); }
+});
+
+test('server preview values are rendered without browser recalculation', async () => {
+    const server = state({ checks: [check(501)] });
+    const data = serverReport(server, new URL(`${origin}/api/reports/visibility?brand_id=101&providers=openai`));
+    server.previewOverride = { ...data, metrics: { ...data.metrics, visibility: 23 }, own_mentions: 23 };
+    const f = await fixture(server);
+    try {
+        await reports(f.page);
+        assert.equal(await metric(f.page, 'visibility'), '23%');
+        assert.notEqual((await f.page.locator('#metricVisibility').textContent()).trim(), '23%');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+test('a delayed preview cannot overwrite newer model filters', async () => {
+    let release, captured;
+    const gate = new Promise(resolve => { release = resolve; });
+    const started = new Promise(resolve => { captured = resolve; });
+    const server = state({ checks: [check(501, [answer('openai', true), answer('yandex', false)])], previewGate: gate, onPreview: captured });
+    const f = await fixture(server);
+    try {
+        await navigate(f.page, 'reports');
+        await started;
+        server.previewGate = null;
+        await chooseProviders(f.page, ['yandex']);
+        assert.equal(await metric(f.page, 'visibility'), '0%');
+        release();
+        await f.page.waitForLoadState('networkidle');
+        assert.equal(await metric(f.page, 'visibility'), '0%');
+        assert.equal(await f.page.locator('#reportModelBody tr').count(), 1);
+        assert.match(await f.page.locator('#reportModelBody').textContent(), /Алиса AI/);
+        assert.deepEqual(f.errors, []);
+    } finally { release(); await f.close(); }
+});
+
+test('empty model selection hides the report and prevents export', async () => {
+    const f = await fixture(state({ checks: [check(501)] }));
+    try {
+        await reports(f.page);
+        await f.page.evaluate(() => { selectedProviders.clear(); renderAllForActiveBrand(); });
+        assert.equal(await f.page.locator('#reportDownload').isDisabled(), true);
+        assert.equal(await f.page.locator('#reportDocument').isVisible(), false);
+        assert.match(await f.page.locator('#reportStatus').textContent(), /Выберите хотя бы одну/);
+        await f.page.evaluate(() => { selectedProviders.add('openai'); renderAllForActiveBrand(); });
+        assert.equal(await metric(f.page, 'visibility'), '100%');
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+
+for (const cited of [true, false]) {
+    test(`single-provider snapshot preserves citation measurement (${cited}) after domain removal`, async () => {
+        const target = brand(); target.domains = [];
+        const result = answer('openai', true, {
+            identity_normalization_version: 'company-options-v1', canonical_id: 'brand-101', canonical_name: 'Acme',
+            citation_domains: ['acme.test'], brand_cited: cited,
+            ordered_mentions: [{ name: 'Acme', canonical_name: 'Acme', canonical_id: 'brand-101', observed_names: ['Acme'], position: 1, role: 'рекомендация' }],
+        });
+        const saved = check(707, [], { provider: 'openai', result });
+        const f = await fixture(state({ brands: [target], checks: [saved] }));
+        try {
+            await reports(f.page); await sameMetrics(f.page);
+            assert.equal(await metric(f.page, 'citation'), cited ? '100%' : '0%');
+            assert.doesNotMatch(await f.page.locator('#reportCitationNote').textContent(), /Домены.*не указаны/);
             assert.deepEqual(f.errors, []);
         } finally { await f.close(); }
     });

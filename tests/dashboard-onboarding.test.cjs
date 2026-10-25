@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '..');
 const origin = 'http://127.0.0.1:8801';
 const stamp = '2026-10-06T10:00:00Z';
-const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
+const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity', 'deepseek'];
 let browser;
 
 before(async () => {
@@ -21,7 +21,7 @@ function brand(id = 101, name = 'Acme') {
 }
 
 function check(id = 501, status = 'completed', mentioned = true, query = 'Какой сервис выбрать?') {
-    const count = status === 'partial' ? 3 : 5;
+    const count = status === 'partial' ? 3 : providers.length;
     const result = {
         provider: 'all', analysis_version: 'perplexity-direct-v1', mentioned,
         competitors: ['OtherBrand'], sources: [{ url: 'https://example.test/review', title: 'Обзор' }],
@@ -31,7 +31,7 @@ function check(id = 501, status = 'completed', mentioned = true, query = 'Как
             ordered_mentions: [{ name: mentioned ? 'Acme' : 'OtherBrand', position: 1, role: 'рекомендация' }],
             competitors: ['OtherBrand'], sources: [],
         })),
-        provider_errors: status === 'partial' ? [{ provider: 'gemini', error: 'provider_timeout' }, { provider: 'perplexity', error: 'provider_timeout' }] : [],
+        provider_errors: status === 'partial' ? providers.slice(count).map(provider => ({ provider, error: 'provider_timeout' })) : [],
     };
     return {
         id, brand_id: 101, brand: 'Acme', query, provider: 'all', status,
@@ -636,7 +636,7 @@ for (const [mode, mentioned, width] of [['completed', true, 375], ['partial', tr
             await hidden(f.page, '#onboarding');
             assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
             assert.equal(await f.page.locator('#wsResultWarning').isVisible(), mode === 'partial');
-            assert.match(await f.page.locator('#wsResultContext').textContent(), new RegExp(`ответили ${mode === 'partial' ? 3 : 5} из 5`));
+            assert.match(await f.page.locator('#wsResultContext').textContent(), new RegExp(`ответили ${mode === 'partial' ? 3 : providers.length} из ${providers.length}`));
             assert.match(await f.page.locator('#wsVerdict').textContent(), mentioned ? /Бренд упомянут/ : /Бренд не упомянут/);
             assert.equal(count(server, '/check-all'), 1);
             assert.equal(count(server, '/checks'), 0);
@@ -858,7 +858,7 @@ test('existing account opens history, scoped answers and report using saved IDs 
         assert.match(await f.page.locator('#wsResultContext').textContent(), /Какой сервис выбрать/);
         await f.page.locator('#resultAnswers').click();
         await visible(f.page, '#view-answers');
-        assert.equal(await f.page.locator('.ai-answer-card').count(), 5);
+        assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length);
         assert.doesNotMatch(await f.page.locator('#aiAnswerList').textContent(), /Другой вопрос/);
         await navigate(f.page, 'prompts');
         await f.page.locator('[data-open-check="501"]').click();
@@ -938,7 +938,7 @@ for (const width of [1440, 375]) {
             await navigate(f.page, 'prompts');
             await f.page.locator('[data-check-details="501"]').click();
             await visible(f.page, '#checkDetailsDialog');
-            assert.equal(await f.page.locator('.check-detail-model').count(), 5);
+            assert.equal(await f.page.locator('.check-detail-model').count(), providers.length);
             assert.match(await f.page.locator('#checkDetailsDialog').textContent(), /gigachat 501/i);
             assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
             await f.page.locator('#checkDetailsDialog [data-repeat-check="501"]').click();
@@ -951,6 +951,27 @@ for (const width of [1440, 375]) {
             assert.deepEqual(f.errors, []);
         } finally { await f.close(); }
     });
+}
+
+for (const width of [1440, 375]) {
+    for (const requested of [providers.filter(provider => provider !== 'deepseek'), ['deepseek'], ['deepseek', 'openai']]) {
+        test(`saved result counts requested models ${requested.join(',')} at ${width}px`, async () => {
+            const saved = check();
+            saved.result.provider_results = saved.result.provider_results.filter(result => requested.includes(result.provider));
+            if (requested.includes('deepseek')) saved.result.requested_providers = requested;
+            const server = state({ brands: [brand()], checks: [saved] });
+            server.account.onboarding_completed_at = stamp;
+            const f = await fixture(server, width);
+            try {
+                await hidden(f.page, '#dashboardLoadState');
+                await navigate(f.page, 'prompts');
+                await f.page.locator('[data-open-check="501"]').click();
+                await visible(f.page, '#wsResult');
+                assert.match(await f.page.locator('#wsResultContext').textContent(), new RegExp(`ответили ${requested.length} из ${requested.length} моделей`));
+                assert.deepEqual(f.errors, []);
+            } finally { await f.close(); }
+        });
+    }
 }
 
 test('history can reveal more than ten saved checks', async () => {
@@ -999,36 +1020,39 @@ test('citation rate uses cited links on official domains only', async () => {
     const f = await fixture(server);
     try {
         await hidden(f.page, '#dashboardLoadState');
-        assert.equal(await f.page.locator('#metricCitation').textContent(), '20%');
+        assert.equal(await f.page.locator('#metricCitation').textContent(), `${Math.round(100 / providers.length)}%`);
         assert.match(await f.page.locator('#metricCitationNote').textContent(), /1 ответ/);
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
 
-test('growth control check repeats the exact prompt and provider set through check-all', async () => {
-    const query = 'Какой сервис выбрать?';
-    const baselineResults = ['gigachat', 'openai'].map(provider => ({ provider, model: provider, mentioned: false, position: null, role: 'не упомянут' }));
-    const task = { id: 901, brand_id: 101, brand: 'Acme', brandKey: 'brand-101', query, provider: 'all', providers: ['gigachat', 'openai'], title: 'Усилить присутствие', action: 'Обновить материал', workType: 'content', status: 'ready_for_check', baseline: { id: 500, createdAt: Date.parse(stamp), provider: 'all', providers: ['gigachat', 'openai'], providerResults: baselineResults, mentioned: false }, created_at: stamp, updated_at: stamp };
-    const server = state({ brands: [brand()], checks: [check(500, 'completed', false, query)], growthTasks: [task], nextCheckId: 501 });
-    server.account.onboarding_completed_at = stamp;
-    const f = await fixture(server);
-    try {
-        await hidden(f.page, '#dashboardLoadState');
-        await navigate(f.page, 'growth');
-        await f.page.locator('[data-growth-tab="tasks"]').click();
-        await f.page.locator('[data-measure-task="901"]').click();
-        await f.page.locator('[data-growth-tab="results"]').click();
-        await visible(f.page, '.growth-result');
-        const request = server.requests.find(item => item.endpoint === '/check-all' && item.method === 'POST');
-        assert.equal(request.body.query, query);
-        assert.deepEqual(request.body.providers, ['gigachat', 'openai']);
-        assert.equal(count(server, '/check', 'POST'), 0);
-        assert.equal(server.growthTasks[0].status, 'measured');
-        assert.deepEqual(server.growthTasks[0].comparison.providers, ['gigachat', 'openai']);
-        assert.equal(server.checks.length, 2);
-        assert.deepEqual(f.errors, []);
-    } finally { await f.close(); }
-});
+for (const requested of [['gigachat', 'openai'], ['deepseek', 'openai']]) {
+    test(`growth control check repeats exact provider set ${requested.join(',')}`, async () => {
+        const query = 'Какой сервис выбрать?';
+        const baselineResults = requested.map(provider => ({ provider, model: provider, mentioned: false, position: null, role: 'не упомянут' }));
+        const task = { id: 901, brand_id: 101, brand: 'Acme', brandKey: 'brand-101', query, provider: 'all', providers: requested, title: 'Усилить присутствие', action: 'Обновить материал', workType: 'content', status: 'ready_for_check', baseline: { id: 500, createdAt: Date.parse(stamp), provider: 'all', providers: requested, providerResults: baselineResults, mentioned: false }, created_at: stamp, updated_at: stamp };
+        if (!requested.includes('deepseek')) { delete task.providers; delete task.baseline.providers; }
+        const server = state({ brands: [brand()], checks: [check(500, 'completed', false, query)], growthTasks: [task], nextCheckId: 501 });
+        server.account.onboarding_completed_at = stamp;
+        const f = await fixture(server);
+        try {
+            await hidden(f.page, '#dashboardLoadState');
+            await navigate(f.page, 'growth');
+            await f.page.locator('[data-growth-tab="tasks"]').click();
+            await f.page.locator('[data-measure-task="901"]').click();
+            await f.page.locator('[data-growth-tab="results"]').click();
+            await visible(f.page, '.growth-result');
+            const request = server.requests.find(item => item.endpoint === '/check-all' && item.method === 'POST');
+            assert.equal(request.body.query, query);
+            assert.deepEqual(request.body.providers, requested);
+            assert.equal(count(server, '/check', 'POST'), 0);
+            assert.equal(server.growthTasks[0].status, 'measured');
+            assert.deepEqual(server.growthTasks[0].comparison.providers, requested);
+            assert.equal(server.checks.length, 2);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
 
 test('growth control check saves partial history but does not compare different model sets', async () => {
     const query = 'Какой сервис выбрать?';
@@ -1051,3 +1075,27 @@ test('growth control check saves partial history but does not compare different 
         assert.deepEqual(f.errors, []);
     } finally { await f.close(); }
 });
+
+for (const hasRequestedProviders of [true, false]) {
+    test(`legacy repeat preserves its five models with requested list=${hasRequestedProviders}`, async () => {
+        const legacyProviders = providers.filter(provider => provider !== 'deepseek');
+        const saved = check();
+        saved.result.provider_results = saved.result.provider_results.filter(result => legacyProviders.includes(result.provider) && result.provider !== 'perplexity');
+        saved.result.provider_errors = [{ provider: 'perplexity', error: 'provider_timeout' }];
+        saved.status = 'partial';
+        if (hasRequestedProviders) saved.result.requested_providers = legacyProviders;
+        const server = state({ brands: [brand()], checks: [saved], nextCheckId: 502 });
+        server.account.onboarding_completed_at = stamp;
+        const f = await fixture(server);
+        try {
+            await hidden(f.page, '#dashboardLoadState');
+            await navigate(f.page, 'prompts');
+            await f.page.locator('[data-repeat-check="501"]').click();
+            await visible(f.page, '#wsResult');
+            const request = server.requests.find(item => item.endpoint === '/check-all' && item.method === 'POST');
+            assert.deepEqual(request.body.providers, legacyProviders);
+            assert.equal(server.checks[0].result.provider_results.some(result => result.provider === 'deepseek'), false);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}

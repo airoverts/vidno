@@ -1,9 +1,9 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const API_BASE = AUTH_API_BASE;
-const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity' };
-const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini-color.svg', perplexity: 'assets/ai/perplexity.svg' };
-const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
+const PROVIDERS = { all: 'Все модели', gigachat: 'GigaChat', yandex: 'Алиса AI', openai: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity', deepseek: 'DeepSeek' };
+const PROVIDER_ICONS = { gigachat: 'assets/ai/gigachat.svg', yandex: 'assets/ai/alice-ai.svg', openai: 'assets/ai/openai.svg', gemini: 'assets/ai/gemini-color.svg', perplexity: 'assets/ai/perplexity.svg', deepseek: 'assets/ai/deepseek.svg' };
+const CHECK_PROVIDERS = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity', 'deepseek'];
 const ACTIVE_BRAND_KEY = 'vidno-dashboard-active-brand';
 const ANALYSIS_VERSION = 'perplexity-direct-v1';
 const IDENTITY_NORMALIZATION_VERSION = 'company-options-v1';
@@ -49,7 +49,7 @@ let reportCheckId = null;
 let historyExpanded = false;
 const analyticsPeriod = { preset: 'all', start: '', end: '' };
 const checksLoadState = { loading: false, error: '', updatedAt: null };
-let reportPrinting = false;
+const reportState = { key: '', data: null, error: '', notice: '', loading: false, downloading: false, previewController: null, downloadController: null };
 let projectDraft = null;
 let projectSaving = false;
 let pendingProjectNavigation = null;
@@ -134,6 +134,7 @@ function requireCapability(name) {
 }
 
 async function apiRequest(path, options = {}) {
+    if (location.protocol === 'file:') throw new Error(LOCAL_FILE_MESSAGE);
     const method = String(options.method || 'GET').toUpperCase();
     const required = requiredCapability(path, method);
     if (required && !capability(required)) throw new ApiError(accessBlockedMessage(required), accessState?.status === 'active' ? 429 : 403, accessState?.status === 'active' ? 'quota_exceeded' : `access_${accessState?.status || 'pending'}`);
@@ -310,7 +311,6 @@ function setActiveBrand(value, syncInput = true, resetResult = true) {
     renderAllForActiveBrand();
 }
 function renderAllForActiveBrand() {
-    if (reportPrinting) return;
     syncAnalyticsFilters();
     renderHistory();
     renderAiAnswers();
@@ -350,6 +350,8 @@ function selectView(view, checkId = null) {
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
     if (view === 'answers') renderAiAnswers();
+    if (view === 'reports') renderReport();
+    else closeReportMenu();
     if (view === 'settings') { renderAccountProfile(); renderAccountAccess(); renderBrandSettings(); }
     if (view === 'admin' && !$('#adminClientList').children.length) { loadAdminClients(); loadAdminTariffs(); }
     if (view === 'home') Object.values(dashboardCharts).forEach(chart => chart?.resize());
@@ -798,7 +800,7 @@ function openSavedCheck(id, finishOnboarding = false) {
     if (successfulCheck(item)) {
         renderResult(item.resultData);
         $('#wsResult').dataset.checkId = item.id;
-        $('#wsResultContext').textContent = `${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)} · ответили ${item.providerResults.length || 1} из ${item.provider === 'all' ? CHECK_PROVIDERS.length : 1} моделей`;
+        $('#wsResultContext').textContent = `${item.brand} · ${item.query} · ${formatDateTime(item.createdAt)} · ответили ${item.providerResults.length || 1} из ${requestedProvidersFor(item).length || 1} моделей`;
         const errors = item.providerErrors.map(error => `${PROVIDERS[error.provider] || error.provider}: ${error.error}`);
         $('#wsResultWarning').hidden = item.status !== 'partial';
         $('#wsResultWarning').textContent = errors.length ? `Часть данных недоступна: ${errors.join('; ')}` : 'Получен частичный результат: некоторые модели не ответили.';
@@ -933,7 +935,7 @@ function canonicalizeCheckResult(data, identity) {
     return { ...data, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, observed_name: data.observed_name || identity.canonicalName, provider_results: providerResults, mentioned: Boolean(mentionedResults.length), position: mentionedResults.length ? mentionedResults.reduce((sum, result) => sum + Number(result.position || 0), 0) / mentionedResults.length : null, ordered_mentions: ordered, competitors, mentioned_brands: competitors };
 }
 function buildHistoryItem(data, brand, query, provider, record = {}) {
-    const snapshotFields = hasIdentitySnapshot(data) ? { identity_normalization_version: data.identity_normalization_version } : {};
+    const snapshotFields = hasIdentitySnapshot(data) ? { identity_normalization_version: data.identity_normalization_version, citation_domains: Array.isArray(data.citation_domains) ? [...data.citation_domains] : [], ...(typeof data.brand_cited === 'boolean' ? { brand_cited: data.brand_cited } : {}) } : {};
     const sources = (data.sources || []).map(source => ({ ...source }));
     const identity = brandIdentities.find(item => item.id === String(record.brand_id || '')) || identityFor(data.canonical_name || brand);
     const cited = resultCitesIdentity(data, identity);
@@ -958,7 +960,9 @@ function saveCheck(data, brand, query, provider) {
 function requestedProvidersFor(item) {
     if (item?.provider !== 'all') return item?.provider ? [item.provider] : [];
     const stored = item.resultData?.requested_providers || item.resultData?.requestedProviders;
-    return Array.isArray(stored) && stored.length ? [...new Set(stored.filter(provider => CHECK_PROVIDERS.includes(provider)))] : CHECK_PROVIDERS;
+    if (Array.isArray(stored) && stored.length) return [...new Set(stored.filter(provider => CHECK_PROVIDERS.includes(provider)))];
+    const observed = [...(item.providerResults || item.resultData?.provider_results || []), ...(item.providerErrors || item.resultData?.provider_errors || [])].map(result => result.provider);
+    return observed.length ? [...new Set(observed.filter(provider => CHECK_PROVIDERS.includes(provider)))] : CHECK_PROVIDERS.filter(provider => provider !== 'deepseek');
 }
 function checkDetailRows(item) {
     const results = item.status === 'failed' ? [] : item.providerResults.length ? item.providerResults : item.provider === 'all' ? [] : [item.resultData];
@@ -1044,8 +1048,16 @@ function snapshotCheck(item) {
     return { id: item.id || null, createdAt: item.createdAt || Date.now(), provider: item.provider || '', providers: [...new Set(providers)], providerResults: snapshots, mentioned: Boolean(item.mentioned), position: Number(item.position) || null, positionKind: item.positionKind || 'weighted', role: item.role || '', competitors: item.competitors || [], reasoning: item.reasoning || '', quotes: item.quotes || [] };
 }
 function growthTaskForBrand(task) { return brandKey(task.brand) === activeBrandKey; }
-function statusLabel(status) { return ({ planned: 'Запланировано', in_progress: 'В работе', ready_for_check: 'Готово к проверке', measured: 'Измерено' })[status] || status; }
-function workTypeLabel(type) { return ({ content: 'Контент', seo: 'SEO', pr: 'PR', technical: 'Техническая' })[type] || type; }
+const TASK_STATUSES = new Map([
+    ['planned', { label: 'Запланировано', className: 'status-planned' }],
+    ['in_progress', { label: 'В работе', className: 'status-in_progress' }],
+    ['ready_for_check', { label: 'Готово к проверке', className: 'status-ready_for_check' }],
+    ['measured', { label: 'Измерено', className: 'status-measured' }],
+]);
+const TASK_WORK_TYPES = new Map([['content', 'Контент'], ['seo', 'SEO'], ['pr', 'PR'], ['technical', 'Техническая']]);
+function taskStatus(status) { return TASK_STATUSES.get(status) || { label: 'Неизвестный статус', className: '' }; }
+function statusLabel(status) { return taskStatus(status).label; }
+function workTypeLabel(type) { return TASK_WORK_TYPES.get(type) || 'Другой тип'; }
 function emptyGrowth(title, text, action = '') { return `<div class="app-empty growth-empty"><strong>${title}</strong><span>${text}</span>${action}</div>`; }
 function updateGrowthSummary(opportunities, tasks, results, activeTab = 'opportunities') {
     $('#growthOpportunityTotal').textContent = opportunities.length;
@@ -1078,7 +1090,7 @@ function renderOpportunityCard(item) {
     return `<article class="growth-card growth-opportunity"><div class="growth-card-main"><div class="growth-card-badges"><span class="growth-priority ${item.priority}">${item.priority === 'high' ? 'Высокий' : 'Средний'} приоритет</span><span class="growth-tag">${escapeHtml(PROVIDERS[item.provider] || item.provider)}</span><span class="growth-tag">${item.count} подтверждения</span></div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><div class="growth-evidence"><strong>Промпт</strong><span>${escapeHtml(item.query)}</span><strong>Конкуренты</strong><span>${escapeHtml(competitors)}</span><strong>Последнее доказательство</strong><span>${escapeHtml(latest.reasoning || (latest.mentioned ? 'Бренд упомянут без рекомендации.' : 'Бренд не найден в результате.'))}</span></div><div class="growth-suggestion"><strong>Что предлагает Vidno</strong><span>${escapeHtml(item.suggestedAction)}</span></div></div><aside class="growth-card-actions"><span class="growth-action-label">Следующий шаг</span><button class="btn btn-primary btn-sm" data-create-task="${encodeURIComponent(item.id)}">Создать задачу</button><button class="btn btn-ghost btn-sm" data-dismiss="${encodeURIComponent(item.id)}">Неактуально</button></aside></article>`;
 }
 function renderTaskCard(task) {
-    const statusControl = ['planned', 'in_progress', 'ready_for_check'].includes(task.status) ? `<label class="growth-quick-status"><span class="growth-action-label">Статус</span><select class="status-${task.status}" data-quick-status="${task.id}" aria-label="Статус задачи «${escapeHtml(task.title)}»"><option value="planned"${task.status === 'planned' ? ' selected' : ''}>Запланировано</option><option value="in_progress"${task.status === 'in_progress' ? ' selected' : ''}>В работе</option><option value="ready_for_check"${task.status === 'ready_for_check' ? ' selected' : ''}>Готово к проверке</option></select></label>` : `<span class="growth-status status-${task.status}">${statusLabel(task.status)}</span>`;
+    const statusControl = ['planned', 'in_progress', 'ready_for_check'].includes(task.status) ? `<label class="growth-quick-status"><span class="growth-action-label">Статус</span><select class="${taskStatus(task.status).className}" data-quick-status="${task.id}" aria-label="Статус задачи «${escapeHtml(task.title)}»"><option value="planned"${task.status === 'planned' ? ' selected' : ''}>Запланировано</option><option value="in_progress"${task.status === 'in_progress' ? ' selected' : ''}>В работе</option><option value="ready_for_check"${task.status === 'ready_for_check' ? ' selected' : ''}>Готово к проверке</option></select></label>` : `<span class="growth-status ${taskStatus(task.status).className}">${statusLabel(task.status)}</span>`;
     return `<article class="growth-card growth-task"><div class="growth-card-main"><div class="growth-card-badges">${statusControl}<span class="growth-tag">${workTypeLabel(task.workType)}</span><span class="growth-tag">${escapeHtml(PROVIDERS[task.provider] || task.provider)}</span></div><h3>${escapeHtml(task.title)}</h3><div class="growth-suggestion growth-task-action"><strong>Что сделать</strong><span>${escapeHtml(task.action)}</span></div><div class="growth-task-meta"><span><i class="fa-regular fa-user"></i>${escapeHtml(task.owner || 'Не назначен')}</span><span><i class="fa-regular fa-calendar"></i>${task.deadline ? new Date(`${task.deadline}T00:00:00`).toLocaleDateString('ru-RU') : 'Без срока'}</span></div></div><aside class="growth-card-actions"><span class="growth-action-label">Управление</span>${task.status === 'ready_for_check' ? `<button class="btn btn-primary btn-sm" data-measure-task="${task.id}">Проверить эффект</button>` : ''}<button class="btn btn-ghost btn-sm" data-edit-task="${task.id}">Открыть задачу</button></aside></article>`;
 }
 function checkSummary(item) { if (!item) return 'Нет данных'; if (!item.mentioned) return 'Бренд не упомянут'; return `${isRecommendationRole(item.role) ? 'Рекомендация' : 'Бренд упомянут'}${item.position ? ` · ${positionText(item.position, item.positionKind || 'weighted').toLocaleLowerCase('ru-RU')}` : ''}`; }
@@ -1243,7 +1255,7 @@ async function measureTask(id, button) {
     const errorTarget = $('#briefDialog').open ? $('#growthBriefStatus') : null;
     try {
         const identity = await ensureBrandIdentity(task.brand);
-        const providers = Array.isArray(task.providers) && task.providers.length ? task.providers : task.provider === 'all' ? task.baseline?.providers?.length ? task.baseline.providers : CHECK_PROVIDERS : [task.provider];
+        const providers = Array.isArray(task.providers) && task.providers.length ? task.providers : task.provider === 'all' ? task.baseline?.providers?.length ? task.baseline.providers : requestedProvidersFor({ ...task.baseline, provider: 'all' }) : [task.provider];
         const body = { brand: identity.canonicalName, brand_id: identity.id, query: task.query, force_refresh: true, canonical_id: identity.canonicalId, canonical_name: identity.canonicalName, aliases: identity.aliases, domains: identity.domains };
         if (task.provider === 'all') body.providers = providers; else body.provider = task.provider;
         const raw = await apiRequest(task.provider === 'all' ? '/check-all' : '/check', { method: 'POST', body: JSON.stringify(body) });
@@ -1309,7 +1321,7 @@ function renderAiAnswers() {
         const providerName = PROVIDERS[row.provider] || row.model || row.provider || 'AI-модель';
         const date = row.createdAt ? new Date(row.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Дата неизвестна';
         return `<article class="ai-answer-card"><div class="ai-answer-head"><div class="ai-answer-model">${modelAvatarMarkup(row.provider, providerName)}<div><strong>${escapeHtml(providerName)}</strong><span>${escapeHtml(date)}</span></div></div><button class="btn btn-ghost btn-sm ai-answer-copy" type="button" data-copy-ai-answer="${escapeHtml(row.id)}"><i class="fa-regular fa-copy"></i>Копировать</button></div><div class="ai-answer-query"><span>Ваш запрос</span><strong>${escapeHtml(row.query || 'Запрос не сохранён')}</strong></div><div class="ai-answer-body">${escapeHtml(row.answer)}</div></article>`;
-    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat, Алисы, ChatGPT, Gemini и Perplexity появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
+    }).join('') : '<div class="app-empty ai-answer-empty"><i class="fa-regular fa-message"></i><strong>Пока нет сохранённых ответов</strong><span>Запустите проверку — полные ответы GigaChat, Алисы AI, ChatGPT, Gemini, Perplexity и DeepSeek появятся здесь.</span><button class="btn btn-primary btn-sm" type="button" data-view="prompts">Запустить проверку</button></div>';
     bindAvatarFallbacks();
     $$('[data-copy-ai-answer]').forEach(button => button.addEventListener('click', async () => {
         const row = rows.find(item => item.id === button.dataset.copyAiAnswer); if (!row) return;
@@ -1492,40 +1504,142 @@ function hasCitationMeasurement(data) { return Boolean(activeBrandIdentity()?.do
 function metricValues(data) {
     return { sov: data.answers.length && data.brands.some(row => row.voiceWeight) ? `${data.own.sov}%` : '—', visibility: data.answers.length ? `${data.own.visibility}%` : '—', citation: data.answers.length && hasCitationMeasurement(data) ? `${data.own.citationRate}%` : '—', position: data.own.averagePosition ? Number(data.own.averagePosition.toFixed(2)).toString() : '—' };
 }
-function renderReport() {
-    if (reportPrinting) return;
-    const data = analyticsSnapshot(); const bounds = data.bounds;
-    const blocked = checksLoadState.loading || checksLoadState.error || bounds.error || !activeBrandKey;
-    $('#reportRefresh').disabled = checksLoadState.loading;
-    $('#reportPrint').disabled = Boolean(blocked || !data.answers.length);
-    $('#reportDocument').hidden = Boolean(blocked);
-    $('#reportStatus').textContent = checksLoadState.loading ? 'Обновляем сохранённые проверки…' : checksLoadState.error ? `Не удалось обновить данные: ${checksLoadState.error}. Повторите загрузку кнопкой «Обновить данные».` : bounds.error || (!activeBrandKey ? 'Выберите проект, чтобы увидеть отчёт.' : '');
-    if (blocked) return;
-    const metrics = metricValues(data);
-    $('#reportBrandName').textContent = currentBrand();
-    $('#reportPeriodLabel').textContent = bounds.label;
-    $('#reportProvidersLabel').textContent = `AI-модели: ${CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).map(provider => PROVIDERS[provider]).join(', ')}`;
-    $('#reportGeneratedAt').textContent = `Сформирован ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} МСК`;
-    const coverage = [`Запусков проверок: ${data.records.length}`, `Получено ответов для расчёта: ${data.answers.length}`, ...[['Частичных проверок', data.partial], ['Ошибок моделей', data.errors], ['Проверок с ошибкой', data.failed], ['В процессе', data.running], ['Исключено проверок', data.excluded], ['Ответов прежнего анализа', data.excludedAnswers]].filter(([, count]) => count).map(([label, count]) => `${label}: ${count}`)].join(' · ');
-    $('#reportCoverage').textContent = coverage;
-    if (!data.answers.length) $('#reportStatus').textContent = data.records.length ? 'В выбранном срезе нет пригодных ответов. Проверьте модели, период и статусы проверок.' : 'За выбранный период нет проверок.';
-    else if (data.errors || data.failed || data.running || data.partial || data.excluded || data.excludedAnswers) $('#reportStatus').textContent = 'Отчёт сформирован по доступным ответам. Неполные и исключённые данные отмечены в объёме выборки.';
-    $$('[data-report-metric]').forEach(element => { element.textContent = metrics[element.dataset.reportMetric]; });
-    $('#reportVisibilityNote').textContent = `${data.own.mentions} из ${data.answers.length} ответов`;
-    $('#reportCitationNote').textContent = hasCitationMeasurement(data) ? `${data.own.citations} из ${data.answers.length} ответов` : 'Домены бренда не указаны';
+function reportFilters() {
+    const bounds = analyticsBounds();
+    const identity = activeBrandIdentity();
+    if (bounds.error || !identity || !selectedProviders.size) return { error: bounds.error || (!identity ? 'Выберите проект, чтобы увидеть отчёт.' : 'Выберите хотя бы одну AI-модель.') };
+    const params = new URLSearchParams({ brand_id: identity.id });
+    CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).forEach(provider => params.append('providers', provider));
+    if (Number.isFinite(bounds.start)) { params.set('start', moscowDay(bounds.start)); params.set('end', moscowDay(bounds.end - 1)); }
+    return { params, key: JSON.stringify([params.toString(), identity, historyForActiveBrand()]) };
+}
+function closeReportMenu(focus = false) {
+    $('#reportDownloadMenu').hidden = true;
+    $('#reportDownload').setAttribute('aria-expanded', 'false');
+    if (focus) $('#reportDownload').focus();
+}
+function cancelReportRequests() {
+    reportState.previewController?.abort(); reportState.downloadController?.abort();
+    reportState.previewController = null; reportState.downloadController = null;
+    reportState.loading = false; reportState.downloading = false;
+    closeReportMenu();
+}
+function reportPercent(value) { return value === null || value === undefined ? '—' : `${value}%`; }
+function renderReportDocument(data) {
+    $('#reportBrandName').textContent = data.brand.name;
+    $('#reportPeriodLabel').textContent = data.period.label;
+    $('#reportProvidersLabel').textContent = `AI-модели: ${data.providers.map(provider => provider.name).join(', ')}`;
+    $('#reportGeneratedAt').textContent = `Сформирован ${new Date(data.generated_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} МСК`;
+    const c = data.coverage;
+    $('#reportCoverage').textContent = [`Запусков проверок: ${c.records}`, `Получено ответов для расчёта: ${c.answers}`, ...[['Частичных проверок', c.partial], ['Ошибок моделей', c.errors], ['Проверок с ошибкой', c.failed], ['В процессе', c.running], ['Исключено проверок', c.excluded], ['Ответов прежнего анализа', c.excluded_answers]].filter(([, count]) => count).map(([label, count]) => `${label}: ${count}`)].join(' · ');
+    $$('[data-report-metric]').forEach(element => { const key = element.dataset.reportMetric; const value = data.metrics[key]; element.textContent = key === 'position' ? value === null ? '—' : Number(value.toFixed(2)).toString() : reportPercent(value); });
+    $('#reportVisibilityNote').textContent = `${data.own_mentions} из ${c.answers} ответов`;
+    $('#reportCitationNote').textContent = data.citation.measured ? `${data.citation.count} из ${c.answers} ответов` : 'Домены бренда не указаны';
     const empty = (columns, text) => `<tr><td colspan="${columns}">${escapeHtml(text)}</td></tr>`;
-    $('#reportModelBody').innerHTML = CHECK_PROVIDERS.filter(provider => selectedProviders.has(provider)).map(provider => { const row = data.models.find(item => item.provider === provider); return `<tr><th scope="row">${escapeHtml(PROVIDERS[provider])}</th><td>${row?.total || 0}</td><td>${row?.mentioned || 0}</td><td>${row?.total ? `${percentage(row.mentioned, row.total)}%` : '—'}</td></tr>`; }).join('');
-    const brands = data.answers.length ? [data.own, ...data.brands.filter(row => row.key !== activeBrandKey).slice(0, 5)] : [];
-    $('#reportBrandBody').innerHTML = brands.length ? brands.map(row => `<tr class="${row.key === activeBrandKey ? 'report-own-brand' : ''}"><th scope="row">${escapeHtml(row.name)}${row.key === activeBrandKey ? ' · ваш бренд' : ''}</th><td>${data.brands.some(item => item.voiceWeight) ? `${row.sov}%` : '—'}</td><td>${row.visibility}%</td><td>${row.averagePosition ? Number(row.averagePosition.toFixed(2)).toString() : '—'}</td></tr>`).join('') : empty(4, 'Нет пригодных ответов для сравнения брендов.');
-    $('#reportSourceBody').innerHTML = data.sources.length ? data.sources.slice(0, 5).map(row => `<tr><th scope="row">${escapeHtml(row.name)}</th><td>${row.count}</td><td>${percentage(row.count, data.answers.length)}%</td></tr>`).join('') : empty(3, 'В выбранных ответах нет источников.');
+    $('#reportModelBody').innerHTML = data.models.map(row => `<tr><th scope="row">${escapeHtml(row.name)}</th><td>${row.answers}</td><td>${row.mentions}</td><td>${reportPercent(row.visibility)}</td></tr>`).join('');
+    $('#reportBrandBody').innerHTML = data.brands.length ? data.brands.map(row => `<tr class="${row.own ? 'report-own-brand' : ''}"><th scope="row">${escapeHtml(row.name)}${row.own ? ' · ваш бренд' : ''}</th><td>${reportPercent(row.sov)}</td><td>${reportPercent(row.visibility)}</td><td>${row.position === null ? '—' : Number(row.position.toFixed(2)).toString()}</td></tr>`).join('') : empty(4, 'Нет пригодных ответов для сравнения брендов.');
+    $('#reportSourceBody').innerHTML = data.sources.length ? data.sources.map(row => `<tr><th scope="row">${escapeHtml(row.name)}</th><td>${row.answers}</td><td>${reportPercent(row.share)}</td></tr>`).join('') : empty(3, 'В выбранных ответах нет источников.');
+    $('#reportMethodology').innerHTML = data.methodology.map(text => `<p>${escapeHtml(text)}</p>`).join('');
+}
+function renderReport() {
+    const filters = reportFilters();
+    const blocked = checksLoadState.loading || checksLoadState.error || filters.error;
+    if (blocked || reportState.key !== filters.key) {
+        cancelReportRequests(); reportState.key = filters.key || ''; reportState.data = null; reportState.error = ''; reportState.notice = '';
+    }
+    $('#reportRefresh').disabled = checksLoadState.loading || reportState.loading;
+    $('#reportDownload').disabled = Boolean(blocked || reportState.loading || reportState.downloading || reportState.error || !reportState.data?.coverage.answers);
+    $('#reportDownload').setAttribute('aria-busy', String(reportState.downloading));
+    $('#reportDownloadLabel').textContent = reportState.downloading ? 'Готовим отчёт…' : 'Скачать отчёт';
+    $('#reportDocument').hidden = Boolean(blocked || reportState.loading || !reportState.data || reportState.error);
+    let message = checksLoadState.loading ? 'Обновляем сохранённые проверки…' : checksLoadState.error ? `Не удалось обновить данные: ${checksLoadState.error}. Повторите загрузку кнопкой «Обновить данные».` : filters.error || '';
+    if (!blocked) {
+        if (!reportState.data && !reportState.loading && !reportState.error && document.body.classList.contains('report-view')) { loadReport(filters); return; }
+        const c = reportState.data?.coverage;
+        message = reportState.loading ? 'Готовим предпросмотр отчёта…' : reportState.error || reportState.notice || (c && !c.answers ? c.records ? 'В выбранном срезе нет пригодных ответов. Проверьте модели, период и статусы проверок.' : 'За выбранный период нет проверок.' : c && (c.errors || c.failed || c.running || c.partial || c.excluded || c.excluded_answers) ? 'Отчёт сформирован по доступным ответам. Неполные и исключённые данные отмечены в объёме выборки.' : '');
+        if (reportState.data) renderReportDocument(reportState.data);
+    }
+    $('#reportStatus').textContent = message;
+}
+async function loadReport(filters = reportFilters()) {
+    if (filters.error) return;
+    reportState.previewController?.abort();
+    const controller = new AbortController(); reportState.previewController = controller;
+    reportState.key = filters.key; reportState.loading = true; reportState.error = '';
+    renderReport();
+    try {
+        const data = await apiRequest(`/reports/visibility?${filters.params}`, { signal: controller.signal });
+        if (controller.signal.aborted || reportState.key !== filters.key) return;
+        if (!data?.revision || !data?.coverage || !Array.isArray(data.models) || !Array.isArray(data.methodology)) throw new Error('Сервер вернул некорректный отчёт');
+        reportState.data = data;
+    } catch (error) {
+        if (!controller.signal.aborted && reportState.key === filters.key) reportState.error = `Не удалось подготовить отчёт: ${error.message}. Повторите загрузку кнопкой «Обновить данные».`;
+    } finally {
+        if (reportState.previewController === controller) { reportState.loading = false; reportState.previewController = null; renderReport(); }
+    }
 }
 async function refreshReport() {
+    cancelReportRequests(); reportState.data = null; reportState.error = ''; reportState.notice = '';
     try { await refreshChecks(); } catch { renderReport(); }
 }
+async function downloadReport(format) {
+    if ($('#reportDownload').disabled || !['pdf', 'xlsx'].includes(format)) return;
+    closeReportMenu(true);
+    const filters = reportFilters(); const data = reportState.data;
+    const controller = new AbortController(); reportState.downloadController = controller;
+    reportState.downloading = true; reportState.notice = '';
+    const params = new URLSearchParams(filters.params); params.set('format', format); params.set('revision', data.revision);
+    renderReport();
+    try {
+        const response = await fetch(`${API_BASE}/reports/visibility/export?${params}`, { credentials: 'include', signal: controller.signal });
+        if (response.status === 401) { window.location.replace('index.html?auth=login'); throw new Error('Сессия истекла'); }
+        if (response.status === 409) {
+            reportState.data = null;
+            reportState.notice = 'Данные изменились. Предпросмотр обновлён — скачайте отчёт повторно.';
+            await loadReport(filters);
+            return;
+        }
+        if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(apiErrorMessage(error, response.status)); }
+        const expectedType = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        if (!response.headers.get('Content-Type')?.startsWith(expectedType)) throw new Error('Сервер вернул файл в неверном формате');
+        const blob = await response.blob();
+        if (controller.signal.aborted || reportState.key !== filters.key) return;
+        if (!blob.size) throw new Error('Сервер вернул пустой файл');
+        const disposition = response.headers.get('Content-Disposition') || '';
+        let filename = `Vidno_${data.brand.name}_${moscowDay()}.${format}`;
+        const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i); const plain = disposition.match(/filename="([^"]+)"/i);
+        if (encoded) { try { filename = decodeURIComponent(encoded[1]); } catch {} } else if (plain) filename = plain[1];
+        filename = filename.replace(/[\\/\x00-\x1f]/g, '_');
+        const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename;
+        document.body.append(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        reportState.notice = 'Отчёт подготовлен и передан для скачивания.';
+    } catch (error) {
+        if (!controller.signal.aborted && reportState.key === filters.key) reportState.notice = `Не удалось скачать отчёт: ${error.message}. Попробуйте ещё раз.`;
+    } finally {
+        if (reportState.downloadController === controller) { reportState.downloading = false; reportState.downloadController = null; renderReport(); }
+    }
+}
 $('#reportRefresh').addEventListener('click', refreshReport);
-$('#reportPrint').addEventListener('click', () => { if (!$('#reportPrint').disabled) window.print(); });
-window.addEventListener('beforeprint', () => { if (document.body.classList.contains('report-view')) { renderReport(); reportPrinting = true; } });
-window.addEventListener('afterprint', () => { reportPrinting = false; renderAllForActiveBrand(); });
+$('#reportDownload').addEventListener('click', () => {
+    const open = $('#reportDownloadMenu').hidden;
+    $('#reportDownloadMenu').hidden = !open; $('#reportDownload').setAttribute('aria-expanded', String(open));
+    if (open) $('#reportDownloadMenu [role="menuitem"]').focus();
+});
+$('#reportDownload').addEventListener('keydown', event => {
+    if (['ArrowDown', 'ArrowUp'].includes(event.key) && !event.currentTarget.disabled) {
+        event.preventDefault(); $('#reportDownloadMenu').hidden = false; event.currentTarget.setAttribute('aria-expanded', 'true');
+        const items = $$('#reportDownloadMenu [role="menuitem"]'); items[event.key === 'ArrowUp' ? items.length - 1 : 0].focus();
+    }
+});
+$('#reportDownloadMenu').addEventListener('keydown', event => {
+    const items = $$('#reportDownloadMenu [role="menuitem"]'); const index = items.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); closeReportMenu(true); }
+    if (event.key === 'Tab') closeReportMenu();
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+});
+$$('[data-report-format]').forEach(button => button.addEventListener('click', () => downloadReport(button.dataset.reportFormat)));
+document.addEventListener('click', event => { if (!event.target.closest('.report-download')) closeReportMenu(); });
+document.addEventListener('focusin', event => { if (!event.target.closest('.report-download')) closeReportMenu(); });
 function answerRowsFor(item) {
     const results = selectedResults(item);
     const identity = activeBrandIdentity() || identityFor(item.brand);

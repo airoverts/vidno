@@ -9,16 +9,15 @@ from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fastapi import Body, Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -36,6 +35,12 @@ from prompt_suggestions import curated_prompts, excluded_topics, normalize_sugge
 from auth import authenticate, create_session, create_user, delete_session, delete_user_verified, get_account, initialize_auth, update_account, user_for_session
 from storage import AccessControlError, create_brand, create_growth_task, create_saved_check, delete_brand, delete_check, delete_growth_task, dismiss_opportunity, finish_check, get_access, get_admin_client, list_admin_clients, list_brands, list_checks, list_dismissed_opportunities, list_growth_tasks, require_workspace_access, restore_opportunity, start_check, update_admin_access, update_brand, update_growth_task
 from vouchers import create_voucher_batch, get_voucher_batch, list_tariffs, list_voucher_batches, redeem_voucher, revoke_voucher, update_tariff
+from auth_limits import admit_auth_attempt
+from security_config import SecuritySettings, TrustedProxyResolver
+from http_boundary import ApiBoundary, DevelopmentFrontend
+from input_models import parse_saved_check, parse_task_create, parse_task_patch
+from reports import build_visibility_report, validate_filters
+from storage import read_report_data
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -89,7 +94,7 @@ PROVIDERS = {
         "cache_identity": get_perplexity_cache_identity,
     },
 }
-CHECK_ALL_PROVIDERS = ("gigachat", "yandex", "openai", "gemini", "perplexity")
+CHECK_ALL_PROVIDERS = ("gigachat", "yandex", "openai", "gemini", "perplexity", "deepseek")
 ANSWER_FORMAT_INSTRUCTION = "Предложи ровно 5 конкретных вариантов, подходящих под запрос пользователя, и кратко объясни, чем подходит каждый. Не ограничивайся общими критериями выбора. Не упоминай эти требования к формату ответа."
 
 
@@ -157,10 +162,10 @@ app = FastAPI(lifespan=lifespan)
 async def access_control_error_handler(_request: Request, error: AccessControlError):
     return JSONResponse(status_code=error.status_code, content={"detail": error.payload})
 
-cors_origins = [origin.strip() for origin in os.getenv(
-    "CORS_ORIGINS",
-    "null,http://localhost,http://127.0.0.1,http://localhost:5500,http://127.0.0.1:5500,http://localhost:8000,http://127.0.0.1:8000"
-).split(",") if origin.strip()]
+security_settings = SecuritySettings.from_environment()
+proxy_resolver = TrustedProxyResolver(security_settings)
+cors_origins = list(security_settings.allowed_origins)
+app.add_middleware(ApiBoundary, allowed_origins=cors_origins)
 
 app.add_middleware(
     CORSMiddleware,
@@ -168,6 +173,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-Admin-Token", "Authorization"],
     allow_credentials=True,
+    expose_headers=["Content-Disposition"],
 )
 
 SESSION_COOKIE = "vidno_session"
@@ -193,7 +199,11 @@ def _normalized_email(value: str):
 
 
 def _set_session_cookie(response: Response, token: str):
-    response.set_cookie(SESSION_COOKIE, token, max_age=30 * 24 * 60 * 60, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true", path="/")
+    security_settings.set_session_cookie(response, token)
+
+
+async def _auth_client_ip(request: Request):
+    return await proxy_resolver.client_ip(request)
 
 
 def _current_user(vidno_session: str | None = Cookie(default=None)):
@@ -204,8 +214,10 @@ def _current_user(vidno_session: str | None = Cookie(default=None)):
 
 
 @app.post("/api/auth/register", status_code=201)
-def register(req: RegisterRequest, response: Response):
-    user = create_user(req.name.strip(), _normalized_email(req.email), req.password, req.brand.strip())
+def register(req: RegisterRequest, response: Response, client_ip: str = Depends(_auth_client_ip)):
+    email = _normalized_email(req.email)
+    admit_auth_attempt("register", client_ip)
+    user = create_user(req.name.strip(), email, req.password, req.brand.strip())
     if not user:
         raise HTTPException(status_code=409, detail="Аккаунт с таким email уже существует")
     token = create_session(user["id"])
@@ -214,8 +226,10 @@ def register(req: RegisterRequest, response: Response):
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest, response: Response):
-    user = authenticate(_normalized_email(req.email), req.password)
+def login(req: LoginRequest, response: Response, client_ip: str = Depends(_auth_client_ip)):
+    email = _normalized_email(req.email)
+    admit_auth_attempt("login", client_ip, email)
+    user = authenticate(email, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
     token = create_session(user["id"])
@@ -231,7 +245,7 @@ def auth_me(user: dict = Depends(_current_user)):
 @app.post("/api/auth/logout", status_code=204)
 def logout(response: Response, vidno_session: str | None = Cookie(default=None), _user: dict = Depends(_current_user)):
     delete_session(vidno_session)
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    security_settings.delete_session_cookie(response)
 
 
 class AccountPatchRequest(BaseModel):
@@ -280,7 +294,7 @@ def patch_account(req: AccountPatchRequest, response: Response, user: dict = Dep
         raise HTTPException(status_code=404, detail="Аккаунт не найден")
     result.pop("brand", None)
     if reauth_required:
-        response.delete_cookie(SESSION_COOKIE, path="/")
+        security_settings.delete_session_cookie(response)
     return {"account": result, "reauth_required": reauth_required}
 
 
@@ -293,7 +307,7 @@ def delete_account(req: AccountDeleteRequest, response: Response, user: dict = D
         raise HTTPException(status_code=403, detail={"code": "invalid_current_password", "message": "Неверный текущий пароль"})
     if error:
         raise HTTPException(status_code=404, detail="Аккаунт не найден")
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    security_settings.delete_session_cookie(response)
 
 
 @app.get("/api/access")
@@ -501,7 +515,7 @@ class CheckAllRequest(BaseModel):
     canonical_name: str = Field(default="", max_length=200)
     aliases: list[str] = Field(default_factory=list, max_length=50)
     domains: list[str] = Field(default_factory=list, max_length=50)
-    providers: list[Literal["gigachat", "yandex", "openai", "gemini", "perplexity"]] = Field(default_factory=lambda: list(CHECK_ALL_PROVIDERS), min_length=1, max_length=5)
+    providers: list[Literal["gigachat", "yandex", "openai", "gemini", "perplexity", "deepseek"]] = Field(default_factory=lambda: list(CHECK_ALL_PROVIDERS), min_length=1, max_length=6)
 
 
 class BriefRequest(BaseModel):
@@ -568,9 +582,76 @@ def get_checks(user: dict = Depends(_current_user)):
     return {"checks": list_checks(user["id"])}
 
 
+def _visibility_report(user, brand_id, providers, start, end):
+    try:
+        validate_filters(providers, start, end)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error), headers={"Cache-Control": "no-store"}) from None
+    data = read_report_data(user["id"], brand_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Проект не найден", headers={"Cache-Control": "no-store"})
+    brand, identities, checks = data
+    return build_visibility_report(brand, checks, providers, start, end, identities=identities)
+
+
+@app.get("/api/reports/visibility")
+def visibility_report(
+    response: Response,
+    brand_id: int = Query(gt=0, le=9223372036854775807),
+    providers: list[str] | None = Query(default=None),
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    user: dict = Depends(_current_user),
+):
+    report = _visibility_report(user, brand_id, providers, start, end)
+    response.headers["Cache-Control"] = "no-store"
+    return report
+
+
+@app.get("/api/reports/visibility/export")
+def visibility_report_export(
+    brand_id: int = Query(gt=0, le=9223372036854775807),
+    format: Literal["pdf", "xlsx"] = Query(),
+    revision: str = Query(min_length=64, max_length=64, pattern="^[a-f0-9]{64}$"),
+    providers: list[str] | None = Query(default=None),
+    start: date | None = Query(default=None),
+    end: date | None = Query(default=None),
+    user: dict = Depends(_current_user),
+):
+    from report_documents import export_report
+
+    report = _visibility_report(user, brand_id, providers, start, end)
+    headers = {"Cache-Control": "no-store"}
+    if not secrets.compare_digest(revision, report["revision"]):
+        raise HTTPException(status_code=409, detail="Данные отчёта изменились. Обновите предпросмотр и повторите скачивание.", headers=headers)
+    if not report["coverage"]["answers"]:
+        raise HTTPException(status_code=422, detail="В выбранном периоде нет пригодных ответов для отчёта", headers=headers)
+    try:
+        content = export_report(report, format)
+    except Exception:
+        logger.error("Не удалось сформировать файл отчёта")
+        raise HTTPException(status_code=500, detail="Не удалось подготовить отчёт. Повторите скачивание.", headers=headers) from None
+    brand_name = "".join(char for char in report["brand"]["name"] if char.isalnum() or char in " -_")[:100].strip() or "report"
+    day = report["generated_at"][:10]
+    filename = f"Vidno_{brand_name}_{day}.{format}"
+    headers["Content-Disposition"] = f"attachment; filename=\"Vidno_report_{day}.{format}\"; filename*=UTF-8''{quote(filename, safe='')}"
+    media_type = "application/pdf" if format == "pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(content=content, media_type=media_type, headers=headers)
+
+
+def _validated_payload(parser, payload):
+    try:
+        return parser(payload)
+    except ValidationError as error:
+        detail = [{"loc": ["body", *item["loc"]], "msg": item["msg"], "type": item["type"]} for item in error.errors()]
+        raise HTTPException(status_code=422, detail=detail) from None
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=422, detail="Некорректная структура данных") from None
+
+
 @app.post("/api/checks", status_code=201)
 def post_check(payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
-    source = payload.get("check") if isinstance(payload.get("check"), dict) else payload
+    source = _validated_payload(parse_saved_check, payload)
     record = create_saved_check(user["id"], source)
     if not record:
         raise HTTPException(status_code=422, detail="Бренд и запрос обязательны")
@@ -590,7 +671,7 @@ def get_growth_tasks(user: dict = Depends(_current_user)):
 
 @app.post("/api/growth-tasks", status_code=201)
 def post_growth_task(payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
-    source = payload.get("task") if isinstance(payload.get("task"), dict) else payload
+    source = _validated_payload(parse_task_create, payload)
     task = create_growth_task(user["id"], source)
     if not task:
         raise HTTPException(status_code=422, detail="Бренд задачи не найден")
@@ -599,7 +680,7 @@ def post_growth_task(payload: dict[str, Any] = Body(...), user: dict = Depends(_
 
 @app.patch("/api/growth-tasks/{task_id}")
 def patch_growth_task(task_id: int, payload: dict[str, Any] = Body(...), user: dict = Depends(_current_user)):
-    source = payload.get("task") if isinstance(payload.get("task"), dict) else payload
+    source = _validated_payload(parse_task_patch, payload)
     task = update_growth_task(user["id"], task_id, source)
     if task is None:
         raise HTTPException(status_code=404, detail="Задача не найдена")
@@ -1014,4 +1095,5 @@ def clear_all_cache(request: Request, x_admin_token: str | None = Header(default
     return {"status": "cleared"}
 
 
-app.mount("/", StaticFiles(directory=Path(__file__).resolve().parent.parent, html=True), name="frontend")
+if not security_settings.production:
+    app.mount("/", DevelopmentFrontend(Path(__file__).resolve().parent.parent), name="frontend")

@@ -86,7 +86,7 @@ class AiCheckApiTests(unittest.TestCase):
     def test_check_all_uses_owned_identity_and_identical_common_query(self):
         response = self.post("/api/check-all", providers=list(main.CHECK_ALL_PROVIDERS))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.analyze.call_count, 5)
+        self.assertEqual(self.analyze.call_count, 6)
         for provider in main.CHECK_ALL_PROVIDERS:
             self.assertEqual(self.generated[provider].call_args.args[0], self.query + "\n\n" + main.ANSWER_FORMAT_INSTRUCTION)
         for call in self.analyze.call_args_list:
@@ -99,6 +99,69 @@ class AiCheckApiTests(unittest.TestCase):
         self.assertEqual(self.records[41]["query"], self.query)
         self.assertTrue(all(item["query"] == self.query for item in saved["provider_results"]))
         self.assertNotIn(main.ANSWER_FORMAT_INSTRUCTION, response.text)
+
+    def test_check_all_defaults_to_six_models_including_deepseek(self):
+        response = self.post("/api/check-all")
+        self.assertEqual(response.status_code, 200)
+        expected = ["gigachat", "yandex", "openai", "gemini", "perplexity", "deepseek"]
+        saved = self.records[41]["result"]
+        self.assertEqual(saved["requested_providers"], expected)
+        self.assertEqual({item["provider"] for item in saved["provider_results"]}, set(expected))
+        self.assertEqual(self.records[41]["status"], "completed")
+        self.assertEqual(self.analyze.call_count, len(expected))
+        self.assertEqual(self.generated["deepseek"].call_args.args[1], "local test context")
+        self.assertEqual(response.json()["requested_providers"], expected)
+
+    def test_check_all_accepts_deepseek_alone(self):
+        response = self.post("/api/check-all", providers=["deepseek"])
+        self.assertEqual(response.status_code, 200)
+        saved = self.records[41]["result"]
+        self.assertEqual(saved["requested_providers"], ["deepseek"])
+        self.assertEqual([item["provider"] for item in saved["provider_results"]], ["deepseek"])
+        self.assertEqual(saved["provider_errors"], [])
+        self.assertEqual(saved["provider_results"][0]["raw_answer"], self.generated_answer("deepseek", self.query)["raw_answer"])
+        self.assert_tagged_calls(saved["provider_results"], 41)
+        self.assertEqual(self.analyze.call_count, 1)
+        self.assertEqual(self.generated["deepseek"].call_args.args[1], "local test context")
+        self.generated["openai"].assert_not_called()
+
+    def test_deepseek_generation_failure_preserves_other_models(self):
+        self.generated["deepseek"].return_value = {"error": "Ошибка подключения к DeepSeek"}
+        self.generated["deepseek"].side_effect = None
+        response = self.post("/api/check-all", providers=["openai", "deepseek"])
+        self.assertEqual(response.status_code, 200)
+        saved = self.records[41]["result"]
+        self.assertEqual(self.records[41]["status"], "partial")
+        self.assertEqual(saved["requested_providers"], ["openai", "deepseek"])
+        self.assertEqual([item["provider"] for item in saved["provider_results"]], ["openai"])
+        self.assertEqual(saved["provider_errors"][0]["provider"], "deepseek")
+        self.assertEqual(saved["provider_errors"][0]["error"], "Ошибка подключения к DeepSeek")
+        self.assertTrue(saved["mentioned"])
+        self.assertEqual(self.analyze.call_count, 1)
+
+    def test_unconfigured_deepseek_preserves_successful_models(self):
+        self.providers["deepseek"]["configured"] = lambda: False
+        response = self.post("/api/check-all", providers=["openai", "deepseek"])
+        self.assertEqual(response.status_code, 200)
+        saved = self.records[41]["result"]
+        self.assertEqual(self.records[41]["status"], "partial")
+        self.assertEqual(saved["requested_providers"], ["openai", "deepseek"])
+        self.assertEqual([item["provider"] for item in saved["provider_results"]], ["openai"])
+        self.assertEqual(saved["provider_errors"], [{"provider": "deepseek", "error": "Провайдер deepseek не настроен"}])
+        self.generated["deepseek"].assert_not_called()
+        self.assertEqual(self.analyze.call_count, 1)
+
+    def test_unconfigured_deepseek_alone_saves_failed_check(self):
+        self.providers["deepseek"]["configured"] = lambda: False
+        response = self.post("/api/check-all", providers=["deepseek"])
+        self.assertEqual(response.status_code, 502)
+        saved = self.records[41]["result"]
+        self.assertEqual(self.records[41]["status"], "failed")
+        self.assertEqual(saved["requested_providers"], ["deepseek"])
+        self.assertEqual(saved["provider_errors"], [{"provider": "deepseek", "error": "Провайдер deepseek не настроен"}])
+        self.generated["deepseek"].assert_not_called()
+        self.analyze.assert_not_called()
+        self.cache_set.assert_not_called()
 
     def test_hidden_exact_five_instruction_is_only_sent_to_generation(self):
         for provider in self.providers:

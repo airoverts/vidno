@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '..');
 const origin = 'http://127.0.0.1:8804';
 const stamp = '2026-10-09T09:00:00Z';
 const version = 'perplexity-direct-v1';
-const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity'];
+const providers = ['gigachat', 'yandex', 'openai', 'gemini', 'perplexity', 'deepseek'];
 let browser;
 
 before(async () => { browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) }); });
@@ -600,5 +600,21 @@ test('save before leaving explains invalid draft domain inside the open confirma
         assert.equal(await f.page.locator('#projectLeaveDialog').isVisible(), true);
         assert.match(await f.page.locator('#projectLeaveStatus').textContent(), /домен/);
         assert.deepEqual(writes(f.server), []);
+    } finally { await f.close(); }
+});
+
+test('legacy task status and work type render neutral labels and fixed classes', async () => {
+    const f = await fixture();
+    try {
+        const results = await f.page.evaluate(() => ['legacy value', '__proto__', 'constructor', 'toString'].map(value => {
+            const target = document.createElement('div');
+            target.innerHTML = renderTaskCard({ id: 1, title: 'Старая задача', status: value, workType: value, provider: 'openai' });
+            return { status: target.querySelector('.growth-status').textContent, classes: target.querySelector('.growth-status').className, type: target.querySelector('.growth-tag').textContent };
+        }));
+        for (const result of results) {
+            assert.equal(result.status, 'Неизвестный статус');
+            assert.equal(result.classes.trim(), 'growth-status');
+            assert.equal(result.type, 'Другой тип');
+        }
     } finally { await f.close(); }
 });

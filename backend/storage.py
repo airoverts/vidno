@@ -421,6 +421,23 @@ def list_checks(user_id: int):
     return [_check(row) for row in rows]
 
 
+def read_report_data(user_id: int, brand_id: int):
+    with connection() as database:
+        database.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        brands = database.execute(
+            "SELECT * FROM brands WHERE user_id = %s ORDER BY created_at, id",
+            (user_id,),
+        ).fetchall()
+        brand = next((row for row in brands if row["id"] == brand_id), None)
+        if brand is None:
+            return None
+        rows = database.execute(
+            "SELECT * FROM checks WHERE user_id = %s ORDER BY created_at DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+    return _brand(brand), [_brand(row) for row in brands], [_check(row) for row in rows]
+
+
 def delete_check(user_id: int, check_id: int):
     with connection() as database:
         access = _locked_access(database, user_id)

@@ -16,8 +16,9 @@
 /* ============ 1. HELPERS & DATA ============ */
 const $  = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
-const AUTH_API_BASE = location.protocol === 'file:' ? 'http://localhost:8000/api' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
+const AUTH_API_BASE = location.protocol === 'file:' ? '' : (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000' ? `http://${location.hostname}:8000/api` : '/api');
 localStorage.removeItem('vidno-session-token');
+const LOCAL_FILE_MESSAGE = 'Откройте приложение через http://localhost или http://127.0.0.1, используя одинаковый адрес для страницы и API. Вход через file:// недоступен.';
 
 function applyTheme() {
     const theme = window.VIDNO_DARK_THEME_ENABLED && localStorage.getItem('vidno-theme') === 'dark' ? 'dark' : 'light';
@@ -67,6 +68,13 @@ document.addEventListener('click', async event => {
 });
 
 async function syncLandingAccount() {
+    if (location.protocol === 'file:') {
+        const instruction = document.createElement('p');
+        instruction.className = 'form-error'; instruction.setAttribute('role', 'status');
+        instruction.textContent = LOCAL_FILE_MESSAGE;
+        $('#main').prepend(instruction);
+        return;
+    }
     try {
         const response = await fetch(`${AUTH_API_BASE}/auth/me`, { credentials: 'include' });
         if (!response.ok) return;
@@ -77,13 +85,16 @@ async function syncLandingAccount() {
         actions.querySelector('[data-cta="signup"]')?.remove();
         const account = document.createElement('a');
         account.className = 'account-pill'; account.href = 'dashboard.html';
-        account.innerHTML = `<i class="fa-solid fa-user"></i><span>${user.name || user.email}</span>`;
+        const icon = document.createElement('i'); icon.className = 'fa-solid fa-user';
+        const label = document.createElement('span'); label.textContent = user.name || user.email;
+        account.append(icon, label);
         actions.insertBefore(account, $('#burger'));
     } catch { }
 }
 syncLandingAccount();
 
 async function authRequest(path, options = {}) {
+    if (location.protocol === 'file:') throw new Error(LOCAL_FILE_MESSAGE);
     const response = await fetch(`${AUTH_API_BASE}${path}`, { credentials: 'include', ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
     const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.detail || 'Не удалось выполнить запрос');
@@ -92,7 +103,7 @@ async function authRequest(path, options = {}) {
 
 const FEATURE_DETAILS = {
     'feat-1': { title: 'Мониторинг видимости', icon: 'fa-solid fa-chart-line',
-        body: 'Проверяйте выбранный запрос в GigaChat, Алисе AI, ChatGPT, Gemini и Perplexity. Результаты сохраняются в истории кабинета и используются для показателей видимости.' },
+        body: 'Проверяйте выбранный запрос в GigaChat, Алисе AI, ChatGPT, Gemini, Perplexity и DeepSeek. Результаты сохраняются в истории кабинета и используются для показателей видимости.' },
     'feat-2': { title: 'Анализ ответов', icon: 'fa-solid fa-brain',
         body: 'В результате проверки доступны ответ AI-системы, упоминание и роль бренда, контекст и выводы анализа.' },
     'feat-3': { title: 'Сравнение с конкурентами', icon: 'fa-solid fa-scale-balanced',
@@ -208,6 +219,11 @@ modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) clo
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 function openCtaModal(type) {
+    if (location.protocol === 'file:') {
+        openModal('<h2>Откройте Vidno через localhost</h2><p id="localFileInstruction"></p>');
+        $('#localFileInstruction').textContent = LOCAL_FILE_MESSAGE;
+        return;
+    }
     const isLogin = type === 'login';
     if (isLogin) {
         openModal(`
@@ -301,7 +317,8 @@ const analyzeModels = [
     'Perplexity',
     'Алиса AI',
     'GigaChat',
-    'Gemini'
+    'Gemini',
+    'DeepSeek'
 ];
 
 let currentModel = 0;

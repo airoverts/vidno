@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi.responses import JSONResponse
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 
@@ -137,7 +138,11 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
 
     @classmethod
     def _client(cls):
-        client = TestClient(cls.main.app)
+        cls.counter += 1
+        client = TestClient(cls.main.app, base_url="https://vidno.one", client=(f"192.0.2.{cls.counter % 250 + 1}", 50000))
+        async def client_ip(request: Request):
+            return request.client.host
+        cls.main.app.dependency_overrides[cls.main._auth_client_ip] = client_ip
         cls.clients.append(client)
         return client
 
@@ -209,6 +214,45 @@ class PostgresAccessIntegrationTests(unittest.TestCase):
                 self.assertEqual(answer["provider_calls"][0]["check_id"], item["id"])
                 self.assertEqual(answer["provider_calls"][0]["returned_model"], "perplexity/sonar")
         self.assertEqual(outsider.get("/api/checks").json()["checks"], [])
+
+    def test_hardened_import_and_task_lifecycle_preserve_artifacts(self):
+        admin, _, _ = self._make_admin()
+        client, user, _ = self._register("hardened-owner")
+        outsider, other_user, _ = self._register("hardened-outsider")
+        for owner in (user, other_user):
+            self._set_access(admin, owner["id"], status="active", checks_limit=20, brands_limit=10)
+        imported = {"brand": "Synthetic", "query": "Which service?", "provider": "deepseek", "position": 1.5, "mentioned": True, "provider_calls": [{"analysis_attempt": 2, "analysis_method": "direct", "validation_error": "evidence_not_found", "usage": {"input_tokens": 12}}]}
+        saved = client.post("/api/checks", json={"check": imported})
+        self.assertEqual(saved.status_code, 201, saved.text)
+        check_id = saved.json()["check"]["id"]
+        snapshot = {"id": str(check_id), "createdAt": 1792600000000, "provider": "deepseek", "providers": ["deepseek"], "providerResults": [{"provider": "deepseek", "mentioned": True, "position": 1.5, "positionKind": "weighted", "role": "рекомендация"}], "mentioned": True, "position": 1.5, "positionKind": "weighted", "role": "рекомендация", "competitors": [], "reasoning": "Synthetic", "quotes": []}
+        evidence = {"count": 1, "checkIds": [check_id], "competitors": [], "reasoning": "Synthetic", "quotes": []}
+        payload = {"brand": "Synthetic", "brandKey": saved.json()["check"]["canonical_id"], "query": "Which service?", "provider": "deepseek", "title": "Synthetic task", "action": "Update a page", "workType": "content", "baselineCheckId": str(check_id), "baseline": snapshot, "evidence": evidence, "postCheck": None, "verdict": None, "status": "planned"}
+        created = client.post("/api/growth-tasks", json={"task": payload})
+        self.assertEqual(created.status_code, 201, created.text)
+        task_id = created.json()["task"]["id"]
+        for status in ("in_progress", "ready_for_check"):
+            response = client.patch(f"/api/growth-tasks/{task_id}", json={"status": status})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["task"]["baseline"], snapshot)
+            self.assertEqual(response.json()["task"]["evidence"], evidence)
+        measurement = {"postCheck": snapshot, "verdict": "unchanged", "comparison": {"verdict": "unchanged", "providers": ["deepseek"], "unavailable": []}, "status": "measured"}
+        self.assertEqual(client.patch(f"/api/growth-tasks/{task_id}", json={"task": measurement}).status_code, 200)
+        edited = client.patch(f"/api/growth-tasks/{task_id}", json={"notes": "Updated"})
+        self.assertEqual(edited.json()["task"]["postCheck"], snapshot)
+        self.assertEqual(edited.json()["task"]["evidence"], evidence)
+        self.assertEqual(outsider.get("/api/growth-tasks").json(), {"tasks": []})
+        self.assertEqual(outsider.patch(f"/api/growth-tasks/{task_id}", json={"status": "planned"}).status_code, 404)
+        self.assertEqual(client.post("/api/checks", json={**imported, "unknown": True}).status_code, 422)
+        self.assertEqual(client.patch(f"/api/growth-tasks/{task_id}", json={"status": "unknown"}).status_code, 422)
+        self.assertEqual(client.post("/api/checks", content=(b"a" * 1024 for _ in range(2049))).status_code, 413)
+        with self.database.connection() as database:
+            record = database.execute("SELECT result, quota_state FROM checks WHERE id = %s AND user_id = %s", (check_id, user["id"])).fetchone()
+            self.assertEqual(record["result"], imported)
+            self.assertEqual(record["quota_state"], "unmetered")
+            self.assertEqual(database.execute("SELECT COUNT(*) AS count FROM checks WHERE user_id = %s", (user["id"],)).fetchone()["count"], 1)
+            self.assertEqual(database.execute("SELECT COUNT(*) AS count FROM growth_tasks WHERE user_id = %s", (user["id"],)).fetchone()["count"], 1)
+            self.assertEqual(database.execute("SELECT checks_used FROM user_access WHERE user_id = %s", (user["id"],)).fetchone()["checks_used"], 0)
 
     def test_failed_unified_analysis_keeps_all_raw_answers_in_postgres(self):
         from brand_identity import canonicalize_analysis

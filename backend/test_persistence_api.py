@@ -29,7 +29,8 @@ class PersistenceApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/brands", headers={"Authorization": "Bearer legacy-token"}).status_code, 401)
 
     def test_registration_returns_cookie_without_token_body(self):
-        with patch.object(main, "create_user", return_value={"id": 3, "name": "User", "email": "u@example.com", "brand": "Vidno"}), patch.object(main, "create_session", return_value="secret"):
+        main.app.dependency_overrides[main._auth_client_ip] = lambda: "192.0.2.1"
+        with patch.object(main, "admit_auth_attempt"), patch.object(main, "create_user", return_value={"id": 3, "name": "User", "email": "u@example.com", "brand": "Vidno"}), patch.object(main, "create_session", return_value="secret"):
             response = self.client.post("/api/auth/register", json={"name": "User", "email": "u@example.com", "password": "password1", "brand": "Vidno"})
         self.assertEqual(response.status_code, 201)
         self.assertNotIn("session_token", response.json())

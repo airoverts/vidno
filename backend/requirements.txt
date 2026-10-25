@@ -11,3 +11,5 @@ sumy
 nltk
 numpy
 psycopg[binary]>=3.2,<4
+reportlab==4.4.9
+openpyxl==3.1.5
