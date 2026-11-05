@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 import httpx
+from ai_request_logs import logged_http_post
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,11 +35,15 @@ def _tls_verify():
     return context
 
 
-def _post_with_retry(url: str, **kwargs) -> httpx.Response:
+def _post_with_retry(url: str, _ai_attempt=None, **kwargs) -> httpx.Response:
     last_error = None
     for attempt in range(3):
         try:
-            response = httpx.post(url, **kwargs)
+            if _ai_attempt is None:
+                response = httpx.post(url, **kwargs)
+            else:
+                _ai_attempt[0] += 1
+                response = logged_http_post("gigachat", MODEL_NAME, _ai_attempt[0], url, **kwargs)
             if response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
                 return response
             logger.warning(f"[GigaChat] Временная ошибка {response.status_code}, повтор {attempt + 1}/2")
@@ -107,10 +112,12 @@ def _call_gigachat(messages: list, temperature: float | None = None, max_tokens:
     if response_format:
         payload["response_format"] = response_format
     
+    ai_attempt = [0]
     for attempt in range(2):
         access_token = _get_access_token()
         response = _post_with_retry(
             "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+            _ai_attempt=ai_attempt,
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",

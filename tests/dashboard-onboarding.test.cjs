@@ -75,6 +75,13 @@ async function fixture(server = state(), width = 1440, stored = {}) {
             const method = request.method();
             const body = request.postDataJSON();
             server.requests.push({ endpoint, method, body, hostname: url.hostname });
+            if (endpoint === '/admin/ai-requests') {
+                const query = Object.fromEntries(url.searchParams); server.lastAiQuery = query;
+                const snapshot = server.aiResponse;
+                if (server.aiDelay) await new Promise(resolve => setTimeout(resolve, server.aiDelay));
+                if (server.aiFailure) return json({ detail: 'Журнал недоступен' }, 503);
+                return json({ items: snapshot?.items || [], summary: snapshot?.summary || {}, total: snapshot?.total || 0, page: Number(query.page), page_size: Number(query.page_size) });
+            }
             if (server.unauthorized === endpoint) return json({ detail: 'Session expired' }, 401);
             if (endpoint === '/auth/me') {
                 if (server.sessionFailure === 'network') return route.abort('failed');
@@ -1099,3 +1106,92 @@ for (const hasRequestedProviders of [true, false]) {
         } finally { await f.close(); }
     });
 }
+
+function aiAdminState(extra = {}) {
+    return state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, ...extra });
+}
+const aiLogItem = { id: 10, user_id: 7, user_name: '<img src=x onerror=alert(1)>', user_email: 'user@example.test', request_id: 'request-1', check_id: 501, provider: 'openai', operation: 'check_all', stage: 'generation', attempt: 2, started_at: stamp, duration_ms: 152, status: 'success', http_status: 200, requested_model: 'requested-v1', returned_model: 'actual-v2', input_tokens: 120, output_tokens: 30, total_tokens: 150, cached_tokens: 20, reasoning_tokens: 10 };
+const aiLogResponse = { items: [aiLogItem, { ...aiLogItem, id: 11, returned_model: null, input_tokens: null, output_tokens: null, total_tokens: null, status: 'network_error', http_status: null, error_category: 'timeout' }], total: 51, summary: { attempts: 51, errors: 1, input_tokens: 1000, output_tokens: 500, total_tokens: 1500, missing_usage: 1 } };
+async function openAiLogs(f) {
+    await hidden(f.page, '#dashboardLoadState'); await openAccountMenu(f.page); await f.page.locator('#adminMenuItem').click();
+    await f.page.locator('#adminTabAiRequests').click();
+}
+for (const width of [1440, 768, 375]) {
+    test(`AI request journal renders models, tokens and identities safely at ${width}px`, async () => {
+        const f = await fixture(aiAdminState({ aiResponse: aiLogResponse }), width);
+        try {
+            await openAiLogs(f); await f.page.locator('.ai-request-row').first().waitFor({ state: 'visible' });
+            const text = await f.page.locator('#aiRequestList').textContent();
+            assert.match(text, /actual-v2/); assert.match(text, /requested-v1/); assert.match(text, /Не сообщена/);
+            assert.match(text, /Вход: —/); assert.match(text, /Попытка 2/); assert.match(text, /ID: 7/);
+            assert.equal(await f.page.locator('#aiRequestList img').count(), 0);
+            assert.match(await f.page.locator('#aiRequestSummary').textContent(), /1\s?500/);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            const directory = path.join(os.tmpdir(), 'vidno-ai-request-qa'); await fs.mkdir(directory, { recursive: true });
+            await f.page.screenshot({ path: path.join(directory, `ai-requests-${width}.png`), fullPage: true });
+            await f.page.locator('#aiRequestNext').click();
+            await f.page.waitForFunction(() => document.querySelector('#aiRequestPage').textContent.startsWith('2 из'));
+            assert.equal(f.server.lastAiQuery.page, '2');
+            await f.page.locator('#aiRequestUser').fill('user@example.test'); await f.page.locator('#aiRequestModel').fill('actual');
+            await f.page.locator('#aiRequestProvider').selectOption('openai'); await f.page.locator('#aiRequestOperation').selectOption('check_all');
+            await f.page.locator('#aiRequestStatus').selectOption('success');
+            await f.page.locator('#aiRequestFilters [type=submit]').click();
+            await f.page.waitForFunction(() => document.querySelector('#aiRequestPage').textContent.startsWith('1 из'));
+            assert.equal(f.server.lastAiQuery.user, 'user@example.test'); assert.equal(f.server.lastAiQuery.model, 'actual');
+            assert.equal(f.server.lastAiQuery.provider, 'openai'); assert.equal(f.server.lastAiQuery.operation, 'check_all');
+            assert.equal(f.server.lastAiQuery.status, 'success'); assert.equal(f.server.lastAiQuery.page, '1');
+            assert.ok(f.server.lastAiQuery.date_from.endsWith('Z')); assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+}
+test('AI journal recovers after an error and renders empty results', async () => {
+    const f = await fixture(aiAdminState({ aiFailure: true }));
+    try {
+        await openAiLogs(f); await visible(f.page, '#aiRequestRetry');
+        assert.match(await f.page.locator('#aiRequestList').textContent(), /Журнал недоступен/);
+        f.server.aiFailure = false; await f.page.locator('#aiRequestRetry').click();
+        await f.page.waitForFunction(() => document.querySelector('#aiRequestList').textContent.includes('Обращений не найдено'));
+        assert.equal(await f.page.locator('#aiRequestNext').isDisabled(), true); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+test('AI journal ignores stale responses from previous filters', async () => {
+    const f = await fixture(aiAdminState({ aiDelay: 400, aiResponse: aiLogResponse }));
+    try {
+        const firstRequest = f.page.waitForRequest(request => request.url().includes('/admin/ai-requests'));
+        await openAiLogs(f); await firstRequest;
+        f.server.aiDelay = 0; f.server.aiResponse = { items: [], total: 0 };
+        await f.page.locator('#aiRequestUser').fill('nobody'); await f.page.locator('#aiRequestFilters [type=submit]').click();
+        await f.page.waitForFunction(() => document.querySelector('#aiRequestList').textContent.includes('Обращений не найдено'));
+        await f.page.waitForTimeout(500);
+        assert.equal(await f.page.locator('.ai-request-row').count(), 0); assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});
+test('AI journal stays hidden and makes no requests for a client', async () => {
+    const f = await fixture(state());
+    try {
+        await hidden(f.page, '#dashboardLoadState'); assert.equal(await f.page.locator('#adminMenuItem').isVisible(), false);
+        assert.equal(f.server.requests.some(item => item.endpoint === '/admin/ai-requests'), false);
+    } finally { await f.close(); }
+});
+test('AI journal validates date order and sends local bounds as UTC', async () => {
+    const f = await fixture(aiAdminState());
+    try {
+        await openAiLogs(f);
+        await f.page.waitForFunction(() => document.querySelector('#aiRequestList').textContent.includes('Обращений не найдено'));
+        const previous = f.server.requests.filter(item => item.endpoint === '/admin/ai-requests').length;
+        await f.page.locator('#aiRequestFrom').fill('2026-10-01T12:00'); await f.page.locator('#aiRequestTo').fill('2026-09-01T12:00');
+        await f.page.locator('#aiRequestFilters [type=submit]').click();
+        assert.equal(f.server.requests.filter(item => item.endpoint === '/admin/ai-requests').length, previous);
+        assert.equal(await f.page.locator('#aiRequestTo').evaluate(el => el.validity.customError), true);
+        await f.page.locator('#aiRequestTo').fill('2026-10-01T12:00');
+        await f.page.locator('#aiRequestFilters [type=submit]').click();
+        assert.equal(f.server.requests.filter(item => item.endpoint === '/admin/ai-requests').length, previous);
+        assert.equal(await f.page.locator('#aiRequestTo').evaluate(el => el.validationMessage), 'Дата окончания должна быть позже даты начала.');
+        await f.page.locator('#aiRequestTo').fill('2026-11-01T12:00');
+        const expected = await f.page.evaluate(() => ({ from: new Date(document.querySelector('#aiRequestFrom').value).toISOString(), to: new Date(document.querySelector('#aiRequestTo').value).toISOString() }));
+        const request = f.page.waitForRequest(item => item.url().includes('/admin/ai-requests'));
+        await f.page.locator('#aiRequestFilters [type=submit]').click(); await request;
+        assert.equal(f.server.lastAiQuery.date_from, expected.from); assert.equal(f.server.lastAiQuery.date_to, expected.to);
+        assert.deepEqual(f.errors, []);
+    } finally { await f.close(); }
+});

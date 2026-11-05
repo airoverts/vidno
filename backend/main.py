@@ -6,10 +6,11 @@ import threading
 import time
 import httpx
 from contextlib import asynccontextmanager
+from contextvars import copy_context
 from collections import defaultdict, deque
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit
@@ -41,6 +42,7 @@ from http_boundary import ApiBoundary, DevelopmentFrontend
 from input_models import parse_saved_check, parse_task_create, parse_task_patch
 from reports import build_visibility_report, validate_filters
 from storage import read_report_data
+from ai_request_logs import list_ai_requests, set_check_id, stage_scope, track_operation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -319,6 +321,29 @@ def _admin_user(user: dict = Depends(_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail={"code": "admin_required", "message": "Недостаточно прав"})
     return user
+
+
+@app.get("/api/admin/ai-requests")
+def admin_ai_requests(
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    user: str = Query(default="", max_length=200),
+    provider: Literal["gigachat", "deepseek", "yandex", "openai", "gemini", "perplexity"] | None = None,
+    model: str = Query(default="", max_length=500),
+    operation: Literal["check", "check_all", "prompt_suggestions", "brief"] | None = None,
+    status: Literal["success", "http_error", "network_error", "provider_error"] | None = None,
+    page: int = Query(default=1, ge=1, le=1000000),
+    page_size: int = Query(default=50, ge=1, le=100),
+    _admin: dict = Depends(_admin_user),
+):
+    end = date_to or datetime.now(timezone.utc)
+    try:
+        start = date_from or end - timedelta(days=30)
+    except OverflowError:
+        raise HTTPException(status_code=422, detail="Укажите корректный период с часовым поясом")
+    if start.tzinfo is None or end.tzinfo is None or start >= end:
+        raise HTTPException(status_code=422, detail="Укажите корректный период с часовым поясом")
+    return list_ai_requests(date_from=start, date_to=end, user=user.strip(), provider=provider, model=model.strip(), operation=operation, status=status, page=page, page_size=page_size)
 
 
 class AdminAccessPatchRequest(BaseModel):
@@ -731,6 +756,7 @@ def health():
 
 
 @app.post("/api/check")
+@track_operation("check")
 def check(req: CheckRequest, user: dict = Depends(_current_user)):
     _enforce_rate_limit(str(user["id"]))
     if not _check_semaphore.acquire(blocking=False):
@@ -738,6 +764,7 @@ def check(req: CheckRequest, user: dict = Depends(_current_user)):
     record = None
     try:
         record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), req.provider, req.aliases, req.domains)
+        set_check_id(record["id"])
         saved_request = req.model_copy(update={"canonical_id": record.get("canonical_id") or req.canonical_id, "canonical_name": record.get("brand") or req.canonical_name or req.brand})
         return _complete_check_response(user["id"], record["id"], _run_check(saved_request, user["id"]))
     except Exception as error:
@@ -749,6 +776,7 @@ def check(req: CheckRequest, user: dict = Depends(_current_user)):
 
 
 @app.post("/api/check-all")
+@track_operation("check_all")
 def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
     _enforce_rate_limit(str(user["id"]))
     if not _check_semaphore.acquire(blocking=False):
@@ -756,6 +784,7 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
     record = None
     try:
         record = start_check(user["id"], " ".join(req.brand.split()), req.canonical_id.strip(), " ".join(req.query.split()), "all", req.aliases, req.domains)
+        set_check_id(record["id"])
         if not is_perplexity_configured():
             return _complete_check_response(user["id"], record["id"], JSONResponse(status_code=503, content={"error": "Perplexity не настроен: единый анализ ответов недоступен"}))
         requested_providers = tuple(dict.fromkeys(req.providers))
@@ -765,7 +794,7 @@ def check_all(req: CheckAllRequest, user: dict = Depends(_current_user)):
         with ThreadPoolExecutor(max_workers=len(requested_providers)) as executor:
             request_data = req.model_dump(exclude={"providers"})
             request_data.update({"canonical_id": record.get("canonical_id") or req.canonical_id, "canonical_name": record.get("brand") or req.canonical_name or req.brand})
-            futures = {executor.submit(_run_check, CheckRequest(**request_data, provider=provider), user["id"], False): provider for provider in requested_providers}
+            futures = {executor.submit(copy_context().run, _run_check, CheckRequest(**request_data, provider=provider), user["id"], False): provider for provider in requested_providers}
             for future in as_completed(futures):
                 provider = futures[future]
                 try:
@@ -876,6 +905,7 @@ def _aggregate_results(results, errors, requested_providers=None):
 
 
 @app.post("/api/prompt-suggestions")
+@track_operation("prompt_suggestions")
 def prompt_suggestions(req: PromptSuggestionsRequest, user: dict = Depends(_current_user)):
     require_workspace_access(user["id"])
     _enforce_rate_limit(str(user["id"]))
@@ -962,7 +992,8 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     
     try:
         generation_query = f"{query}\n\n{ANSWER_FORMAT_INSTRUCTION}"
-        generated = provider_config["generate"](generation_query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](generation_query)
+        with stage_scope("generation"):
+            generated = provider_config["generate"](generation_query, context or "") if provider in {"gigachat", "deepseek"} else provider_config["generate"](generation_query)
     except PerplexityModelError as error:
         return _provider_failure(provider, str(error), error=error)
     except httpx.HTTPStatusError as error:
@@ -983,7 +1014,8 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     if not raw_answer.strip():
         return _provider_failure(provider, f"Провайдер {provider} вернул пустой ответ", generated)
     try:
-        analysis = analyze_with_perplexity(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
+        with stage_scope("analysis"):
+            analysis = analyze_with_perplexity(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains)
     except PerplexityModelError as error:
         return _provider_failure(provider, str(error), generated, error, analysis_error=True)
     except httpx.HTTPStatusError as error:
@@ -1054,6 +1086,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
 
 
 @app.post("/api/brief")
+@track_operation("brief")
 def create_brief(req: BriefRequest, user: dict = Depends(_current_user)):
     require_workspace_access(user["id"])
     _enforce_rate_limit(str(user["id"]))

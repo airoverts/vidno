@@ -3,6 +3,7 @@ import os
 import time
 
 import httpx
+from ai_request_logs import logged_generate_content
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
@@ -23,7 +24,7 @@ _client = None
 def _get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=90000))
+        _client = genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=90000, retry_options=types.HttpRetryOptions(attempts=1)))
     return _client
 
 
@@ -33,6 +34,16 @@ def is_configured() -> bool:
 
 def get_model_name() -> str:
     return MODEL_NAME
+
+
+def _generate_content(*, retry_offset=0, **kwargs):
+    for attempt in range(5):
+        try:
+            return logged_generate_content(_get_client(), MODEL_NAME, attempt=retry_offset + attempt + 1, **kwargs)
+        except (errors.APIError, httpx.TimeoutException, httpx.ConnectError) as error:
+            if attempt == 4 or isinstance(error, errors.APIError) and error.code not in {408, 429, 500, 502, 503, 504}:
+                raise
+            time.sleep(2 ** attempt)
 
 
 def _response_text(response) -> str:
@@ -79,8 +90,7 @@ def _grounding_evidence(response) -> tuple[list[str], list[dict]]:
 
 
 def _call_with_google_search(query: str) -> tuple[str, list[dict], list[str]]:
-    response = _get_client().models.generate_content(
-        model=MODEL_NAME,
+    response = _generate_content(
         contents=query,
         config=types.GenerateContentConfig(
             system_instruction="Перед формированием каждого ответа обязательно выполни Google Search для получения актуальной информации. Не отвечай на запрос пользователя до выполнения Google Search. Используй найденные данные при формировании финального ответа.",
@@ -101,8 +111,7 @@ def _analyze_answer(brand: str, query: str, raw_answer: str, canonical_id: str, 
     messages = build_answer_analysis_messages(analysis_brand, query, raw_answer, aliases, domains)
     for attempt in range(3):
         try:
-            response = _get_client().models.generate_content(
-                model=MODEL_NAME,
+            response = _generate_content(retry_offset=attempt * 5,
                 contents=messages[1]["content"],
                 config=types.GenerateContentConfig(
                     system_instruction=messages[0]["content"],

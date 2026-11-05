@@ -1928,6 +1928,73 @@ function selectAdminTab(tab) {
     });
     if (tab === 'tariffs') loadAdminTariffs();
     if (tab === 'vouchers') { loadAdminTariffs(); loadVoucherBatches(); }
+    if (tab === 'ai-requests') {
+        if (!aiRequestQuery) applyAiRequestFilters();
+        else loadAiRequests(aiRequestPage);
+    }
+}
+let aiRequestPage = 1;
+let aiRequestQuery = null;
+let aiRequestLoadId = 0;
+const aiRequestOperations = { check: 'Проверка', check_all: 'Все модели', prompt_suggestions: 'Подсказки', brief: 'Бриф' };
+const aiRequestStatuses = { success: 'Успешно', http_error: 'Ошибка HTTP', network_error: 'Ошибка сети', provider_error: 'Ошибка провайдера' };
+function aiTokenCount(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('ru-RU') : '—';
+}
+function aiRequestMarkup(item) {
+    const field = (label, value) => `<div><dt>${label}</dt><dd>${escapeHtml(value ?? '—')}</dd></div>`;
+    const model = item.returned_model || 'Не сообщена';
+    const requested = item.requested_model && item.requested_model !== item.returned_model ? `<small>Запрошена: ${escapeHtml(item.requested_model)}</small>` : '';
+    const extras = [item.cached_tokens != null ? `Из кэша: ${aiTokenCount(item.cached_tokens)}` : '', item.reasoning_tokens != null ? `Reasoning: ${aiTokenCount(item.reasoning_tokens)}` : ''].filter(Boolean).join(' · ');
+    return `<article class="ai-request-row"><dl class="ai-request-grid">${field('Время', formatDateTime(item.started_at))}<div><dt>Пользователь</dt><dd>${escapeHtml(item.user_name || 'Без имени')}<small>${escapeHtml(item.user_email || '')}</small><small>ID: ${escapeHtml(item.user_id)}</small></dd></div><div><dt>Провайдер / модель</dt><dd>${escapeHtml(PROVIDERS[item.provider] || item.provider)}<strong>${escapeHtml(model)}</strong>${requested}</dd></div><div><dt>Операция</dt><dd>${escapeHtml(aiRequestOperations[item.operation] || item.operation)}<small>${escapeHtml(({ generation: 'Генерация', analysis: 'Анализ', suggestions: 'Подсказки' })[item.stage] || item.stage || '—')} · Попытка ${escapeHtml(item.attempt)}</small></dd></div><div><dt>Токены</dt><dd>Вход: ${escapeHtml(aiTokenCount(item.input_tokens))}<small>Выход: ${escapeHtml(aiTokenCount(item.output_tokens))} · Всего: ${escapeHtml(aiTokenCount(item.total_tokens))}</small>${extras ? `<small>${escapeHtml(extras)}</small>` : ''}</dd></div><div><dt>Статус</dt><dd class="ai-request-status${item.status === 'success' ? '' : ' ai-request-failed'}">${escapeHtml(aiRequestStatuses[item.status] || item.status)}<small>${item.http_status != null ? `HTTP ${escapeHtml(item.http_status)} · ` : ''}${escapeHtml(aiTokenCount(item.duration_ms))} мс</small>${item.error_category ? `<small>${escapeHtml(item.error_category)}</small>` : ''}</dd></div></dl><details class="ai-request-details"><summary>Идентификаторы</summary><p>Запрос: ${escapeHtml(item.request_id)} · Запись: ${escapeHtml(item.id)}${item.check_id != null ? ` · Проверка: ${escapeHtml(item.check_id)}` : ''}</p></details></article>`;
+}
+function applyAiRequestFilters() {
+    const form = $('#aiRequestFilters');
+    $('#aiRequestTo').setCustomValidity('');
+    if (!form.reportValidity()) return;
+    const from = new Date($('#aiRequestFrom').value);
+    const toValue = $('#aiRequestTo').value;
+    const to = toValue ? new Date(toValue) : null;
+    if (to && to <= from) {
+        $('#aiRequestTo').setCustomValidity('Дата окончания должна быть позже даты начала.');
+        $('#aiRequestTo').reportValidity(); return;
+    }
+    const params = new URLSearchParams({ date_from: from.toISOString() });
+    if (to) params.set('date_to', to.toISOString());
+    for (const [key, selector] of Object.entries({ user: '#aiRequestUser', provider: '#aiRequestProvider', model: '#aiRequestModel', operation: '#aiRequestOperation', status: '#aiRequestStatus' })) {
+        const value = $(selector).value.trim(); if (value) params.set(key, value);
+    }
+    aiRequestQuery = params.toString();
+    loadAiRequests(1);
+}
+async function loadAiRequests(page = 1) {
+    if (accountState?.role !== 'admin' || !aiRequestQuery) return;
+    const loadId = ++aiRequestLoadId;
+    aiRequestPage = Math.max(1, page);
+    const params = new URLSearchParams(aiRequestQuery);
+    params.set('page', String(aiRequestPage)); params.set('page_size', '50');
+    $('#aiRequestResults').setAttribute('aria-busy', 'true');
+    $('#aiRequestList').innerHTML = '<div class="admin-loading" role="status">Загружаем AI-запросы…</div>';
+    $('#aiRequestSummary').replaceChildren(); $('#aiRequestPage').textContent = '';
+    $('#aiRequestRetry').hidden = true; $('#aiRequestPrev').disabled = true; $('#aiRequestNext').disabled = true;
+    try {
+        const data = await apiRequest(`/admin/ai-requests?${params}`);
+        if (loadId !== aiRequestLoadId) return;
+        const summary = data.summary || {};
+        $('#aiRequestSummary').innerHTML = [['Попыток', summary.attempts], ['Ошибок', summary.errors], ['Входных токенов', summary.input_tokens], ['Выходных токенов', summary.output_tokens], ['Всего токенов', summary.total_tokens], ['Без полного расхода', summary.missing_usage]].map(([label, value]) => `<div><strong>${escapeHtml(aiTokenCount(value))}</strong><span>${label}</span></div>`).join('');
+        const items = Array.isArray(data.items) ? data.items : [];
+        $('#aiRequestList').innerHTML = items.length ? items.map(aiRequestMarkup).join('') : '<div class="app-empty"><strong>Обращений не найдено</strong><span>Измените период или фильтры.</span></div>';
+        const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+        aiRequestPage = data.page;
+        $('#aiRequestPage').textContent = `${data.page} из ${pages} · Записей: ${aiTokenCount(data.total)}`;
+        $('#aiRequestPrev').disabled = data.page <= 1; $('#aiRequestNext').disabled = data.page >= pages;
+    } catch (error) {
+        if (loadId !== aiRequestLoadId) return;
+        $('#aiRequestList').innerHTML = `<div class="admin-error" role="alert">${escapeHtml(error.message)}</div>`;
+        $('#aiRequestRetry').hidden = false;
+    } finally {
+        if (loadId === aiRequestLoadId) $('#aiRequestResults').setAttribute('aria-busy', 'false');
+    }
 }
 async function loadAdminTariffs() {
     if (accountState?.role !== 'admin') return;
@@ -2122,6 +2189,17 @@ $('#deleteAccountForm').addEventListener('submit', deleteAccount);
 $('#adminFilters').addEventListener('submit', event => { event.preventDefault(); loadAdminClients(1); });
 $('#adminPrevPage').addEventListener('click', () => loadAdminClients(adminPage - 1));
 $('#adminNextPage').addEventListener('click', () => loadAdminClients(adminPage + 1));
+{
+    const start = new Date(); start.setDate(start.getDate() - 30); start.setSeconds(0, 0);
+    const local = new Date(start.getTime() - start.getTimezoneOffset() * 60000);
+    $('#aiRequestFrom').value = local.toISOString().slice(0, 16);
+}
+$('#aiRequestFilters').addEventListener('submit', event => { event.preventDefault(); applyAiRequestFilters(); });
+$('#aiRequestTo').addEventListener('input', () => $('#aiRequestTo').setCustomValidity(''));
+$('#aiRequestFrom').addEventListener('input', () => $('#aiRequestTo').setCustomValidity(''));
+$('#aiRequestRetry').addEventListener('click', () => loadAiRequests(aiRequestPage));
+$('#aiRequestPrev').addEventListener('click', () => loadAiRequests(aiRequestPage - 1));
+$('#aiRequestNext').addEventListener('click', () => loadAiRequests(aiRequestPage + 1));
 $('#voucherActivationForm').addEventListener('submit', redeemVoucher);
 $('#voucherRefreshAccess').addEventListener('click', recoverVoucherActivation);
 $('#voucherCode').addEventListener('input', () => setFormStatus('#voucherActivationStatus', ''));

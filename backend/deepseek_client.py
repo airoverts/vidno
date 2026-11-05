@@ -3,6 +3,7 @@ import os
 import time
 
 import httpx
+from ai_request_logs import logged_http_post
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,7 +26,7 @@ def get_model_name() -> str:
 def _post_with_retry(payload: dict) -> httpx.Response:
     for attempt in range(3):
         try:
-            response = httpx.post(
+            response = logged_http_post("deepseek", payload.get("model"), attempt + 1,
                 API_URL,
                 headers={
                     "Authorization": f"Bearer {API_KEY}",

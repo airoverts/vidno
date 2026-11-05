@@ -282,6 +282,7 @@
                     <button class="app-tab active" id="adminTabClients" type="button" data-admin-tab="clients" role="tab" aria-selected="true" aria-controls="adminPanelClients">Пользователи</button>
                     <button class="app-tab" id="adminTabTariffs" type="button" data-admin-tab="tariffs" role="tab" aria-selected="false" aria-controls="adminPanelTariffs" tabindex="-1">Тарифы</button>
                     <button class="app-tab" id="adminTabVouchers" type="button" data-admin-tab="vouchers" role="tab" aria-selected="false" aria-controls="adminPanelVouchers" tabindex="-1">Ваучеры</button>
+                    <button class="app-tab" id="adminTabAiRequests" type="button" data-admin-tab="ai-requests" role="tab" aria-selected="false" aria-controls="adminPanelAiRequests" tabindex="-1">AI-запросы</button>
                 </div>
                 <div id="adminPanelClients" role="tabpanel" aria-labelledby="adminTabClients" data-admin-panel="clients">
                 <div class="app-card app-view-first-card admin-toolbar-card">
@@ -295,6 +296,28 @@
                 </div>
                 <div id="adminPanelTariffs" role="tabpanel" aria-labelledby="adminTabTariffs" data-admin-panel="tariffs" hidden>
                     <div class="app-card"><div class="app-card-head"><div><h2>Настройки тарифов</h2><span>Новые значения применяются к следующим партиям ваучеров. Действующие аккаунты и выпущенные коды сохраняют свои условия.</span></div></div><div class="admin-tariff-grid" id="adminTariffList"></div><p class="account-form-status" id="adminTariffStatus" role="status"></p><button class="btn btn-ghost btn-sm" id="adminTariffRetry" type="button" hidden>Повторить загрузку</button></div>
+                </div>
+                <div id="adminPanelAiRequests" role="tabpanel" aria-labelledby="adminTabAiRequests" data-admin-panel="ai-requests" hidden>
+                    <div class="app-card">
+                        <div class="app-card-head"><div><h2>AI-запросы</h2><span>Каждая попытка обращения к модели. Время указано в вашем часовом поясе.</span></div></div>
+                        <form class="admin-filters ai-request-filters" id="aiRequestFilters">
+                            <label>С даты<input id="aiRequestFrom" type="datetime-local" required></label>
+                            <label>До даты<input id="aiRequestTo" type="datetime-local"></label>
+                            <label>Пользователь<input id="aiRequestUser" maxlength="200" placeholder="Имя или email"></label>
+                            <label>Провайдер<select id="aiRequestProvider"><option value="">Все</option><option value="gigachat">GigaChat</option><option value="deepseek">DeepSeek</option><option value="yandex">YandexGPT</option><option value="openai">OpenAI</option><option value="gemini">Gemini</option><option value="perplexity">Perplexity</option></select></label>
+                            <label>Модель<input id="aiRequestModel" maxlength="200" placeholder="Название модели"></label>
+                            <label>Операция<select id="aiRequestOperation"><option value="">Все</option><option value="check">Проверка</option><option value="check_all">Все модели</option><option value="prompt_suggestions">Подсказки</option><option value="brief">Бриф</option></select></label>
+                            <label>Статус<select id="aiRequestStatus"><option value="">Все</option><option value="success">Успешно</option><option value="http_error">Ошибка HTTP</option><option value="network_error">Ошибка сети</option><option value="provider_error">Ошибка провайдера</option></select></label>
+                            <button class="btn btn-primary btn-sm" type="submit">Применить</button>
+                        </form>
+                    </div>
+                    <div class="app-card ai-request-results" aria-busy="false" id="aiRequestResults">
+                        <div class="ai-request-summary" id="aiRequestSummary" aria-live="polite"></div>
+                        <p class="ai-request-help">Сводка по всей выборке. «—» означает, что провайдер не сообщил значение. Ответы из кэша не создают новых обращений.</p>
+                        <div id="aiRequestList"></div>
+                        <button class="btn btn-ghost btn-sm" id="aiRequestRetry" type="button" hidden>Повторить загрузку</button>
+                        <div class="admin-pagination"><button class="btn btn-ghost btn-sm" id="aiRequestPrev" type="button" disabled>Назад</button><span id="aiRequestPage" aria-live="polite"></span><button class="btn btn-ghost btn-sm" id="aiRequestNext" type="button" disabled>Вперёд</button></div>
+                    </div>
                 </div>
                 <div id="adminPanelVouchers" role="tabpanel" aria-labelledby="adminTabVouchers" data-admin-panel="vouchers" hidden>
                     <div class="app-card">

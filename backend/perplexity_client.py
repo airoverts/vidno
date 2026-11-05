@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone
 
 import httpx
+from ai_request_logs import logged_http_post, stage_scope
 from dotenv import load_dotenv
 
 from brand_identity import canonicalize_analysis
@@ -60,7 +61,8 @@ def _call_agent(payload: dict, stage: str, raw_answer: str = "") -> tuple[dict, 
         calls = [{**base, "returned_model": None, "attempt": 0, "retry": 0, "started_at": started_at, "finished_at": _timestamp(), "status": "model_configuration_error"}]
         raise PerplexityModelError(stage, requested_model, None, calls, raw_answer)
     try:
-        response = _post_with_retry(payload)
+        with stage_scope(stage):
+            response = _post_with_retry(payload)
     except httpx.RequestError as error:
         attempts = getattr(error, "perplexity_attempts", []) or [{"attempt": 1, "retry": 0, "started_at": started_at, "finished_at": _timestamp(), "status": "network_error"}]
         raise _attach_failure(error, [{**base, **attempt} for attempt in attempts], raw_answer)
@@ -119,7 +121,7 @@ def _post_with_retry(payload: dict) -> httpx.Response:
         started_at = _timestamp()
         response = None
         try:
-            response = httpx.post(
+            response = logged_http_post("perplexity", payload.get("model"), attempt + 1,
                 API_URL,
                 headers={
                     "Authorization": f"Bearer {API_KEY}",
