@@ -65,7 +65,8 @@ Vidno — веб-сервис для мониторинга и развития 
 
 Это основной публичный production-сервер Vidno.
 
-- SSH: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes root@72.56.15.118`
+- SSH с текущего ПК: `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes egor@72.56.15.118`
+- Подключаться как `egor`; прямой SSH-вход как `root` не использовать. Для команд в `/root/projects/vidno/vidno` и Docker использовать `sudo -n`; доступ без пароля проверен. Скрипт команд можно передавать через SSH в `sudo -n bash -s`.
 - Каталог проекта: `/root/projects/vidno/vidno`
 - Git-ветка: `main`
 - Домен: `vidno.one`
@@ -77,7 +78,7 @@ Vidno — веб-сервис для мониторинга и развития 
 - Права на TLS-файлы: `600`; содержимое сертификата и ключа не копировать в чат, Git или логи.
 - Production `.env` находится на сервере и не входит в репозиторий.
 
-Проверка production:
+Проверка production (команды выполнять в shell с правами root через `sudo -n`):
 
   ```bash
   cd /root/projects/vidno/vidno
