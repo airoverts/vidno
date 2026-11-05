@@ -1,6 +1,7 @@
 **
 !requirements.txt
 !admin_cli.py
+!ai_request_logs.py
 !answer_options.py
 !auth.py
 !auth_limits.py
