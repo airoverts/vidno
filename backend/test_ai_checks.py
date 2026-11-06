@@ -12,6 +12,8 @@ with patch("dotenv.load_dotenv"), patch("os.getenv", side_effect=lambda key, def
     import main
 
 from fastapi.testclient import TestClient
+from answer_options import parse_answer_options
+from brand_identity import canonicalize_analysis
 from perplexity_client import PerplexityModelError
 
 
@@ -163,17 +165,58 @@ class AiCheckApiTests(unittest.TestCase):
         self.analyze.assert_not_called()
         self.cache_set.assert_not_called()
 
-    def test_hidden_exact_five_instruction_is_only_sent_to_generation(self):
+    def test_hidden_relevance_instruction_is_only_sent_to_generation(self):
         for provider in self.providers:
             with self.subTest(provider=provider):
                 response = self.post(provider=provider)
                 self.assertEqual(response.status_code, 200)
                 sent = self.generated[provider].call_args.args[0]
-                self.assertIn("ровно 5 конкретных вариантов", sent)
+                self.assertEqual(sent, self.query + "\n\n" + main.ANSWER_FORMAT_INSTRUCTION)
+                self.assertNotIn("ровно 5", sent)
                 self.assertNotIn("3–5", sent)
+                self.assertIn("предлагающих запрошенный продукт или услугу", sent)
+                self.assertIn("без заданного минимума или максимума", sent)
+                self.assertIn("Не добавляй нерелевантные варианты ради количества", sent)
+                self.assertNotIn("Сбер", sent)
                 self.assertEqual(self.analyze.call_args.args[1], self.query)
                 self.assertEqual(response.json()["query"], self.query)
                 self.assertNotIn(main.ANSWER_FORMAT_INSTRUCTION, response.text)
+
+    def test_explicit_user_count_is_preserved(self):
+        query = "Какие 3 банка подходят для повседневных переводов?"
+        response = self.post(provider="openai", query=query)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.generated["openai"].call_args.args[0], query + "\n\n" + main.ANSWER_FORMAT_INSTRUCTION)
+        self.assertEqual(self.analyze.call_args.args[1], query)
+        self.assertEqual(self.records[41]["query"], query)
+        self.assertEqual(response.json()["query"], query)
+
+    def test_variable_competitor_counts_are_preserved_in_response_and_storage(self):
+        names = ["Т-Банк", "Альфа-Банк", "ВТБ", "Газпромбанк", "Совкомбанк", "Райффайзенбанк", "Россельхозбанк"]
+
+        def analyze(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains):
+            extracted = parse_answer_options(json.dumps({"ordered_mentions": options}, ensure_ascii=False), raw_answer)
+            normalized = canonicalize_analysis(extracted, raw_answer, brand, canonical_id, canonical_name, aliases, domains, strict_direct_options=True, normalize_companies=True)
+            return {**self.analyzed_answer(brand, query, raw_answer, canonical_id, canonical_name, aliases, domains), **normalized}
+
+        self.analyze.side_effect = analyze
+        for route in ("/api/check", "/api/check-all"):
+            for count in (0, 1, 7):
+                with self.subTest(route=route, count=count):
+                    selected = names[:count]
+                    options = [{"name": name, "role": "рекомендация", "evidence": f"{name} — подходит для переводов."} for name in [*selected, "СберБанк"]]
+                    raw_answer = "\n".join(item["evidence"] for item in options)
+                    self.generated["openai"].side_effect = None
+                    self.generated["openai"].return_value = {"raw_answer": raw_answer, "sources": [], "provider_calls": [self.metadata("openai")]}
+                    response = self.post(route, provider="openai", providers=["openai"])
+                    self.assertEqual(response.status_code, 200)
+                    saved = self.records[max(self.records)]
+                    self.assertEqual(saved["status"], "completed")
+                    for result in (response.json(), saved["result"]):
+                        self.assertEqual(result["competitors"], selected)
+                        self.assertEqual(result["mentioned_brands"], selected)
+                        self.assertEqual(len(result["ordered_mentions"]), count + 1)
+                        self.assertTrue(result["mentioned"])
 
     def test_generation_model_mismatch_saves_raw_answer_without_metrics(self):
         call = self.metadata("perplexity")
@@ -252,20 +295,29 @@ class AiCheckApiTests(unittest.TestCase):
         self.assert_tagged_calls(saved["provider_results"], 41)
 
     def test_new_cache_identity_excludes_legacy_results(self):
-        legacy_identity = "model:openai|perplexity/sonar|perplexity-direct-v1|canonical-brands-v1:legacy"
+        identity = json.dumps(["bank-owned-17", "СберБанк", [], []], ensure_ascii=False)
+        legacy_identity = f"model:openai|{main.get_analysis_cache_identity()}|{main.IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|answer-options-5-v1|brand-citations-v1:{identity}"
         legacy = {"mentioned": False, "sources": [], "raw_answer": "legacy untouched"}
         cache = {legacy_identity: deepcopy(legacy)}
         self.cache_get.side_effect = lambda *args: deepcopy(cache.get(args[-1]))
+        self.cache_set.side_effect = lambda *args: cache.update({args[-1]: deepcopy(args[3])})
         response = self.post(provider="openai")
         self.assertEqual(response.status_code, 200)
         current_identity = self.cache_get.call_args.args[-1]
         self.assertIn("company-options-v1", current_identity)
         self.assertIn("confirmed-sonar-v1", current_identity)
-        self.assertIn("answer-options-5-v1", current_identity)
-        self.assertNotEqual(current_identity, legacy_identity)
+        self.assertEqual(current_identity, legacy_identity.replace("answer-options-5-v1", "answer-options-relevant-v2"))
         self.generated["openai"].assert_called_once()
         self.assertEqual(cache[legacy_identity], legacy)
         self.assertEqual(self.cache_set.call_args.args[-1], current_identity)
+        self.analyze.reset_mock()
+        response = self.post(provider="openai")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["raw_answer"], cache[current_identity]["raw_answer"])
+        self.generated["openai"].assert_called_once()
+        self.analyze.assert_not_called()
+        self.cache_set.assert_called_once()
+        self.assertEqual(cache[legacy_identity], legacy)
 
     def test_prompt_suggestions_clarify_shared_queries_and_return_metadata(self):
         prompts = ["Какой банк выбрать для повседневных переводов?", "Где открыть вклад с удобным пополнением?", "Какие банки подходят для расчётного счёта бизнеса?"]

@@ -1971,7 +1971,7 @@ html[data-theme="dark"] .compare-table thead .compare-accent {
 }
 
 .onboarding[hidden], .onboarding [hidden], .dashboard-load-state[hidden] { display: none; }
-.dashboard-load-state [hidden], #reportBackToCheck[hidden], #wsRefreshStatus[hidden] { display: none; }
+.dashboard-load-state [hidden], #reportBackToCheck[hidden], #wsRefreshStatus[hidden], #resultAnswers[hidden] { display: none; }
 .onboarding-active .app-shell, .dashboard-load-error .app-shell { display: none; }
 .voucher-activation { margin: 22px 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); }
 #voucherActivationForm[hidden], .voucher-activation[hidden], .voucher-issued[hidden], [data-admin-panel][hidden] { display: none; }

@@ -97,7 +97,7 @@ PROVIDERS = {
     },
 }
 CHECK_ALL_PROVIDERS = ("gigachat", "yandex", "openai", "gemini", "perplexity", "deepseek")
-ANSWER_FORMAT_INSTRUCTION = "Предложи ровно 5 конкретных вариантов, подходящих под запрос пользователя, и кратко объясни, чем подходит каждый. Не ограничивайся общими критериями выбора. Не упоминай эти требования к формату ответа."
+ANSWER_FORMAT_INSTRUCTION = "Предложи конкретные компании, сервисы или производителей, предлагающих запрошенный продукт или услугу и подходящих под условия запроса. Кратко объясни, чем подходит каждый вариант. Количество определяй по наличию подходящих вариантов, без заданного минимума или максимума. Не добавляй нерелевантные варианты ради количества. Не ограничивайся общими критериями выбора. Не упоминай эти требования к формату ответа."
 
 
 def _normalized_hostname(value: str, require_http: bool = False) -> str:
@@ -949,7 +949,7 @@ def _run_check(req: CheckRequest, user_id: int | None = None, use_result_cache: 
     provider_config = PROVIDERS[provider]
     model = provider_config["model"]()
     identity_cache = json.dumps([canonical_id, canonical_name, sorted(aliases), sorted(domains)], ensure_ascii=False)
-    cache_version = f"{get_analysis_cache_identity()}|{IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|answer-options-5-v1|brand-citations-v1:{identity_cache}"
+    cache_version = f"{get_analysis_cache_identity()}|{IDENTITY_NORMALIZATION_VERSION}|confirmed-sonar-v1|answer-options-relevant-v2|brand-citations-v1:{identity_cache}"
     cache_identity = f'{provider_config.get("cache_identity", provider_config["model"])()}|{cache_version}'
     search_cache_key = f"source-evidence-v2:{query}"
     

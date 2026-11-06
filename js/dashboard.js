@@ -335,12 +335,12 @@ function closeAccountMenu(focusTrigger = false) {
 function selectView(view, checkId = null) {
     if (projectSaving && !bypassProjectGuard) return;
     if (view !== 'settings' && guardProjectNavigation(() => selectView(view, checkId))) return;
-    if (view === 'admin' && accountState?.role !== 'admin') return selectSettingsTab('profile');
+    if ((view === 'admin' || view === 'answers') && accountState?.role !== 'admin') return selectSettingsTab('profile');
+    if (view === 'answers') { selectView('admin'); selectAdminTab('answers', checkId); return; }
     closeAccountMenu();
     setProjectPicker(false);
     closeMobileNavigation();
     document.body.classList.toggle('report-view', view === 'reports');
-    if (view === 'answers') answerCheckId = checkId;
     if (view === 'reports') renderReportContext(checkId);
     $(`#view-${view}`)?.setAttribute('data-check-id', checkId || '');
     $$('.app-nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
@@ -349,7 +349,6 @@ function selectView(view, checkId = null) {
     if (view === 'growth') renderGrowth();
     if (view === 'sources') renderSources();
     if (view === 'competitors') renderCompetitors();
-    if (view === 'answers') renderAiAnswers();
     if (view === 'reports') renderReport();
     else closeReportMenu();
     if (view === 'settings') { renderAccountProfile(); renderAccountAccess(); renderBrandSettings(); }
@@ -611,6 +610,7 @@ function renderAccountProfile() {
     $('#accountMenuInitials').textContent = initials;
     const isAdmin = accountState.role === 'admin';
     $('#adminMenuItem').hidden = !isAdmin;
+    $('#resultAnswers').hidden = !isAdmin;
 }
 function setDisabled(selector, disabled) { $$(selector).forEach(element => { element.disabled = disabled; element.setAttribute('aria-disabled', String(disabled)); }); }
 function projectIdentityCooldown(identity) {
@@ -1315,6 +1315,7 @@ function aiAnswerRows() {
 }
 
 function renderAiAnswers() {
+    if (accountState?.role !== 'admin') { $('#aiAnswerList').replaceChildren(); $('#aiAnswerCount').textContent = '0 ответов'; return; }
     const rows = aiAnswerRows();
     $('#aiAnswerCount').textContent = `${rows.length} ${rows.length === 1 ? 'ответ' : rows.length >= 2 && rows.length <= 4 ? 'ответа' : 'ответов'}`;
     $('#aiAnswerList').innerHTML = rows.length ? rows.map(row => {
@@ -1919,7 +1920,7 @@ async function saveAdminAccess(event) {
     try { const data = await apiRequest(`/admin/clients/${encodeURIComponent(clientId)}/access`, { method: 'PATCH', body: JSON.stringify(body) }); if (clientId !== selectedAdminClientId || form !== $('#adminAccessForm')) return; renderAdminClient(data.account || data.client || data, data.access || data); setFormStatus('#adminAccessStatusMessage', 'Настройки доступа сохранены.', true); await loadAdminClients(adminPage); }
     catch (error) { if (clientId === selectedAdminClientId && form === $('#adminAccessForm')) { setFormStatus('#adminAccessStatusMessage', error.message); button.disabled = false; } }
 }
-function selectAdminTab(tab) {
+function selectAdminTab(tab, checkId = null) {
     if (accountState?.role !== 'admin') return;
     $$('[data-admin-panel]').forEach(panel => { panel.hidden = panel.dataset.adminPanel !== tab; });
     $$('[data-admin-tab]').forEach(button => {
@@ -1927,6 +1928,7 @@ function selectAdminTab(tab) {
         button.classList.toggle('active', active); button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1;
     });
     if (tab === 'tariffs') loadAdminTariffs();
+    if (tab === 'answers') { answerCheckId = checkId; renderAiAnswers(); }
     if (tab === 'vouchers') { loadAdminTariffs(); loadVoucherBatches(); }
     if (tab === 'ai-requests') {
         if (!aiRequestQuery) applyAiRequestFilters();

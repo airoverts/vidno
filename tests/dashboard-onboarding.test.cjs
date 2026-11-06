@@ -852,7 +852,7 @@ test('uncertain dropped request does not recover an older successful result for 
     } finally { await f.close(); }
 });
 
-test('existing account opens history, scoped answers and report using saved IDs while preserving preferences', async () => {
+test('existing client opens history and report using saved IDs while preserving preferences', async () => {
     const server = state({ brands: [brand()], checks: [check(), check(502, 'completed', true, 'Другой вопрос')] });
     server.account.onboarding_completed_at = stamp;
     const f = await fixture(server, 1440, { 'vidno-theme': 'dark', 'vidno-dashboard-active-brand': 'brand-101' });
@@ -863,12 +863,7 @@ test('existing account opens history, scoped answers and report using saved IDs 
         await f.page.locator('[data-open-check="501"]').click();
         await visible(f.page, '#wsResult');
         assert.match(await f.page.locator('#wsResultContext').textContent(), /Какой сервис выбрать/);
-        await f.page.locator('#resultAnswers').click();
-        await visible(f.page, '#view-answers');
-        assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length);
-        assert.doesNotMatch(await f.page.locator('#aiAnswerList').textContent(), /Другой вопрос/);
-        await navigate(f.page, 'prompts');
-        await f.page.locator('[data-open-check="501"]').click();
+        await hidden(f.page, '#resultAnswers');
         await f.page.locator('#resultReport').click();
         await visible(f.page, '#view-reports');
         assert.equal(await f.page.locator('#view-reports').getAttribute('data-check-id'), '501');
@@ -1109,6 +1104,49 @@ for (const hasRequestedProviders of [true, false]) {
 
 function aiAdminState(extra = {}) {
     return state({ account: { id: 1, name: 'Админ', email: 'admin@example.test', role: 'admin', onboarding_completed_at: stamp }, ...extra });
+}
+for (const width of [1440, 390]) {
+    test(`AI answers are unavailable in client navigation at ${width}px`, async () => {
+        const server = state({ brands: [brand()], checks: [check()] });
+        server.account.onboarding_completed_at = stamp;
+        const f = await fixture(server, width);
+        try {
+            await hidden(f.page, '#dashboardLoadState');
+            assert.equal(await f.page.locator('.app-nav [data-view="answers"]').count(), 0);
+            await navigate(f.page, 'prompts');
+            await f.page.locator('[data-open-check="501"]').click();
+            await hidden(f.page, '#resultAnswers');
+            await f.page.evaluate(() => selectView('answers', '501'));
+            await hidden(f.page, '#view-admin');
+            await hidden(f.page, '#adminPanelAnswers');
+            assert.equal(await f.page.locator('.ai-answer-card').count(), 0);
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
+    test(`admin AI answers retain saved-check context and fit at ${width}px`, async () => {
+        const f = await fixture(aiAdminState({ brands: [brand()], checks: [check(), check(502, 'completed', true, 'Другой вопрос')] }), width);
+        try {
+            await hidden(f.page, '#dashboardLoadState');
+            assert.equal(await f.page.locator('.app-nav [data-view="answers"]').count(), 0);
+            await navigate(f.page, 'prompts');
+            await f.page.locator('[data-open-check="501"]').click();
+            await f.page.locator('#resultAnswers').click();
+            await visible(f.page, '#view-admin');
+            await visible(f.page, '#adminPanelAnswers');
+            assert.equal(await f.page.locator('#adminTabAnswers').getAttribute('aria-selected'), 'true');
+            assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length);
+            assert.doesNotMatch(await f.page.locator('#aiAnswerList').textContent(), /Другой вопрос/);
+            await f.page.locator('#adminTabClients').click();
+            await f.page.locator('#adminTabAnswers').click();
+            assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length * 2);
+            assert.match(await f.page.locator('#aiAnswerList').textContent(), /Другой вопрос/);
+            assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+            const directory = path.join(os.tmpdir(), 'vidno-admin-answers-qa');
+            await fs.mkdir(directory, { recursive: true });
+            await f.page.screenshot({ path: path.join(directory, `answers-${width}.png`), fullPage: true });
+            assert.deepEqual(f.errors, []);
+        } finally { await f.close(); }
+    });
 }
 const aiLogItem = { id: 10, user_id: 7, user_name: '<img src=x onerror=alert(1)>', user_email: 'user@example.test', request_id: 'request-1', check_id: 501, provider: 'openai', operation: 'check_all', stage: 'generation', attempt: 2, started_at: stamp, duration_ms: 152, status: 'success', http_status: 200, requested_model: 'requested-v1', returned_model: 'actual-v2', input_tokens: 120, output_tokens: 30, total_tokens: 150, cached_tokens: 20, reasoning_tokens: 10 };
 const aiLogResponse = { items: [aiLogItem, { ...aiLogItem, id: 11, returned_model: null, input_tokens: null, output_tokens: null, total_tokens: null, status: 'network_error', http_status: null, error_category: 'timeout' }], total: 51, summary: { attempts: 51, errors: 1, input_tokens: 1000, output_tokens: 500, total_tokens: 1500, missing_usage: 1 } };

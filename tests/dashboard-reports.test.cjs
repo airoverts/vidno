@@ -620,9 +620,7 @@ for (const width of [1440, 768, 375, 320]) {
             await sameMetrics(f.page);
             assert.equal(await metric(f.page, 'visibility'), '100%');
             assert.match(await f.page.locator('#reportProvidersLabel').textContent(), /DeepSeek/);
-            await navigate(f.page, 'answers');
-            assert.equal(await f.page.locator('.ai-answer-card').count(), providers.length);
-            assert.equal(await f.page.locator('.ai-answer-card').filter({ hasText: 'DeepSeek' }).count(), 1);
+            assert.equal(await f.page.locator('.app-nav [data-view="answers"]').count(), 0);
             await navigate(f.page, 'visibility');
             assert.match(await f.page.locator('#visibilityMetrics').textContent(), /DeepSeek/);
             await f.page.reload();
